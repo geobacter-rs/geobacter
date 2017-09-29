@@ -1,0 +1,16 @@
+[package]
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+name = "trivial"
+version = "0.1.0"
+
+[dependencies.compiletime]
+path = "../../compiletime"
+
+[dependencies.hsa-core]
+path = "../../hsa-core"
+
+[dependencies.hsa-rustc-plugin]
+path = "../../rustc-plugin/"
+
+[dependencies.kernel]
+path = "../../kernel"

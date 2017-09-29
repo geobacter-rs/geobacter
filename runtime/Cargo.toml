@@ -1,0 +1,10 @@
+[package]
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+name = "runtime"
+version = "0.1.0"
+
+[dependencies]
+
+[dependencies.kernel]
+optional = false
+path = "../kernel"

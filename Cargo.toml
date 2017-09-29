@@ -1,0 +1,6 @@
+
+[workspace]
+members = ["hsa-core-gen", "hsa-core", "runtime",
+           "ir", "kernel", "rustc-plugin",
+           "indexvec",
+           "examples/trivial",]

@@ -1,0 +1,13 @@
+[package]
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+name = "kernel"
+version = "0.1.0"
+
+[dependencies]
+bitflags = "0.8.2"
+serde = "*"
+serde_derive = "*"
+uuid = "0.4.0"
+
+[dependencies.ir]
+path = "../ir"

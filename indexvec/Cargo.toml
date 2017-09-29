@@ -1,0 +1,19 @@
+[package]
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+name = "indexvec"
+version = "0.1.0"
+
+[dependencies.serde]
+optional = true
+version = "1.0.14"
+
+[dependencies.serde_derive]
+optional = true
+version = "1.0.14"
+
+[features]
+default = ["serial"]
+serial = [
+    "serde_derive",
+    "serde",
+]

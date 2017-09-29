@@ -1,0 +1,23 @@
+[package]
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+name = "hsa-rustc-plugin"
+version = "0.1.0"
+
+[dependencies]
+bitflags = "0.8.2"
+cargo_metadata = "0.2.0"
+env_logger = "0.4.2"
+log = "0.3.7"
+log_settings = "0.1.1"
+serde = "1.0.15"
+serde_json = "1.0.3"
+
+[dependencies.indexvec]
+path = "../indexvec"
+
+[dependencies.ir]
+path = "../ir"
+
+[lib]
+name = "hsa_rustc_plugin"
+plugin = true
