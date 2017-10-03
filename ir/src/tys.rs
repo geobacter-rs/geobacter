@@ -6,6 +6,9 @@ use rustc;
 use rustc::ty::{RegionKind};
 pub use rustc::ty::TypeFlags;
 
+use super::{Substs};
+use rustc_wrappers::{DefIdDef};
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Signedness {
   Signed,
@@ -54,11 +57,12 @@ newtype_idx!(#[derive(Deserialize, Serialize)] pub struct Ty => "type");
 pub enum TyData {
   Primitive(PrimTy),
   Str,
-  Array(Ty, usize),
+  Array(Ty, super::ConstVal),
   Slice(Ty),
   Tuple(Vec<Ty>, bool),
   RawPtr(TypeAndMut),
   Ref(Region, TypeAndMut),
+  FnDef(DefIdDef, Substs),
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq)]

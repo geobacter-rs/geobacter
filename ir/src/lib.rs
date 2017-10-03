@@ -13,6 +13,7 @@ extern crate bitflags;
 #[macro_use]
 extern crate indexvec;
 
+#[macro_use]
 extern crate rustc;
 extern crate rustc_data_structures;
 extern crate rustc_const_math;
@@ -76,19 +77,40 @@ newtype_idx!(#[derive(Deserialize, Serialize)] pub struct Promoted => "promoted"
 newtype_idx!(#[derive(Deserialize, Serialize)] pub struct ConstVal => "constant-value");
 newtype_idx!(#[derive(Deserialize, Serialize)] pub struct Substs => "substitution");
 newtype_idx!(#[derive(Deserialize, Serialize)] pub struct Field => "field");
+newtype_idx!(#[derive(Deserialize, Serialize)] pub struct Function => "function");
 
+pub type Functions   = IndexVec<Function, FunctionData>;
 pub type BasicBlocks = IndexVec<BasicBlock, BasicBlockData>;
 pub type VisibilityScopes = IndexVec<VisibilityScope, VisibilityScopeData>;
-pub type Promoteds = IndexVec<Promoted, Function>; // Sorry..
+pub type Promoteds = IndexVec<Promoted, FunctionData>; // Sorry..
 pub type LocalDecls = IndexVec<Local, LocalDecl>;
 pub type Types = IndexVec<Ty, TyData>;
 pub type Substss = IndexVec<Substs, Vec<TsKind>>;
 pub type ConstVals = IndexVec<ConstVal, ConstValData>;
 
 pub const RETURN_POINTER: Local = Local(0);
+pub const MAIN_FUNCTION: Function = Function(0);
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct Function {
+pub struct Module {
+  pub funcs: Functions,
+  pub tys: Types,
+  pub substs: Substss,
+  pub const_vals: ConstVals,
+}
+impl Module {
+  pub fn new() -> Module {
+    Module {
+      funcs: Default::default(),
+      tys: Default::default(),
+      substs: Default::default(),
+      const_vals: Default::default(),
+    }
+  }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct FunctionKind {
   pub basic_blocks: BasicBlocks,
   pub visibility_scopes: VisibilityScopes,
   pub promoted: Promoteds,
@@ -97,15 +119,18 @@ pub struct Function {
   pub spread_arg: Option<Local>,
   // None during construction.
   pub return_ty: Option<Ty>,
-  pub tys: Types,
-  pub substs: Substss,
-  pub const_vals: ConstVals,
   pub span: SpanDef,
 }
 
-impl Function {
-  pub fn new(span: SpanDef) -> Function {
-    Function {
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum FunctionData {
+  Function(FunctionKind),
+  Intrinsic(String, Vec<Ty>),
+}
+
+impl FunctionData {
+  pub fn new(span: SpanDef) -> FunctionData {
+    FunctionData::Function(FunctionKind {
       basic_blocks: Default::default(),
       visibility_scopes: Default::default(),
       promoted: Default::default(),
@@ -113,10 +138,23 @@ impl Function {
       upvar_decls: Default::default(),
       spread_arg: None,
       return_ty: None,
-      tys: Default::default(),
-      substs: Default::default(),
-      const_vals: Default::default(),
       span,
+    })
+  }
+  pub fn intrinsic(name: String, sig: Vec<Ty>) -> FunctionData {
+    FunctionData::Intrinsic(name, sig)
+  }
+
+  pub fn fkr(&self) -> &FunctionKind {
+    match self {
+      &FunctionData::Function(ref f) => f,
+      &FunctionData::Intrinsic(..) => bug!("not a function: {:?}", self),
+    }
+  }
+  pub fn fkm(&mut self) -> &mut FunctionKind {
+    match self {
+      &mut FunctionData::Function(ref mut f) => f,
+      &mut FunctionData::Intrinsic(..) => bug!("not a function: {:?}", self),
     }
   }
 }
@@ -220,8 +258,8 @@ pub enum StatementKind {
   Assign(Lvalue, Rvalue),
   SetDiscriminant { lvalue: Lvalue, variant_index: usize },
 
-  StorageLive(Lvalue),
-  StorageDead(Lvalue),
+  StorageLive(Local),
+  StorageDead(Local),
 
   // Not allowed.
   /*InlineAsm {
@@ -252,7 +290,7 @@ pub enum ConstValData {
   Bool(bool),
   Char(char),
   Variant(DefIdDef),
-  Function(DefIdDef, Substs),
+  Function(Function),
   Struct(Vec<(String, ConstVal)>),
   Tuple(Vec<ConstVal>),
   Array(Vec<ConstVal>),
@@ -268,10 +306,6 @@ pub struct Constant {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 pub enum Literal {
-  Item {
-    def_id: DefIdDef,
-    substs: Substs,
-  },
   Value {
     value: ConstVal,
   },
@@ -288,8 +322,8 @@ pub enum Lvalue {
   Static(Static),
   Projection(Box<LvalueProjection>),
 }
-pub type LvalueProjection = Projection<Lvalue, Operand, Ty>;
-pub type LvaleElem = ProjectionElem<Operand, Ty>;
+pub type LvalueProjection = Projection<Lvalue, Local, Ty>;
+pub type LvaleElem = ProjectionElem<Local, Ty>;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 pub struct Projection<B, V, T> {

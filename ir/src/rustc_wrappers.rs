@@ -42,15 +42,14 @@ pub struct SpanDef {
 }
 impl From<SpanDef> for Span {
   fn from(def: SpanDef) -> Span {
-    Span {
-      lo: def.lo.into(),
-      hi: def.hi.into(),
-      ctxt: def.ctxt,
-    }
+    Span::new(def.lo.into(),
+              def.hi.into(),
+              def.ctxt)
   }
 }
 impl From<Span> for SpanDef {
-  fn from(def: Span) -> SpanDef {
+  fn from(def_: Span) -> SpanDef {
+    let def = def_.data();
     SpanDef {
       lo: def.lo.into(),
       hi: def.hi.into(),

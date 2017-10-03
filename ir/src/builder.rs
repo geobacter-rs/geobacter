@@ -10,11 +10,13 @@ use indexvec::IndexVec;
 use syntax_pos::symbol::Symbol;
 
 use rustc::hir::def_id::{CrateNum, DefIndex, DefId};
-use rustc::middle::const_val;
+use rustc::infer::TransNormalize;
+use rustc::middle::const_val::{self, ConstAggregate};
 use rustc::mir::{self, SourceInfo};
 use rustc::ty::{self, TyS, subst, TyCtxt};
 use rustc_data_structures::indexed_vec::{Idx as RustcIdx};
 use rustc_const_math::{ConstInt, ConstFloat, ConstUsize, ConstIsize};
+use rustc_trans::monomorphize;
 
 pub use syntax_pos::{Span, BytePos, SyntaxContext};
 
@@ -25,36 +27,142 @@ use rustc_wrappers::{SymbolDef, SpanDef, SourceInfoDef, CrateNumDef,
 
 use super::{Field, Local, Substs, ConstVal};
 
-pub struct Function<'tcx> {
-  pub fun: super::Function,
+pub struct Module<'tcx> {
+  pub mod_: super::Module,
+  extern_substs: &'tcx subst::Substs<'tcx>,
+  tcx: TyCtxt<'tcx, 'tcx, 'tcx>,
 
   types: HashMap<&'tcx TyS<'tcx>, Ty>,
   substs: HashMap<&'tcx subst::Substs<'tcx>, Substs>,
   const_vals: HashMap<const_val::ConstVal<'tcx>, ConstVal>,
-  adt_ids: HashMap<DefIdDef, Ty>
+  adt_ids: HashMap<DefIdDef, Ty>,
+  funcs: HashMap<ty::Instance<'tcx>, super::Function>,
 }
 
-impl<'tcx> Function<'tcx> {
-  pub fn new<'a, 'gcx>(src: SpanDef,
-                       _tcx: TyCtxt<'a, 'gcx, 'tcx>)
-    -> Function<'tcx>
-    where 'gcx: 'a + 'tcx,
-          'tcx: 'a,
+impl<'tcx> Module<'tcx> {
+  pub fn new(tcx: TyCtxt<'tcx, 'tcx, 'tcx>,
+             substs: &'tcx subst::Substs<'tcx>)
+    -> Module<'tcx>
   {
-    Function {
-      fun: super::Function::new(src),
+    let mut m = super::Module::new();
+
+    Module {
+      mod_: m,
+      extern_substs: substs,
+      tcx: tcx,
 
       types: Default::default(),
       substs: Default::default(),
       const_vals: Default::default(),
       adt_ids: Default::default(),
+      funcs: Default::default(),
     }
   }
+}
+
+pub trait ModuleCtxt<'tcx> {
+  fn tcx(&self) -> TyCtxt<'tcx, 'tcx, 'tcx>;
+  fn module(&mut self) -> &mut Module<'tcx>;
+  fn module_ref(&self) -> &Module<'tcx>;
+
+  fn param_substs(&self) -> &'tcx subst::Substs<'tcx>;
+  fn monomorphize<T>(&self, v: &T) -> T
+    where T: TransNormalize<'tcx>,
+  {
+    self.tcx()
+      .trans_apply_param_substs(self.param_substs(), v)
+  }
+
+  fn enter_function<'s, F, U>(&'s mut self,
+                              span: SpanDef,
+                              instance: ty::Instance<'tcx>,
+                              f: F) -> super::Function
+    where F: FnOnce(Function<'s, 'tcx, Self>),
+  {
+    use std::collection::hash_map::Entry;
+    let id = {
+      let m = self.module();
+
+      match m.funcs.entry(instance) {
+        Entry::Vacant(mut v) => {
+          let f = super::FunctionData::new(span);
+          let id = m.mod_.funcs
+            .push(f);
+          v.insert(id);
+          id
+        },
+        Entry::Occupied(o) => {
+          return *o.get().unwrap();
+        },
+      }
+    };
+
+    let fun = Function {
+      parent: self,
+      func: id,
+      def: instance,
+    };
+    f(fun);
+
+    id
+  }
+}
+impl<'tcx> ModuleCtxt<'tcx> for Module<'tcx> {
+  fn tcx(&self) -> TyCtxt<'tcx, 'tcx, 'tcx> { self.tcx }
+  fn module(&mut self) -> &mut Module<'tcx> { self }
+  fn module_ref(&self) -> &Module<'tcx> { self }
+  fn param_substs(&self) -> &'tcx subst::Substs<'tcx> { self.extern_substs }
+}
+impl<'parent, 'tcx, T> ModuleCtxt<'tcx> for Function<'parent, 'tcx, T>
+  where T: ModuleCtxt<'tcx>,
+{
+  fn tcx(&self) -> TyCtxt<'tcx, 'tcx, 'tcx> { self.parent.tcx() }
+  fn module(&mut self) -> &mut Module<'tcx> { self.parent.module() }
+  fn module_ref(&self) -> &Module<'tcx> { self.parent.module_ref() }
+
+  fn param_substs(&self) -> &'tcx subst::Substs<'tcx> { self.substs }
+}
+
+pub struct Function<'parent, 'tcx, T>
+  where T: ModuleCtxt<'tcx>,
+{
+  parent: &'parent mut T,
+  func: super::Function,
+  def: ty::Instance<'tcx>,
+}
+impl<'parent, 'tcx, T> Deref for Function<'parent, 'tcx, T>
+  where T: ModuleCtxt<'tcx>,
+{
+  type Target = super::FunctionKind;
+  fn deref(&self) -> &Self::Target {
+    let m = self.module_ref();
+    m.mod_.funcs[self.func].fkr()
+  }
+}
+impl<'parent, 'tcx, T> DerefMut for Function<'parent, 'tcx, T>
+  where T: ModuleCtxt<'tcx>,
+{
+  fn deref_mut(&mut self) -> &mut Self::Target {
+    let id = self.func;
+    let m = self.module();
+    m.mod_.funcs[id].fkm()
+  }
+}
+
+impl<'parent, 'tcx, T> Function<'parent, 'tcx, T>
+  where T: ModuleCtxt<'tcx>,
+{
+  pub fn id(&self) -> super::Function { self.func }
 
   pub fn convert<T>(&mut self, t: &T) -> T::Target
     where T: RustCConvert<'tcx>,
   {
     t.convert(self)
+  }
+
+  pub fn convert_mir(&mut self, mir: &mir::Mir<'tcx>,
+                     subs: &subst::Substs<'tcx>) {
+    unimplemented!();
   }
 
   pub fn convert_ty(&mut self, ty: &'tcx TyS<'tcx>) -> Ty {
@@ -116,6 +224,7 @@ impl<'tcx> Function<'tcx> {
       TyStr => TyData::Str,
       TyArray(inner, count) => {
         let ity = self.convert_ty(inner);
+        let count = self.convert(&count.val);
         TyData::Array(ity, count)
       },
       TySlice(inner) => {
@@ -145,13 +254,16 @@ impl<'tcx> Function<'tcx> {
           .collect();
         TyData::Tuple(inners, b)
       },
+      TyFnDef(def_id, subs) => {
+        TyData::FnDef(def_id.into(), self.convert(&subs))
+      },
       _ => {
         println!("type: {:?}", ty.sty);
         unimplemented!();
       },
     };
 
-    let idx = self.fun.tys
+    let idx = self.mod_.tys
       .push(data.clone());
     self.types.insert(ty, idx);
     idx
@@ -172,6 +284,7 @@ impl<'tcx> Function<'tcx> {
         //return AggregateKind::Closure(def.into(),
         //                              self.convert(substs));
       },
+      &mir::AggregateKind::Generator(..) => unimplemented!(),
     }
 
     println!("aggregate kind: {:?}", kind);
@@ -242,17 +355,10 @@ impl<'tcx> Function<'tcx> {
                          literal: &mir::Literal<'tcx>) -> super::Literal {
     use super::Literal;
     match literal {
-      &mir::Literal::Item {
-        def_id,
-        substs,
-      } => Literal::Item {
-        def_id: def_id.into(),
-        substs: substs.convert(self),
-      },
       &mir::Literal::Value {
         ref value,
       } => Literal::Value {
-        value: self.convert(value),
+        value: self.convert(&value.val),
       },
       &mir::Literal::Promoted {
         index,
@@ -275,7 +381,7 @@ impl<'tcx> Function<'tcx> {
       &const_val::ConstVal::Str(ref s) =>
         ConstValData::Str(s.to_string()),
       &const_val::ConstVal::ByteStr(ref b) =>
-        ConstValData::ByteStr(b.to_vec()),
+        ConstValData::ByteStr(b.data.to_vec()),
       &const_val::ConstVal::Bool(b) =>
         ConstValData::Bool(b),
       &const_val::ConstVal::Char(c) =>
@@ -286,34 +392,35 @@ impl<'tcx> Function<'tcx> {
         ConstValData::Function(d.into(),
                                substs.convert(self))
       },
-      &const_val::ConstVal::Struct(ref map) => {
+      &const_val::ConstVal::Aggregate(ConstAggregate::Struct(map)) => {
         let v: Vec<_> = map.iter()
-          .map(|(name, val)| {
+          .map(|&(ref name, val)| {
             (name.to_string(),
-             val.convert(self))
+             val.val.convert(self))
           })
           .collect();
 
         ConstValData::Struct(v)
       },
-      &const_val::ConstVal::Tuple(ref t) => {
+      &const_val::ConstVal::Aggregate(ConstAggregate::Tuple(t)) => {
         let v = t.iter()
-          .map(|v| v.convert(self) )
+          .map(|v| v.val.convert(self) )
           .collect();
         ConstValData::Tuple(v)
       },
-      &const_val::ConstVal::Array(ref a) => {
+      &const_val::ConstVal::Aggregate(ConstAggregate::Array(a)) => {
         let v = a.iter()
-          .map(|v| v.convert(self) )
+          .map(|v| v.val.convert(self) )
           .collect();
         ConstValData::Array(v)
       },
-      &const_val::ConstVal::Repeat(ref r, count) => {
-        ConstValData::Repeat(r.convert(self), count)
+      &const_val::ConstVal::Aggregate(ConstAggregate::Repeat(r, count)) => {
+        ConstValData::Repeat(r.val.convert(self), count)
       },
+      &const_val::ConstVal::Unevaluated(..) => unimplemented!(),
     };
 
-    let id = self.fun.const_vals
+    let id = self.mod_.const_vals
       .push(data);
     self.const_vals.insert(val.clone(), id);
     id
@@ -340,7 +447,7 @@ impl<'tcx> Function<'tcx> {
       })
       .collect();
 
-    let id = self.fun.substs
+    let id = self.mod_.substs
       .push(kinds);
     self.substs.insert(subs, id);
     id
@@ -411,18 +518,18 @@ impl<'tcx> Function<'tcx> {
     }
   }
 
-  pub fn finish(self) -> super::Function {
+  pub fn finish(self) -> super::Module {
     self.into()
   }
 }
 
 pub trait RustCConvert<'tcx> {
   type Target;
-  fn convert(&self, builder: &mut Function<'tcx>) -> Self::Target;
+  fn convert(&self, builder: &mut Module<'tcx>) -> Self::Target;
 }
 impl<'tcx> RustCConvert<'tcx> for mir::Lvalue<'tcx> {
   type Target = super::Lvalue;
-  fn convert(&self, builder: &mut Function<'tcx>) -> Self::Target {
+  fn convert(&self, builder: &mut Module<'tcx>) -> Self::Target {
     builder.convert_lvalue(self)
   }
 }
@@ -500,25 +607,32 @@ impl<'tcx> RustCConvert<'tcx> for &'tcx subst::Substs<'tcx> {
     builder.convert_subst(*self)
   }
 }
+impl<'tcx> RustCConvert<'tcx> for mir::Local {
+  type Target = super::Local;
+  fn convert(&self, builder: &mut Function<'tcx>) -> Self::Target {
+    use indexvec::Idx;
+    super::Local::new(self.index())
+  }
+}
 
-impl<'tcx> Into<super::Function> for Function<'tcx> {
-  fn into(self) -> super::Function {
+impl<'tcx> Into<super::Module> for Function<'tcx> {
+  fn into(self) -> super::Module {
     let Function {
-      fun,
+      mod_,
       ..
     } = self;
 
-    fun
+    mod_
   }
 }
 impl<'tcx> Deref for Function<'tcx> {
-  type Target = super::Function;
+  type Target = super::Module;
   fn deref(&self) -> &Self::Target {
-    &self.fun
+    &self.mod_
   }
 }
 impl<'tcx> DerefMut for Function<'tcx> {
   fn deref_mut(&mut self) -> &mut Self::Target {
-    &mut self.fun
+    &mut self.mod_
   }
 }
