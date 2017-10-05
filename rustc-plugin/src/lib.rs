@@ -18,6 +18,7 @@ extern crate rustc;
 extern crate rustc_mir;
 extern crate rustc_plugin;
 extern crate rustc_data_structures;
+extern crate rustc_trans;
 extern crate syntax;
 extern crate syntax_pos;
 extern crate ir;
@@ -87,248 +88,7 @@ struct MirToHsaIrPass {
   ctx: GlobalCtx,
 }
 impl MirToHsaIrPass {
-  fn build_hsa_ir<'a, 'tcx>(&self,
-                            tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                            mir: &mir::Mir<'tcx>,
-                            mut builder: builder::Function)
-  {
-    use ir::*;
-    use ir::builder::RustCConvert;
 
-    use rustc_data_structures::indexed_vec::Idx;
-
-    tcx.sess
-      .span_note_without_error(mir.span,
-                               "here");
-    let fun = builder.function_kind_mut();
-
-    let return_ty = tcx.trans_apply_param_substs(subs,
-                                                 &mir.return_ty);
-    let return_ty = fun.convert(&return_ty);
-    fun.mod_
-      .funcs[MAIN_FUNCTION]
-      .return_ty = Some(return_ty);
-
-    for (bbid, bb) in mir.basic_blocks().iter_enumerated() {
-      let mut kstmts = Vec::new();
-
-      for stmt in bb.statements.iter() {
-        let kkind = match stmt.kind {
-          mir::StatementKind::Assign(ref l, ref r) => {
-            StatementKind::Assign(fun.convert(l),
-                                  fun.convert(r))
-          },
-          mir::StatementKind::SetDiscriminant {
-            ref lvalue, variant_index,
-          } => StatementKind::SetDiscriminant {
-            lvalue: fun.convert(lvalue),
-            variant_index: variant_index,
-          },
-          mir::StatementKind::StorageLive(ref l) => {
-            StatementKind::StorageLive(fun.convert(l))
-          },
-          mir::StatementKind::StorageDead(ref l) => {
-            StatementKind::StorageDead(fun.convert(l))
-          },
-          mir::StatementKind::InlineAsm { .. } => {
-            tcx.sess.span_fatal(stmt.source_info.span,
-                                "inline asm not allowed\
-                                 for hsa functions");
-            StatementKind::Nop
-          },
-          mir::StatementKind::Validate(..) => {
-            StatementKind::Nop
-          },
-          mir::StatementKind::EndRegion(extent) => {
-            unreachable!()
-          },
-          mir::StatementKind::Nop => {
-            StatementKind::Nop
-          },
-        };
-
-        let mut kstmt = Statement {
-          source_info: stmt.source_info.into(),
-          kind: kkind,
-        };
-
-        kstmts.push(kstmt);
-      }
-
-      let terminator = bb.terminator.as_ref().unwrap();
-      let ktkind = match &terminator.kind {
-        &mir::TerminatorKind::Goto {
-          target,
-        } => TerminatorKind::Goto { target: target.into() },
-        &mir::TerminatorKind::SwitchInt {
-          ref discr, ref switch_ty, ref values, ref targets,
-        } => TerminatorKind::SwitchInt {
-          discr: fun.convert(discr),
-          switch_ty: fun.convert(switch_ty),
-          values: values.iter()
-            .map(|&c| c.into() )
-            .collect(),
-          targets: targets.iter()
-            .map(|&bb| bb.into() )
-            .collect(),
-        },
-        &mir::TerminatorKind::Resume => TerminatorKind::Resume,
-        &mir::TerminatorKind::Return => TerminatorKind::Return,
-        &mir::TerminatorKind::Unreachable => TerminatorKind::Unreachable,
-        &mir::TerminatorKind::Drop {
-          ref location, target, ref unwind,
-        } => TerminatorKind::Drop {
-          location: fun.convert(location),
-          target: target.into(),
-          unwind: unwind.map(|v| v.into() ),
-        },
-        &mir::TerminatorKind::DropAndReplace {
-          ref location,
-          ref value,
-          target,
-          ref unwind,
-        } => TerminatorKind::DropAndReplace {
-          location: fun.convert(location),
-          value: fun.convert(value),
-          target: target.into(),
-          unwind: unwind.map(|v| v.into() ),
-        },
-        &mir::TerminatorKind::Call {
-          ref func, ref args,
-          ref destination,
-          ref cleanup,
-        } => {
-          let fty = func.ty(mir, tcx);
-          let finstance = match fty.sty {
-            ty::TyFnDef(callee_def_id, callee_substs) => {
-              monomorphize::resolve(tcx, callee_def_id, callee_substs)
-            },
-            ty::TyFnPtr(_) => {
-              tcx.sess.span_fatal(terminator.source_info.span,
-                                  "function ptr calls not implemented");
-            },
-            _ => bug!("{} is not callable", fty),
-          };
-
-          match finstance.def {
-            ty::instance::InstanceDef::Item(fdef_id) => {
-
-            },
-            ty::instance::InstanceDef::Intrinsic(idef_id) => {
-              tcx.item_name(idef_id)
-            },
-            _ => {
-              bug!("TODO: function instance: {:?}", finstance);
-            }
-          }
-
-          TerminatorKind::Call {
-            func: fun.convert(func),
-            args: args.iter()
-              .map(|v| fun.convert(v))
-              .collect(),
-            destination: destination.as_ref()
-              .map(|&(ref dest, destbb)| {
-                (fun.convert(dest), destbb.into())
-              }),
-            cleanup: cleanup.as_ref()
-              .map(|&bb| bb.into()),
-          }
-        },
-        &mir::TerminatorKind::Assert { target, .. } => {
-          span_bug!(terminator.source_info.span,
-                    "terminator assert unimplemented");
-          TerminatorKind::Goto { target: target.into(), }
-        }
-      };
-
-      let kterm = Terminator {
-        source_info: terminator.source_info.into(),
-        kind: ktkind,
-      };
-
-      let kbb = BasicBlockData {
-        statements: kstmts,
-        terminator: kterm,
-        is_cleanup: bb.is_cleanup,
-      };
-
-      let new_idx = fun.mod_
-        .funcs[MAIN_FUNCTION]
-        .basic_blocks
-        .push(kbb);
-      assert_eq!(new_idx.index(), bbid.index());
-    }
-
-    for (id, vis) in mir.visibility_scopes.iter_enumerated() {
-      let kvis = VisibilityScopeData {
-        span: vis.span.into(),
-        parent_scope: vis.parent_scope
-          .map(|v| v.into() ),
-      };
-
-      let kid = fun
-        .funcs[MAIN_FUNCTION]
-        .visibility_scopes
-        .push(kvis);
-      assert_eq!(kid.index(), id.index());
-    }
-
-    for (id, promoted) in mir.promoted.iter_enumerated() {
-      unimplemented!();
-      let f = self.build_hsa_ir(tcx, &promoted,
-                                subst::Substs::empty());
-      if let Some(f) = f {
-        let kid = fun.mod_
-          .funcs[MAIN_FUNCTION]
-          .promoted
-          .push(f);
-        assert_eq!(kid.index(), id.index());
-      } else {
-        return None;
-      }
-    }
-
-    for (id, ldecl) in mir.local_decls.iter_enumerated() {
-      let ldecl_ty = ldecl.ty;
-      let ldecl_ty = tcx
-        .trans_apply_param_substs(subs, &ldecl_ty);
-      let kldecl = LocalDecl {
-        mutability: ldecl.mutability.into(),
-        is_user_variable: ldecl.is_user_variable,
-        ty: fun.convert(&ldecl_ty),
-        name: ldecl.name.map(|v| v.into()),
-        source_info: ldecl.source_info.into(),
-      };
-
-      let kid = fun.mod_
-        .funcs[MAIN_FUNCTION]
-        .local_decls
-        .push(kldecl);
-      assert_eq!(kid.index(), id.index());
-    }
-
-    for upvar in mir.upvar_decls.iter() {
-      let kupvar = UpvarDecl {
-        debug_name: upvar.debug_name.into(),
-        by_ref: upvar.by_ref,
-      };
-
-      fun.mod_
-        .funcs[MAIN_FUNCTION]
-        .upvar_decls
-        .push(kupvar);
-    }
-
-    fun.mod_
-      .funcs[MAIN_FUNCTION]
-      .spread_arg = mir.spread_arg.map(|v| v.into() );
-    fun.mod_
-      .funcs[MAIN_FUNCTION]
-      .span = mir.span.into();
-
-    Some(fun.finish())
-  }
 }
 impl MirPluginIntrinsicTrans for MirToHsaIrPass {
   fn trans_simple_intrinsic<'a, 'tcx>(&self,
@@ -340,7 +100,9 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
                                       parent_param_substs: &'tcx subst::Substs<'tcx>,
                                       args: &Vec<mir::Operand<'tcx>>,
                                       dest: mir::Lvalue<'tcx>,
-                                      extra_stmts: &mut Vec<mir::StatementKind<'tcx>>) {
+                                      extra_stmts: &mut Vec<mir::StatementKind<'tcx>>)
+    where 'tcx: 'a,
+  {
     use serde_json::{to_string_pretty};
 
     use syntax::symbol::{Symbol};
@@ -389,11 +151,10 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
         ..
       }) |
       TyFnDef(def_id, subs) => {
-        let mir = tcx.optimized_mir(def_id);
         let expanded = ExpandedKernelInfo {
           format: fmt,
           dest: dest,
-          kernel: mir,
+          kernel: def_id,
           substs: tcx.trans_apply_param_substs(parent_param_substs,
                                                &subs),
         };
@@ -407,11 +168,13 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
     };
 
     let expanded = expanded
-      .and_then(|expanded| {
-        self.build_hsa_ir(tcx,
-                          expanded.kernel,
-                          expanded.substs)
-          .map(|v| (expanded, v) )
+      .map(|expanded| {
+        let mut module =
+          ir::builder::Module::new(tcx,
+                                   expanded.substs);
+
+        module.build(expanded.kernel);
+        (expanded, module.finish())
       });
 
     if let Some((expanded, kernel_info)) = expanded {
@@ -430,10 +193,10 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
           let interned = sym.as_str();
           let cv = ConstVal::Str(interned);
           let literal = Literal::Value {
-            value: rustc::ty::Const {
+            value: tcx.mk_const(rustc::ty::Const {
               ty: tcx.mk_static_str(),
               val: cv,
-            },
+            }),
           };
           let constant = Constant {
             span: source_info.span,
@@ -465,7 +228,7 @@ impl Deref for MirToHsaIrPass {
 pub struct ExpandedKernelInfo<'tcx> {
   format: KernelInfoKind,
   dest: mir::Lvalue<'tcx>,
-  kernel: &'tcx mir::Mir<'tcx>,
+  kernel: DefId,
   substs: &'tcx subst::Substs<'tcx>,
 }
 #[derive(Clone, Copy, Eq, PartialEq, Hash)]

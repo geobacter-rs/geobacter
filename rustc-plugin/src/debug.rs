@@ -24,11 +24,10 @@ impl MirPass for Debug {
     }
     self.0.set(true);
 
-    let cstore = tcx.sess.cstore.clone();
-    let all_crates = cstore.crates();
+    let all_crates = tcx.crates();
 
     for krate in all_crates.iter() {
-      let original_crate_name = cstore
+      let original_crate_name = tcx
         .original_crate_name(*krate);
       println!("crate #{} original name: {}", krate,
                original_crate_name);

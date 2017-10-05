@@ -35,10 +35,9 @@ impl MirPass for ContextLoader {
                         mir: &mut Mir<'tcx>) {
     if !self.on_pass() { return; }
 
-    let cstore = tcx.sess.cstore.clone();
-    let all_crates = cstore.crates();
+    let all_crates = tcx.crates();
     for krate in all_crates.iter() {
-      let original_crate_name = cstore
+      let original_crate_name = tcx
         .original_crate_name(*krate);
 
       if original_crate_name.as_str() == HSA_CORE_CRATE_NAME {

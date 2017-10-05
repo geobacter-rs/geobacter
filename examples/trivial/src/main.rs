@@ -27,7 +27,7 @@ pub fn generic_function<A>(arg1: A) -> usize {
 pub fn nested_call_function() {
   // currently crashes, need to change from
   // single function to module based.
-  //second_function();
+  second_function();
 }
 pub fn gfn_arg<F>(f: F) -> &'static str
   where F: Fn(),

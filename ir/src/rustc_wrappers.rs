@@ -57,6 +57,12 @@ impl From<Span> for SpanDef {
     }
   }
 }
+impl Default for SpanDef {
+  fn default() -> SpanDef {
+    From::from(Span::default())
+  }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct SourceInfoDef {
   pub span: SpanDef,

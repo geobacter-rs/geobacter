@@ -17,6 +17,7 @@ extern crate indexvec;
 extern crate rustc;
 extern crate rustc_data_structures;
 extern crate rustc_const_math;
+extern crate rustc_trans;
 extern crate syntax;
 extern crate syntax_pos;
 extern crate compiler_builtins;
@@ -129,7 +130,7 @@ pub enum FunctionData {
 }
 
 impl FunctionData {
-  pub fn new(span: SpanDef) -> FunctionData {
+  pub fn new() -> FunctionData {
     FunctionData::Function(FunctionKind {
       basic_blocks: Default::default(),
       visibility_scopes: Default::default(),
@@ -138,7 +139,7 @@ impl FunctionData {
       upvar_decls: Default::default(),
       spread_arg: None,
       return_ty: None,
-      span,
+      span: Default::default(),
     })
   }
   pub fn intrinsic(name: String, sig: Vec<Ty>) -> FunctionData {
@@ -208,7 +209,13 @@ pub enum TerminatorKind {
     msg: AssertMessage,
     target: BasicBlock,
     cleanup: Option<BasicBlock>
-  }
+  },
+  Yield {
+    value: Operand,
+    resume: BasicBlock,
+    drop: Option<BasicBlock>,
+  },
+  GeneratorDrop,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
