@@ -3,11 +3,15 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use rustc::hir::def_id::{DefId, CrateNum, };
+use rustc::ty::{TyCtxt};
+use rustc_data_structures::stable_hasher::{self, HashStable};
 
 pub mod init;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct GlobalCtx_ {
+  local_crate_disambiguator: String,
+  id_gen: stable_hasher::StableHasher<u64>,
   core_crate_num: Option<CrateNum>,
   compiletime_crate_num: Option<CrateNum>,
 
@@ -23,6 +27,14 @@ impl GlobalCtx {
     GlobalCtx(Default::default())
   }
 
+  pub fn function_def_hash(&self, tcx: TyCtxt, def_id: DefId) -> u64 {
+    let mut hcx = tcx.create_stable_hashing_context();
+    let b = self.0.borrow();
+    let mut hash = b.id_gen.clone();
+    def_id.hash_stable(&mut hcx, &mut hash);
+    hash.finish()
+  }
+
   pub fn compiletime_crate_num(&self) -> CrateNum {
     self.0.borrow().compiletime_crate_num
       .clone()
@@ -34,5 +46,17 @@ impl GlobalCtx {
   {
     let mut b = self.0.borrow_mut();
     f(&mut *b)
+  }
+}
+
+impl Default for GlobalCtx_ {
+  fn default() -> Self {
+    GlobalCtx_ {
+      local_crate_disambiguator: Default::default(),
+      id_gen: stable_hasher::StableHasher::new(),
+      core_crate_num: Default::default(),
+      compiletime_crate_num: Default::default(),
+      kernel_info_for_def_id: Default::default(),
+    }
   }
 }

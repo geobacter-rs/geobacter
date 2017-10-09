@@ -4,9 +4,10 @@
 
 #![plugin(hsa_rustc_plugin)]
 
+
 mod intrinsics {
   extern "rust-intrinsic" {
-    pub fn json_kernel_info_for<F, Args, Ret>(f: &F) -> &'static str
+    pub fn json_kernel_info_for<F, Args, Ret>(f: &F) -> (u64, &'static str)
       where F: Fn<Args, Output=Ret>;
 
     // Returns global static crate kernels structure. This structure
@@ -15,7 +16,7 @@ mod intrinsics {
   }
 }
 
-pub fn json_kernel_info_for<F, Args, Ret>(f: &F) -> &'static str
+pub fn json_kernel_info_for<F, Args, Ret>(f: &F) -> (u64, &'static str)
   where F: Fn<Args, Output=Ret>
 {
   unsafe {

@@ -6,6 +6,8 @@ use rustc::ty::{TyCtxt};
 use rustc::mir::{Mir};
 use rustc::mir::transform::{MirPass, MirSource};
 
+use rustc_driver::driver::compute_crate_disambiguator;
+
 use super::GlobalCtx;
 
 const HSA_CORE_CRATE_NAME: &'static str = "hsa_core";
@@ -34,6 +36,11 @@ impl MirPass for ContextLoader {
                         src: MirSource,
                         mir: &mut Mir<'tcx>) {
     if !self.on_pass() { return; }
+
+    self.0.with_mut(|ctxt| {
+      ctxt.local_crate_disambiguator =
+        compute_crate_disambiguator(tcx.sess);
+    });
 
     let all_crates = tcx.crates();
     for krate in all_crates.iter() {

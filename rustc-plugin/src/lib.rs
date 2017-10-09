@@ -15,6 +15,8 @@
 
 #[macro_use]
 extern crate rustc;
+extern crate rustc_const_math;
+extern crate rustc_driver;
 extern crate rustc_mir;
 extern crate rustc_plugin;
 extern crate rustc_data_structures;
@@ -46,8 +48,6 @@ use syntax_pos::Span;
 //use kernel_info::KernelInfo;
 
 use ir::{MAIN_FUNCTION};
-
-use indexvec::Idx;
 
 use context::GlobalCtx;
 use context::init::ContextLoader;
@@ -106,9 +106,12 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
     use serde_json::{to_string_pretty};
 
     use syntax::symbol::{Symbol};
-    use rustc::middle::const_val::{ConstVal};
+    use rustc_const_math::{ConstInt};
+    use rustc::middle::const_val::{ConstVal, ConstAggregate};
     use rustc::mir::{Literal, Constant, Operand, Rvalue,
-                     StatementKind, Statement, Terminator};
+                     StatementKind, Statement, Terminator,
+                     Lvalue, AggregateKind};
+    use rustc::ty::{Const};
     use rustc_data_structures::indexed_vec::Idx;
 
     tcx.sess.span_note_without_error(source_info.span,
@@ -123,7 +126,6 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
       tcx.sess
         .span_fatal(source_info.span,
                     "incorrect kernel info intrinsic call");
-      return;
     }
 
     let local = match &args[0] {
@@ -134,7 +136,6 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
         tcx.sess
           .span_fatal(source_info.span,
                       "incorrect kernel info intrinsic call");
-        return;
       }
     };
     let local_ty = args[0].ty(parent_mir,
@@ -153,7 +154,7 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
       TyFnDef(def_id, subs) => {
         let expanded = ExpandedKernelInfo {
           format: fmt,
-          dest: dest,
+          dest,
           kernel: def_id,
           substs: tcx.trans_apply_param_substs(parent_param_substs,
                                                &subs),
@@ -163,7 +164,6 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
       _ => {
         tcx.sess.span_fatal(source_info.span,
                             "can't expand this type");
-        return;
       },
     };
 
@@ -178,43 +178,66 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
       });
 
     if let Some((expanded, kernel_info)) = expanded {
-      match expanded.format {
+      let id = self.ctx
+        .function_def_hash(tcx, expanded.kernel);
+      let id = ConstInt::U64(id);
+      let md_id = ConstVal::Integral(id);
+      let md_id = tcx.mk_const(Const {
+        ty: tcx.types.u64,
+        val: md_id,
+      });
+
+      let literal = Literal::Value {
+        value: md_id,
+      };
+      let constant = Constant {
+        span: source_info.span,
+        ty: tcx.types.u64,
+        literal,
+      };
+      let constant = Box::new(constant);
+      let md_id = Operand::Constant(constant);
+
+      let md_cv = match expanded.format {
         KernelInfoKind::Json => {
           let s = match to_string_pretty(&kernel_info) {
             Ok(s) => s,
             Err(e) => {
               tcx.sess.span_fatal(source_info.span,
                                   &format!("serialization error: {}", e)[..]);
-              return;
             },
           };
 
           let sym = Symbol::intern(s.as_str());
           let interned = sym.as_str();
-          let cv = ConstVal::Str(interned);
-          let literal = Literal::Value {
-            value: tcx.mk_const(rustc::ty::Const {
-              ty: tcx.mk_static_str(),
-              val: cv,
-            }),
-          };
-          let constant = Constant {
+
+          let md_cv = ConstVal::Str(interned);
+          let md_cv = tcx.mk_const(Const {
+            ty: tcx.mk_static_str(),
+            val: md_cv,
+          });
+
+          Constant {
             span: source_info.span,
             ty: tcx.mk_static_str(),
-            literal: literal,
-          };
-          let constant = Box::new(constant);
-          let operand = Operand::Constant(constant);
-          let rvalue = Rvalue::Use(operand);
-          let stmt_kind = StatementKind::Assign(expanded.dest,
-                                                rvalue);
-          extra_stmts.push(stmt_kind);
+            literal: Literal::Value {
+              value: md_cv,
+            },
+          }
         },
-      }
+      };
+
+      let md_cv = Box::new(md_cv);
+      let md_cv = Operand::Constant(md_cv);
+
+      let rvalue = Rvalue::Aggregate(Box::new(AggregateKind::Tuple),
+                                     vec![md_id, md_cv]);
+      let stmt_kind = StatementKind::Assign(expanded.dest,
+                                            rvalue);
+      extra_stmts.push(stmt_kind);
     } else {
       tcx.sess.span_fatal(source_info.span,
                           "unreachable?");
-      return;
     }
   }
 }

@@ -6,16 +6,17 @@ extern crate hsa_core;
 extern crate compiletime;
 
 pub fn main() {
-  let str1 = compiletime::json_kernel_info_for(&second_function);
-  println!("{}", str1);
-  let str2 = gfn_arg(second_function);
+  let (id, str1) = compiletime::json_kernel_info_for(&second_function);
+  println!("({}, {})", id, str1);
+  let (id2, str2) = gfn_arg(second_function);
   assert_eq!(str1, str2);
+  assert_eq!(id, id2);
 
-  let str1 = compiletime::json_kernel_info_for(&generic_function::<u64>);
-  println!("str2 {}", str1);
+  let (id, str1) = compiletime::json_kernel_info_for(&generic_function::<u64>);
+  println!("({}, {})", id, str1);
 
-  let str1 = compiletime::json_kernel_info_for(&nested_call_function);
-  println!("str2 {}", str1);
+  let (id, str1) = compiletime::json_kernel_info_for(&nested_call_function);
+  println!("({}, {})", id, str1);
 }
 
 pub fn second_function() {
@@ -27,7 +28,7 @@ pub fn generic_function<A>(arg1: A) -> usize {
 pub fn nested_call_function() {
   second_function();
 }
-pub fn gfn_arg<F>(f: F) -> &'static str
+pub fn gfn_arg<F>(f: F) -> (u64, &'static str)
   where F: Fn(),
 {
   compiletime::json_kernel_info_for(&f)
