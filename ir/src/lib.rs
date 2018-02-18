@@ -1,9 +1,10 @@
 #![feature(rustc_private)]
 #![feature(i128_type)]
 #![feature(compiler_builtins_lib)]
+#![feature(plugin)]
 
-extern crate spirv_headers;
-extern crate rspirv;
+#![plugin(ir_gen)]
+
 extern crate num_traits;
 extern crate serde;
 #[macro_use]
@@ -22,11 +23,7 @@ extern crate syntax;
 extern crate syntax_pos;
 extern crate compiler_builtins;
 
-use utils::HashableFloat;
-
 use indexvec::IndexVec;
-
-use syntax_pos::symbol::Symbol;
 
 use rustc::hir::def_id::{CrateNum, DefIndex, DefId};
 use rustc::mir::{SourceInfo};
@@ -36,21 +33,16 @@ use rustc_const_math::{ConstInt, ConstFloat, ConstUsize, ConstIsize};
 
 pub use syntax_pos::{Span, BytePos, SyntaxContext};
 
-pub use tys::{Mutability, Ty, TyData, PrimTy};
+pub use tys::{Mutability, Ty, TyData, PrimTy, IntTy};
 use rustc_wrappers::{SymbolDef, SpanDef, SourceInfoDef, CrateNumDef,
                      DefIndexDef, DefIdDef, ConstFloatDef,
                      ConstIntDef, ConstIsizeDef, ConstUsizeDef};
-
-pub mod tys;
-pub mod utils;
-pub mod rustc_wrappers;
-pub mod builder;
 
 macro_rules! duplicate_enum_for_serde {
   (pub enum $name:ident as $rustc_ty:path {
     $($variant:ident = $rustc_expr:path,)*
   }) => {
-    #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
     pub enum $name {
       $($variant),*
     }
@@ -71,6 +63,11 @@ macro_rules! duplicate_enum_for_serde {
   };
 }
 
+pub mod tys;
+pub mod utils;
+pub mod rustc_wrappers;
+pub mod builder;
+
 newtype_idx!(#[derive(Deserialize, Serialize)] pub struct VisibilityScope => "visibility-scope");
 newtype_idx!(#[derive(Deserialize, Serialize)] pub struct BasicBlock => "basic-block");
 newtype_idx!(#[derive(Deserialize, Serialize)] pub struct Local => "local");
@@ -79,6 +76,8 @@ newtype_idx!(#[derive(Deserialize, Serialize)] pub struct ConstVal => "constant-
 newtype_idx!(#[derive(Deserialize, Serialize)] pub struct Substs => "substitution");
 newtype_idx!(#[derive(Deserialize, Serialize)] pub struct Field => "field");
 newtype_idx!(#[derive(Deserialize, Serialize)] pub struct Function => "function");
+newtype_idx!(#[derive(Deserialize, Serialize)] pub struct AdtDef => "adt");
+newtype_idx!(#[derive(Deserialize, Serialize)] pub struct VTable => "vtable");
 
 pub type Functions   = IndexVec<Function, FunctionData>;
 pub type BasicBlocks = IndexVec<BasicBlock, BasicBlockData>;
@@ -88,25 +87,28 @@ pub type LocalDecls = IndexVec<Local, LocalDecl>;
 pub type Types = IndexVec<Ty, TyData>;
 pub type Substss = IndexVec<Substs, Vec<TsKind>>;
 pub type ConstVals = IndexVec<ConstVal, ConstValData>;
+pub type AdtDefs = IndexVec<AdtDef, Option<tys::AdtDefData>>;
+pub type Traits  = IndexVec<tys::traits::Trait, tys::traits::TraitData>;
+pub type VTables = IndexVec<VTable, VTableData>;
+pub type Dynamics = IndexVec<tys::Dynamic, tys::DynamicData>;
 
 pub const RETURN_POINTER: Local = Local(0);
 pub const MAIN_FUNCTION: Function = Function(0);
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Module {
   pub funcs: Functions,
   pub tys: Types,
   pub substs: Substss,
   pub const_vals: ConstVals,
+  pub adts: AdtDefs,
+  pub traits: Traits,
+  pub vtables: VTables,
+  pub dynamics: Dynamics,
 }
 impl Module {
   pub fn new() -> Module {
-    Module {
-      funcs: Default::default(),
-      tys: Default::default(),
-      substs: Default::default(),
-      const_vals: Default::default(),
-    }
+    Default::default()
   }
 }
 
@@ -218,20 +220,22 @@ pub enum TerminatorKind {
   GeneratorDrop,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
-pub enum ConstOp {
-  Add,
-  Sub,
-  Mul,
-  Div,
-  Rem,
-  Shr,
-  Shl,
-  Neg,
-  BitAnd,
-  BitOr,
-  BitXor,
+duplicate_enum_for_serde! {
+pub enum ConstOp as rustc_const_math::Op {
+  Add = rustc_const_math::Op::Add,
+  Sub = rustc_const_math::Op::Sub,
+  Mul = rustc_const_math::Op::Mul,
+  Div = rustc_const_math::Op::Div,
+  Rem = rustc_const_math::Op::Rem,
+  Shr = rustc_const_math::Op::Shr,
+  Shl = rustc_const_math::Op::Shl,
+  Neg = rustc_const_math::Op::Neg,
+  BitAnd = rustc_const_math::Op::BitAnd,
+  BitOr = rustc_const_math::Op::BitOr,
+  BitXor = rustc_const_math::Op::BitXor,
 }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 pub enum ConstMathErr {
   NotInRange,
@@ -242,8 +246,7 @@ pub enum ConstMathErr {
   DivisionByZero,
   RemainderByZero,
   UnsignedNegation,
-  ULitOutOfRange(PrimTy),
-  LitOutOfRange(PrimTy),
+  LitOutOfRange(IntTy),
 }
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
 pub enum AssertMessage {
@@ -351,7 +354,7 @@ pub enum ProjectionElem<V, T> {
     from: u32,
     to: u32,
   },
-  Downcast,
+  Downcast(AdtDef, usize),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
@@ -393,7 +396,7 @@ pub enum Rvalue {
 pub enum AggregateKind {
   Array(Ty),
   Tuple,
-  Adt,
+  Adt(AdtDef, usize, Substs, Option<usize>),
   Closure(DefIdDef, Substs),
 }
 
@@ -424,6 +427,19 @@ pub struct Static {
 pub struct VisibilityScopeData {
   pub span: SpanDef,
   pub parent_scope: Option<VisibilityScope>,
+}
+
+#[derive(Clone, Serialize, Deserialize, Hash, Eq, PartialEq, Debug)]
+pub enum VTableDataEntry {
+  Null,
+  Fn(Function),
+}
+#[derive(Clone, Serialize, Deserialize, Hash, Eq, PartialEq, Debug)]
+pub struct VTableData {
+  drop: Function,
+  size_of: u64,
+  align_of: u64,
+  components: Vec<VTableDataEntry>,
 }
 
 duplicate_enum_for_serde! {
@@ -512,5 +528,31 @@ impl From<rustc::mir::Local> for Local {
 impl From<rustc::mir::Field> for Field {
   fn from(v: rustc::mir::Field) -> Field {
     Field(v.index())
+  }
+}
+impl From<rustc_const_math::ConstMathErr> for ConstMathErr {
+  fn from(v: rustc_const_math::ConstMathErr) -> Self {
+    match v {
+      rustc_const_math::ConstMathErr::NotInRange =>
+        ConstMathErr::NotInRange,
+      rustc_const_math::ConstMathErr::CmpBetweenUnequalTypes =>
+        ConstMathErr::CmpBetweenUnequalTypes,
+      rustc_const_math::ConstMathErr::UnequalTypes(op) =>
+        ConstMathErr::UnequalTypes(op.into()),
+      rustc_const_math::ConstMathErr::Overflow(op) =>
+        ConstMathErr::Overflow(op.into()),
+      rustc_const_math::ConstMathErr::ShiftNegative =>
+        ConstMathErr::ShiftNegative,
+      rustc_const_math::ConstMathErr::DivisionByZero =>
+        ConstMathErr::DivisionByZero,
+      rustc_const_math::ConstMathErr::RemainderByZero =>
+        ConstMathErr::RemainderByZero,
+      rustc_const_math::ConstMathErr::UnsignedNegation =>
+        ConstMathErr::UnsignedNegation,
+      rustc_const_math::ConstMathErr::ULitOutOfRange(v) =>
+        ConstMathErr::LitOutOfRange(v.into()),
+      rustc_const_math::ConstMathErr::LitOutOfRange(v) =>
+        ConstMathErr::LitOutOfRange(v.into()),
+    }
   }
 }

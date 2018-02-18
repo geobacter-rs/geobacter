@@ -1,13 +1,13 @@
 [package]
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
-name = "trivial"
+name = "ndarray"
 version = "0.1.0"
+
+[dependencies]
+ndarray = "0.10.12"
 
 [dependencies.hsa-core]
 path = "../../hsa-core"
 
 [dependencies.hsa-rustc-plugin]
 path = "../../rustc-plugin/"
-
-[dependencies.kernel]
-path = "../../kernel"

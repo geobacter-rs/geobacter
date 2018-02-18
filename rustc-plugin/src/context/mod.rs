@@ -15,6 +15,8 @@ pub struct GlobalCtx_ {
   core_crate_num: Option<CrateNum>,
   compiletime_crate_num: Option<CrateNum>,
 
+  panic_fmt_did: Option<DefId>,
+
   kernel_info_for_def_id: Option<DefId>,
   //def_id_to_kernel_info: HashMap<DefId, KernelInfo>,
 }
@@ -41,6 +43,13 @@ impl GlobalCtx {
       .expect("internal initialization error")
   }
 
+  pub fn panic_fmt_lang_item(&self) -> DefId {
+    self.0.borrow()
+      .panic_fmt_did
+      .clone()
+      .expect("internal initialization error")
+  }
+
   pub fn with_mut<F, U>(&self, f: F) -> U
     where F: FnOnce(&mut GlobalCtx_) -> U,
   {
@@ -56,6 +65,7 @@ impl Default for GlobalCtx_ {
       id_gen: stable_hasher::StableHasher::new(),
       core_crate_num: Default::default(),
       compiletime_crate_num: Default::default(),
+      panic_fmt_did: None,
       kernel_info_for_def_id: Default::default(),
     }
   }

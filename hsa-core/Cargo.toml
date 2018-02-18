@@ -4,8 +4,8 @@ name = "hsa-core"
 version = "0.1.0"
 
 [dependencies]
-serde = "0.9.13"
-serde_derive = "0.9.13"
+serde = "1.0"
+serde_derive = "1.0"
 
 [dependencies.hsa-core-gen]
 optional = false
@@ -13,6 +13,6 @@ path = "../hsa-core-gen"
 
 [dev-dependencies]
 
-#[dependencies.hsa-rustc-plugin]
-#optional = false
-#path = "../rustc-plugin"
+[dependencies.hsa-rustc-plugin]
+optional = false
+path = "../rustc-plugin"

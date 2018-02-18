@@ -7,6 +7,7 @@ use syntax::ast::FloatTy;
 use syntax_pos::{Span, BytePos, NO_EXPANSION,
                  SyntaxContext};
 use syntax_pos::symbol::Symbol;
+use rustc;
 use rustc::hir::def_id::{CrateNum, DefIndex, DefId};
 use rustc::mir::{SourceInfo};
 use rustc_const_math::{ConstFloat, ConstInt, ConstIsize, ConstUsize};
@@ -299,4 +300,11 @@ impl From<ConstUsize> for ConstUsizeDef {
       ConstUsize::Us64(v) => ConstUsizeDef::Us64(v),
     }
   }
+}
+duplicate_enum_for_serde! {
+pub enum CtorKind as rustc::hir::def::CtorKind {
+  Fn = rustc::hir::def::CtorKind::Fn,
+  Const = rustc::hir::def::CtorKind::Const,
+  Fictive = rustc::hir::def::CtorKind::Fictive,
+}
 }

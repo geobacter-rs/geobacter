@@ -17,8 +17,8 @@ impl Debug {
 impl MirPass for Debug {
   fn run_pass<'a, 'tcx>(&self,
                         tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                        src: MirSource,
-                        mir: &mut Mir<'tcx>) {
+                        _src: MirSource,
+                        _mir: &mut Mir<'tcx>) {
     if self.0.get() {
       return;
     }

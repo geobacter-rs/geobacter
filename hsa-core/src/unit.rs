@@ -137,7 +137,7 @@ pub struct Mat<T, N>(pub(crate) <N as MatN<T>>::InnerT)
         T: ScalarT;
 
 pub trait RealBitWidth: Nn {
-  type RealStorageTy: Copy + Serialize + Deserialize + PartialOrd + PartialEq + Debug;
+  type RealStorageTy: Copy + Serialize + for<'a> Deserialize<'a> + PartialOrd + PartialEq + Debug;
 }
 impl RealBitWidth for N16 {
   type RealStorageTy = u16;
@@ -164,8 +164,8 @@ impl<Bits> RealT for Real<Bits>
 { }
 
 pub trait IntBitWidth: Nn {
-  type UIntStorageTy: Copy + Serialize + Deserialize + Hash + PartialOrd + PartialEq + Ord + Eq + Debug;
-  type IntStorageTy: Copy + Serialize + Deserialize + Hash + PartialOrd + PartialEq + Ord + Eq + Debug;
+  type UIntStorageTy: Copy + Serialize + for<'a> Deserialize<'a> + Hash + PartialOrd + PartialEq + Ord + Eq + Debug;
+  type IntStorageTy: Copy + Serialize + for<'a> Deserialize<'a> + Hash + PartialOrd + PartialEq + Ord + Eq + Debug;
 }
 impl IntBitWidth for N8 {
   type UIntStorageTy = u8;
@@ -223,12 +223,12 @@ impl<B> Serialize for $ty<B>
   }
 }
 
-impl<B> Deserialize for $ty<B>
+impl<'a, B> Deserialize<'a> for $ty<B>
   where B: $bt,
-        <B as $bt>::$storage_assoc: Deserialize,
+        <B as $bt>::$storage_assoc: for<'b> Deserialize<'b>,
 {
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: Deserializer,
+  fn deserialize<D>(deserializer: D) -> Result<Self, <D as Deserializer<'a>>::Error>
+    where D: Deserializer<'a>,
   {
     let inner: <B as $bt>::$storage_assoc =
       <<B as $bt>::$storage_assoc as Deserialize>::deserialize(deserializer)?;
@@ -267,13 +267,13 @@ impl<T, N> Serialize for $aty<T, N>
   }
 }
 
-impl<T, N> Deserialize for $aty<T, N>
+impl<'a, T, N> Deserialize<'a> for $aty<T, N>
   where N: $bt<T>,
         T: ScalarT,
-        <N as $bt<T>>::InnerT: Deserialize,
+        <N as $bt<T>>::InnerT: for<'b> Deserialize<'b>,
 {
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: Deserializer,
+  fn deserialize<D>(deserializer: D) -> Result<Self, <D as Deserializer<'a>>::Error>
+    where D: Deserializer<'a>,
   {
     let inner: <N as $bt<T>>::InnerT =
       <<N as $bt<T>>::InnerT as Deserialize>::deserialize(deserializer)?;

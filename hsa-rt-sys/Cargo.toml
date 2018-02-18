@@ -1,0 +1,14 @@
+[package]
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+build = "src/build.rs"
+name = "hsa-rt-sys"
+version = "0.1.0"
+
+[dependencies]
+
+[build-dependencies]
+bindgen = "0.31.3"
+
+[lib]
+name = "hsa_rt_sys"
+path = "src/lib/lib.rs"

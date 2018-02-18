@@ -1,0 +1,7 @@
+[package]
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+name = "hsa-agents-info"
+version = "0.1.0"
+
+[dependencies.hsa-rt]
+path = "../../hsa-rt"

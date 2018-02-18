@@ -1,7 +1,5 @@
 [package]
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
-name = "compiletime"
+name = "recycled-arc-vec"
 version = "0.1.0"
 
-[dependencies.hsa-rustc-plugin]
-path = "../rustc-plugin"

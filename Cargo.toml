@@ -1,6 +1,11 @@
 
 [workspace]
 members = ["hsa-core-gen", "hsa-core", "runtime",
-           "ir", "kernel", "rustc-plugin",
-           "indexvec",
-           "examples/trivial",]
+           "ir", "ir-gen", "kernel", "rustc-plugin",
+
+           "hsa-rt-sys", "hsa-rt",
+           "tools/hsa-agent-info",
+
+           "indexvec", "recycled-arc-vec",
+
+           "examples/trivial", "examples/ndarray"]

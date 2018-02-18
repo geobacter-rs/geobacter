@@ -29,25 +29,19 @@ extern crate serde;
 extern crate serde_json;
 //extern crate kernel;
 
-use std::cell::RefCell;
 use std::rc::Rc;
 use std::ops::Deref;
 
-use rustc::hir::def_id::{DefId, CrateNum};
-use rustc::mir::{self, Mir, TerminatorKind, SourceInfo};
-use rustc::mir::transform::{MirPass, MirSource};
-use rustc::session::Session;
-use rustc::ty::{self, TyCtxt, subst, TyFnDef, TyRef, TypeAndMut,
-                TyParam, FnSig};
+use rustc::hir::def_id::{DefId};
+use rustc::mir::{self, SourceInfo};
+use rustc::mir::transform::{MirPass};
+use rustc::ty::{self, TyCtxt, subst, TyFnDef, TyRef, TypeAndMut, FnSig};
 use rustc::traits::MirPluginIntrinsicTrans;
 use rustc_plugin::Registry;
 use syntax::feature_gate::AttributeType;
-use syntax_pos::Span;
 //use syntax::ast::NodeId;
 
 //use kernel_info::KernelInfo;
-
-use ir::{MAIN_FUNCTION};
 
 use context::GlobalCtx;
 use context::init::ContextLoader;
@@ -62,12 +56,7 @@ pub fn plugin_registrar(reg: &mut Registry) {
   reg.register_attribute("hsa_lang_item".into(),
                          AttributeType::Normal);
 
-  //let p = Rc::new(debug::Debug::new());
-  //reg.register_post_optimization_mir_pass(p as Rc<MirPass>);
-
   let ctxt = GlobalCtx::new();
-  let init = Rc::new(ContextLoader::new(&ctxt));
-  reg.register_post_optimization_mir_pass(init as Rc<MirPass>);
 
   let compiletime = Box::new(MirToHsaIrPass {
     ctx: ctxt.clone(),
@@ -95,7 +84,7 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
                                       tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                       name: &str,
                                       source_info: SourceInfo,
-                                      sig: &FnSig<'tcx>,
+                                      _sig: &FnSig<'tcx>,
                                       parent_mir: &mir::Mir<'tcx>,
                                       parent_param_substs: &'tcx subst::Substs<'tcx>,
                                       args: &Vec<mir::Operand<'tcx>>,
@@ -107,12 +96,10 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
 
     use syntax::symbol::{Symbol};
     use rustc_const_math::{ConstInt};
-    use rustc::middle::const_val::{ConstVal, ConstAggregate};
+    use rustc::middle::const_val::{ConstVal};
     use rustc::mir::{Literal, Constant, Operand, Rvalue,
-                     StatementKind, Statement, Terminator,
-                     Lvalue, AggregateKind};
-    use rustc::ty::{Const};
-    use rustc_data_structures::indexed_vec::Idx;
+                     StatementKind, AggregateKind};
+    use rustc::ty::{Const, TyClosure};
 
     tcx.sess.span_note_without_error(source_info.span,
                                      "passing over this");
@@ -128,18 +115,11 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
                     "incorrect kernel info intrinsic call");
     }
 
-    let local = match &args[0] {
-      &mir::Operand::Consume(mir::Lvalue::Local(ref l)) => {
-        &parent_mir.local_decls[*l]
-      },
-      _ => {
-        tcx.sess
-          .span_fatal(source_info.span,
-                      "incorrect kernel info intrinsic call");
-      }
+    let lang_items = ir::builder::LangItems {
+      panic_fmt: self.ctx.panic_fmt_lang_item(),
     };
-    let local_ty = args[0].ty(parent_mir,
-                              tcx);
+
+    let local_ty = args[0].ty(parent_mir, tcx);
     let local_ty = tcx
       .trans_apply_param_substs(parent_param_substs,
                                 &local_ty);
@@ -161,7 +141,45 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
         };
         Some(expanded)
       },
+      TyRef(_, TypeAndMut {
+        ty: &ty::TyS {
+          sty: TyClosure(def_id, subs),
+          ..
+        },
+        ..
+      }) |
+      TyClosure(def_id, subs) => {
+        let expanded = ExpandedKernelInfo {
+          format: fmt,
+          dest,
+          kernel: def_id,
+          substs: tcx
+            .trans_apply_param_substs(parent_param_substs,
+                                      &subs)
+            .substs,
+        };
+        Some(expanded)
+      },
       _ => {
+        let msg = format!("local_ty: {:?}", local_ty);
+        tcx.sess.span_note_without_error(source_info.span,
+                                         &msg[..]);
+        match local_ty.sty {
+          TyRef(_, TypeAndMut {
+            ty: &ty::TyS {
+              sty: TyClosure(d, subs),
+              ..
+            },
+            ..
+          }) |
+          TyClosure(d, subs) => {
+            let trait_def_id = tcx.trait_of_item(d);
+            let msg = format!("trait_def_id: {:?}", trait_def_id);
+            tcx.sess.span_note_without_error(source_info.span,
+                                             &msg[..]);
+          },
+          _ => {},
+        }
         tcx.sess.span_fatal(source_info.span,
                             "can't expand this type");
       },
@@ -171,7 +189,8 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
       .map(|expanded| {
         let mut module =
           ir::builder::Module::new(tcx,
-                                   expanded.substs);
+                                   expanded.substs,
+                                   lang_items.clone());
 
         module.build(expanded.kernel);
         (expanded, module.finish())
@@ -229,6 +248,9 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
 
       let md_cv = Box::new(md_cv);
       let md_cv = Operand::Constant(md_cv);
+
+      //let md_upvars_ty = tcx.mk_array(tcx.types.u8, 0);
+      //let md_upvars_ty = tcx.mk_array(md_upvars, 0);
 
       let rvalue = Rvalue::Aggregate(Box::new(AggregateKind::Tuple),
                                      vec![md_id, md_cv]);

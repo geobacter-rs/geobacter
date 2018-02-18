@@ -1,0 +1,11 @@
+[package]
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+name = "hsa-rt"
+version = "0.1.0"
+
+[dependencies]
+serde = "1.0.19"
+serde_derive = "1.0.19"
+
+[dependencies.hsa-rt-sys]
+path = "../hsa-rt-sys"

@@ -21,3 +21,7 @@ path = "../ir"
 [lib]
 name = "hsa_rustc_plugin"
 plugin = true
+
+[profile.release]
+debug-assertions = true
+debug = true
