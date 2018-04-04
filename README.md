@@ -32,3 +32,6 @@ this project doesn't need to restrict the functions it can accept.
 The acceptability of a function can be left to the specific target 
 platform codegen crate. 
 
+## Misc Notes
+
+Your Rust toolchain build *must* have LLVM assertions off.

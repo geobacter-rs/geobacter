@@ -2,7 +2,6 @@
 use std::marker::PhantomData;
 use serde_json;
 
-use ir;
 use hsa_core;
 use hsa_core::traits::NumaSend;
 
@@ -13,7 +12,6 @@ pub struct ModuleData<'a, F, Args, Ret>
 {
   id: u64,
   f: &'a F,
-  ir: ir::Module,
   upvars: &'a [&'a NumaSend],
   codegens: Vec<Vec<u8>>,
   _marker: PhantomData<(Args, Ret)>,

@@ -10,7 +10,6 @@ pub mod init;
 
 #[derive(Debug)]
 pub struct GlobalCtx_ {
-  local_crate_disambiguator: String,
   id_gen: stable_hasher::StableHasher<u64>,
   core_crate_num: Option<CrateNum>,
   compiletime_crate_num: Option<CrateNum>,
@@ -61,7 +60,6 @@ impl GlobalCtx {
 impl Default for GlobalCtx_ {
   fn default() -> Self {
     GlobalCtx_ {
-      local_crate_disambiguator: Default::default(),
       id_gen: stable_hasher::StableHasher::new(),
       core_crate_num: Default::default(),
       compiletime_crate_num: Default::default(),

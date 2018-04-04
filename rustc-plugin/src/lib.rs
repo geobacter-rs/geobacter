@@ -20,10 +20,8 @@ extern crate rustc_driver;
 extern crate rustc_mir;
 extern crate rustc_plugin;
 extern crate rustc_data_structures;
-extern crate rustc_trans;
 extern crate syntax;
 extern crate syntax_pos;
-extern crate ir;
 extern crate indexvec;
 extern crate serde;
 extern crate serde_json;
@@ -34,7 +32,7 @@ use std::ops::Deref;
 
 use rustc::hir::def_id::{DefId};
 use rustc::mir::{self, SourceInfo};
-use rustc::mir::transform::{MirPass};
+use rustc_mir::transform::{MirPass};
 use rustc::ty::{self, TyCtxt, subst, TyFnDef, TyRef, TypeAndMut, FnSig};
 use rustc::traits::MirPluginIntrinsicTrans;
 use rustc_plugin::Registry;
@@ -58,11 +56,17 @@ pub fn plugin_registrar(reg: &mut Registry) {
 
   let ctxt = GlobalCtx::new();
 
-  let compiletime = Box::new(MirToHsaIrPass {
+  let kernel_id = Box::new(KernelIdIntrinsicPass {
     ctx: ctxt.clone(),
   });
-  reg.register_intrinsic("json_kernel_info_for".to_string(),
-                         compiletime);
+  reg.register_intrinsic("kernel_id_for".to_string(),
+                         kernel_id);
+
+  let kernel_upvars = Box::new(KernelUpvarsIntrinsicPass {
+    ctx: ctxt.clone(),
+  });
+  reg.register_intrinsic("kernel_upvars".to_string(),
+                         kernel_upvars);
 }
 
 pub enum LangItem {
@@ -73,13 +77,36 @@ pub enum LangItem {
   BinOpFunction,
 }
 
-struct MirToHsaIrPass {
+struct KernelUpvarsIntrinsicPass {
   ctx: GlobalCtx,
 }
-impl MirToHsaIrPass {
+impl KernelUpvarsIntrinsicPass {
 
 }
-impl MirPluginIntrinsicTrans for MirToHsaIrPass {
+impl MirPluginIntrinsicTrans for KernelUpvarsIntrinsicPass {
+  fn trans_simple_intrinsic<'a, 'tcx>(&self,
+                                      _tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                      _name: &str,
+                                      _source_info: SourceInfo,
+                                      _sig: &FnSig<'tcx>,
+                                      _parent_mir: &mir::Mir<'tcx>,
+                                      _parent_param_substs: &'tcx subst::Substs<'tcx>,
+                                      _args: &Vec<mir::Operand<'tcx>>,
+                                      _dest: mir::Place<'tcx>,
+                                      extra_stmts: &mut Vec<mir::StatementKind<'tcx>>)
+    where 'tcx: 'a,
+  {
+    unimplemented!();
+  }
+}
+
+struct KernelIdIntrinsicPass {
+  ctx: GlobalCtx,
+}
+impl KernelIdIntrinsicPass {
+
+}
+impl MirPluginIntrinsicTrans for KernelIdIntrinsicPass {
   fn trans_simple_intrinsic<'a, 'tcx>(&self,
                                       tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                       name: &str,
@@ -88,12 +115,10 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
                                       parent_mir: &mir::Mir<'tcx>,
                                       parent_param_substs: &'tcx subst::Substs<'tcx>,
                                       args: &Vec<mir::Operand<'tcx>>,
-                                      dest: mir::Lvalue<'tcx>,
+                                      dest: mir::Place<'tcx>,
                                       extra_stmts: &mut Vec<mir::StatementKind<'tcx>>)
     where 'tcx: 'a,
   {
-    use serde_json::{to_string_pretty};
-
     use syntax::symbol::{Symbol};
     use rustc_const_math::{ConstInt};
     use rustc::middle::const_val::{ConstVal};
@@ -101,29 +126,19 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
                      StatementKind, AggregateKind};
     use rustc::ty::{Const, TyClosure};
 
-    tcx.sess.span_note_without_error(source_info.span,
-                                     "passing over this");
-
-    let fmt = match name {
-      "json_kernel_info_for" => KernelInfoKind::Json,
-      _ => unreachable!(),
-    };
-
     if args.len() != 1 {
       tcx.sess
         .span_fatal(source_info.span,
                     "incorrect kernel info intrinsic call");
     }
 
-    let lang_items = ir::builder::LangItems {
-      panic_fmt: self.ctx.panic_fmt_lang_item(),
-    };
-
     let local_ty = args[0].ty(parent_mir, tcx);
     let local_ty = tcx
       .trans_apply_param_substs(parent_param_substs,
                                 &local_ty);
-    let expanded = match local_ty.sty {
+
+    let reveal_all = rustc::ty::ParamEnv::empty(rustc::traits::Reveal::All);
+    let instance = match local_ty.sty {
       TyRef(_, TypeAndMut {
         ty: &ty::TyS {
           sty: TyFnDef(def_id, subs),
@@ -132,15 +147,18 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
         ..
       }) |
       TyFnDef(def_id, subs) => {
-        let expanded = ExpandedKernelInfo {
-          format: fmt,
-          dest,
-          kernel: def_id,
-          substs: tcx.trans_apply_param_substs(parent_param_substs,
-                                               &subs),
-        };
-        Some(expanded)
+        let subs = tcx
+          .trans_apply_param_substs(parent_param_substs,
+                                    &subs);
+
+        let msg = format!("local_ty: {:?}, substs: {:?}", tcx.type_of(def_id),
+                          subs);
+        tcx.sess.span_note_without_error(source_info.span,
+                                         &msg[..]);
+        rustc::ty::Instance::resolve(tcx, reveal_all, def_id, subs)
+          .expect("must be resolvable")
       },
+
       TyRef(_, TypeAndMut {
         ty: &ty::TyS {
           sty: TyClosure(def_id, subs),
@@ -149,21 +167,18 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
         ..
       }) |
       TyClosure(def_id, subs) => {
-        let expanded = ExpandedKernelInfo {
-          format: fmt,
-          dest,
-          kernel: def_id,
-          substs: tcx
-            .trans_apply_param_substs(parent_param_substs,
-                                      &subs)
-            .substs,
-        };
-        Some(expanded)
-      },
-      _ => {
-        let msg = format!("local_ty: {:?}", local_ty);
+        let subs = tcx
+          .trans_apply_param_substs(parent_param_substs,
+                                    &subs);
+        let msg = format!("local_ty: {:?}, substs: {:?}", tcx.type_of(def_id),
+                          subs);
         tcx.sess.span_note_without_error(source_info.span,
                                          &msg[..]);
+        let env = subs.closure_kind(def_id, tcx);
+        rustc_mir::monomorphize::resolve_closure(tcx, def_id, subs, env)
+      },
+
+      _ => {
         match local_ty.sty {
           TyRef(_, TypeAndMut {
             ty: &ty::TyS {
@@ -185,98 +200,60 @@ impl MirPluginIntrinsicTrans for MirToHsaIrPass {
       },
     };
 
-    let expanded = expanded
-      .map(|expanded| {
-        let mut module =
-          ir::builder::Module::new(tcx,
-                                   expanded.substs,
-                                   lang_items.clone());
+    let def_id = instance.def_id();
 
-        module.build(expanded.kernel);
-        (expanded, module.finish())
-      });
+    let crate_name = tcx.crate_name(def_id.krate);
+    let crate_name = ConstVal::Str(crate_name.as_str());
+    let crate_name = tcx.mk_const(Const {
+      ty: tcx.mk_static_str(),
+      val: crate_name,
+    });
+    let crate_name = Literal::Value {
+      value: crate_name,
+    };
+    let crate_name = Constant {
+      span: source_info.span,
+      ty: tcx.mk_static_str(),
+      literal: crate_name,
+    };
+    let crate_name = Box::new(crate_name);
+    let crate_name = Operand::Constant(crate_name);
 
-    if let Some((expanded, kernel_info)) = expanded {
-      let id = self.ctx
-        .function_def_hash(tcx, expanded.kernel);
-      let id = ConstInt::U64(id);
-      let md_id = ConstVal::Integral(id);
-      let md_id = tcx.mk_const(Const {
+    let mk_u64 = |v: u64| {
+      let v = ConstInt::U64(v);
+      let v = ConstVal::Integral(v);
+      let v = tcx.mk_const(Const {
         ty: tcx.types.u64,
-        val: md_id,
+        val: v,
       });
-
-      let literal = Literal::Value {
-        value: md_id,
+      let v = Literal::Value {
+        value: v,
       };
-      let constant = Constant {
+      let v = Constant {
         span: source_info.span,
         ty: tcx.types.u64,
-        literal,
+        literal: v,
       };
-      let constant = Box::new(constant);
-      let md_id = Operand::Constant(constant);
+      let v = Box::new(v);
+      Operand::Constant(v)
+    };
 
-      let md_cv = match expanded.format {
-        KernelInfoKind::Json => {
-          let s = match to_string_pretty(&kernel_info) {
-            Ok(s) => s,
-            Err(e) => {
-              tcx.sess.span_fatal(source_info.span,
-                                  &format!("serialization error: {}", e)[..]);
-            },
-          };
+    let disambiguator = tcx.crate_disambiguator(def_id.krate);
+    let (d_hi, d_lo) = disambiguator.to_fingerprint().as_value();
+    let d_hi = mk_u64(d_hi);
+    let d_lo = mk_u64(d_lo);
 
-          let sym = Symbol::intern(s.as_str());
-          let interned = sym.as_str();
+    let id = mk_u64(def_id.index.as_raw_u32() as u64);
 
-          let md_cv = ConstVal::Str(interned);
-          let md_cv = tcx.mk_const(Const {
-            ty: tcx.mk_static_str(),
-            val: md_cv,
-          });
-
-          Constant {
-            span: source_info.span,
-            ty: tcx.mk_static_str(),
-            literal: Literal::Value {
-              value: md_cv,
-            },
-          }
-        },
-      };
-
-      let md_cv = Box::new(md_cv);
-      let md_cv = Operand::Constant(md_cv);
-
-      //let md_upvars_ty = tcx.mk_array(tcx.types.u8, 0);
-      //let md_upvars_ty = tcx.mk_array(md_upvars, 0);
-
-      let rvalue = Rvalue::Aggregate(Box::new(AggregateKind::Tuple),
-                                     vec![md_id, md_cv]);
-      let stmt_kind = StatementKind::Assign(expanded.dest,
-                                            rvalue);
-      extra_stmts.push(stmt_kind);
-    } else {
-      tcx.sess.span_fatal(source_info.span,
-                          "unreachable?");
-    }
+    let rvalue = Rvalue::Aggregate(Box::new(AggregateKind::Tuple),
+                                   vec![crate_name, d_hi, d_lo, id]);
+    let stmt_kind = StatementKind::Assign(dest, rvalue);
+    extra_stmts.push(stmt_kind);
   }
 }
-impl Deref for MirToHsaIrPass {
+impl Deref for KernelIdIntrinsicPass {
   type Target = GlobalCtx;
   fn deref(&self) -> &Self::Target {
     &self.ctx
   }
-}
-
-pub struct ExpandedKernelInfo<'tcx> {
-  format: KernelInfoKind,
-  dest: mir::Lvalue<'tcx>,
-  kernel: DefId,
-  substs: &'tcx subst::Substs<'tcx>,
-}
-#[derive(Clone, Copy, Eq, PartialEq, Hash)]
-enum KernelInfoKind {
-  Json,
 }

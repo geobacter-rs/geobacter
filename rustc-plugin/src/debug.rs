@@ -2,7 +2,7 @@
 use std::cell::Cell;
 
 use rustc::mir::{Mir};
-use rustc::mir::transform::{MirPass, MirSource};
+use rustc_mir::transform::{MirPass, MirSource};
 use rustc::ty::{TyCtxt};
 
 #[derive(Debug, Default)]

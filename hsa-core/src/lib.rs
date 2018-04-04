@@ -1,5 +1,4 @@
 #![feature(custom_attribute)]
-#![feature(associated_consts)]
 #![feature(plugin)]
 #![feature(use_extern_macros)]
 #![feature(intrinsics)]

@@ -3,11 +3,11 @@ authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 name = "trivial"
 version = "0.1.0"
 
+[dependencies]
+runtime = { path = "../../runtime" }
+
 [dependencies.hsa-core]
 path = "../../hsa-core"
 
 [dependencies.hsa-rustc-plugin]
 path = "../../rustc-plugin/"
-
-[dependencies.kernel]
-path = "../../kernel"

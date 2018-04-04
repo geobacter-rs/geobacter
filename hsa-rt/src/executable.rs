@@ -2,6 +2,7 @@
 use std::error::Error;
 use std::ffi::CString;
 use std::mem::transmute;
+use std::os::raw::c_void;
 
 use ffi;
 
@@ -54,6 +55,27 @@ impl Executable {
                                                                   transmute(&mut this.0)) => this)?;
 
     Ok(o)
+  }
+
+  pub fn define_global_variable(&self,
+                                name: &str,
+                                ptr: *mut c_void) -> Result<(), Box<Error>> {
+    let name = CString::new(name)?;
+    check_err!(ffi::hsa_executable_global_variable_define(self.0,
+                                                          name.as_ptr(),
+                                                          ptr))?;
+    Ok(())
+  }
+  pub fn define_agent_global_variable(&self,
+                                      agent: &Agent,
+                                      name: &str,
+                                      ptr: *mut c_void) -> Result<(), Box<Error>> {
+    let name = CString::new(name)?;
+    check_err!(ffi::hsa_executable_agent_global_variable_define(self.0,
+                                                                agent.0,
+                                                                name.as_ptr(),
+                                                                ptr))?;
+    Ok(())
   }
 
   pub fn freeze<T>(self, options: T) -> Result<FrozenExecutable, Box<Error>>

@@ -8,4 +8,5 @@ members = ["hsa-core-gen", "hsa-core", "runtime",
 
            "indexvec", "recycled-arc-vec",
 
-           "examples/trivial", "examples/ndarray"]
+           "examples/trivial", "examples/ndarray",
+           "test-internal-dlopen"]

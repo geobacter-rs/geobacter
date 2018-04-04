@@ -7,6 +7,9 @@ version = "0.1.0"
 serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1.0.5"
+indexvec = { path = "../indexvec" }
+tempdir = "0.3.6"
+flate2 = "1.0.1"
 
 [dependencies.hsa-core]
 path = "../hsa-core"
@@ -17,12 +20,6 @@ path = "../hsa-rt"
 [dependencies.hsa-rt-sys]
 path = "../hsa-rt-sys"
 
-[dependencies.indexvec]
-path = "../indexvec"
-
-[dependencies.ir]
-path = "../ir"
-
-[dependencies.kernel]
+[dependencies.hsa-rustc-plugin]
 optional = false
-path = "../kernel"
+path = "../rustc-plugin"

@@ -3,9 +3,7 @@ use std::cell::Cell;
 
 use rustc::ty::{TyCtxt};
 use rustc::mir::{Mir};
-use rustc::mir::transform::{MirPass, MirSource};
-
-use rustc_driver::driver::compute_crate_disambiguator;
+use rustc_mir::transform::{MirPass, MirSource};
 
 use super::GlobalCtx;
 
@@ -45,8 +43,6 @@ impl MirPass for ContextLoader {
     if !self.on_pass() { return; }
 
     self.ctx.with_mut(|ctxt| {
-      ctxt.local_crate_disambiguator =
-        compute_crate_disambiguator(tcx.sess);
       ctxt.panic_fmt_did =
         Some(tcx.require_lang_item(PanicFmtLangItem));
     });

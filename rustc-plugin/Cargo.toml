@@ -15,9 +15,6 @@ serde_json = "1.0.3"
 [dependencies.indexvec]
 path = "../indexvec"
 
-[dependencies.ir]
-path = "../ir"
-
 [lib]
 name = "hsa_rustc_plugin"
 plugin = true
