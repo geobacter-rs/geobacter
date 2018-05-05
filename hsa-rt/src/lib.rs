@@ -27,6 +27,8 @@ pub mod agent;
 pub mod code_object;
 pub mod executable;
 pub mod mem;
+pub mod queue;
+pub mod signal;
 
 #[derive(Debug)]
 pub struct ApiContext;

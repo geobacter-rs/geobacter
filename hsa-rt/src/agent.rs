@@ -177,8 +177,7 @@ impl Isa {
     let profiles = isa_info!(self, ffi::hsa_isa_info_t_HSA_ISA_INFO_PROFILES,
                              [false; 2])?;
 
-    Ok(Profiles(profiles[0],
-                profiles[1]))
+    Ok(Profiles(profiles[0], profiles[1]))
   }
   pub fn default_float_rounding_modes(&self) -> Result<DefaultFloatRoundingModes, Box<Error>> {
     let modes = isa_info!(self, ffi::hsa_isa_info_t_HSA_ISA_INFO_DEFAULT_FLOAT_ROUNDING_MODES,
