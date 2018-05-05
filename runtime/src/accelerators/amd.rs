@@ -26,7 +26,7 @@ impl Accelerator for AmdRadeon {
   }
 
   fn llvm_target(&self) -> String {
-    "amdgcn-amd-hcc-amdgiz".into()
+    "amdgcn-amd-amdhsa-amdgiz".into()
   }
   fn target_arch(&self) -> String {
     "amdgpu".into()

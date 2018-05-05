@@ -1,7 +1,9 @@
 
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
+use std::ffi::OsStr;
 use std::sync::{Arc, Weak, RwLock, Mutex};
+use std::path::{Component};
 
 use indexvec::{Idx, IndexVec};
 
@@ -64,6 +66,10 @@ impl Context {
         if !path.is_file() { continue; }
         let extension = path.extension();
         if extension.is_none() || extension.unwrap() != "so" { continue; }
+        // skip other toolchains
+        if path.components().any(|v| v == Component::Normal(OsStr::new(".rustup")) ) {
+          continue;
+        }
 
         let metadata = match Metadata::new(CrateSource::SearchPaths(path.clone())) {
           Ok(md) => md,

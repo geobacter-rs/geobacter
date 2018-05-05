@@ -140,7 +140,7 @@ impl CrateMetadataLoader {
       }
 
       for &(ref symbol_name, ref dep_blob) in object.all.iter() {
-        //println!("parsing metadata from {}", symbol_name);
+        println!("parsing metadata from {}", symbol_name);
         let root = dep_blob.get_root();
         let name = CrateNameHash {
           name: root.name,
@@ -198,9 +198,9 @@ impl CrateMetadataLoader {
 
     let root = shared_krate.get_root();
 
-    /*println!("loading: {}, name: {}, cnum: {}",
+    println!("loading: {}, name: {}, cnum: {}",
              Path::new(src.file_name().unwrap()).display(),
-             root.name, cnum);*/
+             root.name, cnum);
 
     // Some notes: a specific dep can be found inside an arbitrary dylib.
     // On top of that, we won't get any linkage to a dep crate if all of

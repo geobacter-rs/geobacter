@@ -15,6 +15,11 @@ fn rust_panic_with_hook(payload: Box<Any + Send>,
                         file_line_col: &(&'static str, u32, u32)) -> ! {
   unsafe { abort() }
 }
+#[inline(never)]
+fn rust_panic_impl(fmt: fmt::Arguments, file: &'static str, line: u32, col: u32) -> ! {
+  unsafe { abort() }
+}
+// TODO
 /*extern "C" fn rust_eh_personality(version: i32,
                                    actions: i32,
                                    exception_class: i32,
@@ -44,7 +49,7 @@ impl Pass for PanicPass {
         if attr.check_name("lang") {
           match attr.value_str() {
             Some(v) if v == "panic_fmt" => {
-              let info = kernel_info_for(&rust_panic_with_hook);
+              let info = kernel_info_for(&rust_panic_impl);
               return Some(tcx.as_def_id(info.id).unwrap());
             },
             _ => { },

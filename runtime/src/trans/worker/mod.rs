@@ -100,24 +100,25 @@ impl<'a, 'b, 'c, 'tcx> TranslatorCtxtRef<'a, 'b, 'c, 'tcx>
       return replaced;
     }
 
-    let mut new_def_id = None;
+    let mut new_def_id = id;
     for pass in self.worker.passes.iter() {
       let ty = pass.pass_type();
       let replaced = match ty {
         PassType::Replacer(f) => {
-          f(*self, id)
+          f(*self, new_def_id)
         },
         _ => { continue; }
       };
       match replaced {
         Some(id) => {
-          new_def_id = Some(id);
+          new_def_id = id;
+          break;
         },
         None => { continue; }
       }
     }
 
-    let new_def_id = new_def_id.unwrap_or(id);
+    let new_def_id = new_def_id;
 
     self.worker.replaced_def_ids.borrow_mut().insert(id, new_def_id);
     new_def_id
@@ -168,7 +169,7 @@ impl<'a> WorkerTranslatorData<'a> {
         accels: vec![Arc::downgrade(&accel)],
         sess: &sess,
         cstore: &cstore,
-        passes: vec![//Box::new(LangItemPass),
+        passes: vec![Box::new(LangItemPass),
                      Box::new(AllocPass),
                      Box::new(PanicPass),
                      Box::new(CompilerBuiltinsReplacerPass),],
@@ -466,15 +467,13 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
   opts.cg.codegen_units = Some(1);
   opts.cg.lto = Lto::No;
   opts.cg.panic = Some(PanicStrategy::Abort);
-  //opts.cg.llvm_args.push("-amdgpu-internalize-symbols".into());
   opts.cg.incremental = None;
   opts.cli_forced_codegen_units = Some(1);
   opts.incremental = None;
   opts.cli_forced_thinlto_off = true;
-  opts.debugging_opts.no_verify = true;
+  //opts.debugging_opts.no_verify = true;
   opts.debugging_opts.no_landing_pads = true;
   opts.debugging_opts.incremental_queries = false;
-  //opts.debugging_opts.print_llvm_passes = true;
   opts
 }
 
