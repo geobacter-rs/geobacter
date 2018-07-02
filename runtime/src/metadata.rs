@@ -2,6 +2,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::cell::{Cell, RefCell};
 use std::error::Error;
+use std::io;
 use std::iter::{once, };
 use std::path::{PathBuf, Path};
 use std::slice;
@@ -11,7 +12,6 @@ use std::{ptr, fmt};
 use std::ops::{Range, Deref};
 use std::sync::{Arc, };
 
-use llvm::{self, ObjectFile, };
 use rustc_data_structures::owning_ref::{OwningRef, ErasedBoxRef};
 use rustc_data_structures::fx::FxHashSet;
 use rustc::hir::def_id::{CrateNum,};
@@ -32,6 +32,7 @@ pub enum MetadataLoadingError {
   ObjectFile,
   SectionMissing,
   SymbolUtf(Utf8Error),
+  Deflate(PathBuf, String, io::Error),
 }
 impl Error for MetadataLoadingError {
   fn description(&self) -> &str {
@@ -353,67 +354,71 @@ impl Metadata {
     use std::fs::{File};
     use std::io::{Read};
 
-    let cpath = path2cstr(src.as_path());
-    let mb = unsafe {
-      llvm::LLVMRustCreateMemoryBufferWithContentsOfFile(cpath.as_ptr())
-    };
-    if mb as isize == 0 {
-      return Err(MetadataLoadingError::Read);
+    use goblin::Object;
+
+    let mut src_buffer = Vec::new();
+    {
+      let mut src_file = File::open(src.as_path())?;
+      src_file.read_to_end(&mut src_buffer)?;
     }
 
-    let obj = ObjectFile::new(mb)
-      .map(|o| {
-        OwningRef::new(Box::new(o))
-      })
-      .ok_or_else(|| MetadataLoadingError::ObjectFile )?;
+    let object = match Object::parse(&src_buffer)? {
+      Object::Elf(elf) => elf,
 
-    let obj = obj
-      .try_map(|o| {
-        metadata_section_search(o)
-      })?;
+      // TODO?
+      _ => panic!("can only load from elf files"),
+    };
+
+    let mut metadata_section = None;
+    for section_header in object.section_headers {
+      if section_header.st_type == 0 { continue; }
+
+      let name = match object.shdr_strtab.get(section_header.st_name) {
+        Some(Ok(name)) => name,
+        _ => continue,
+      };
+
+      if name != METADATA_SECTION_NAME { continue; }
+
+      metadata_section = Some(section_header.clone());
+    }
+    if metadata_section.is_none() {
+      return Err(MetadataLoadingError::SectionMissing);
+    }
+    let metadata_section = metadata_section.unwrap();
+    let metadata_section = &src_buffer[metadata_section.file_range()];
 
     let mut all = vec![];
     let mut owner_index = None;
-    {
-      let mut symbol_iter = obj.owner().symbol_iter();
-      let section = obj.as_ref();
-      loop {
-        {
-          if let Ok(name) = symbol_iter.name().to_str() {
-            if name.starts_with("rust_metadata_") {
-              let start = symbol_iter.address() as usize;
-              let size = symbol_iter.size() as usize;
+    for sym in object.symtab.iter() {
+      let name = match object.strtab.get(sym.st_name) {
+        Some(Ok(name)) => name,
+        _ => continue,
+      };
 
-              if owner_index.is_some() {
-                assert!(start != 0);
-              } else if start == 0 {
-                owner_index = Some(all.len());
-              }
+      if !name.starts_with("rust_metadata_") { continue; }
 
-              let region = &section[start..start + size];
-              let compressed = &region[METADATA_HEADER.len()..];
-              let mut inflated = Vec::new();
-              let mut deflate = DeflateDecoder::new(compressed.as_ref());
-              let region = match deflate.read_to_end(&mut inflated) {
-                Ok(_) => {
-                  SharedMetadataBlob::new(inflated)
-                }
-                Err(e) => {
-                  let e = format!("failed to decompress metadata in {}: {}: {}",
-                                  src.display(),
-                                  name, e);
-                  return Err(MetadataLoadingError::Generic(e.into()));
-                }
-              };
+      let start = sym.st_value;
+      let end   = sym.st_value + sym.st_size;
 
-              all.push((name.into(), region));
-            }
-          }
-        }
-        if !symbol_iter.move_next() {
-          break;
-        }
+      if owner_index.is_some() {
+        assert!(start != 0);
+      } else if start == 0 {
+        owner_index = Some(all.len());
       }
+
+      let region = &metadata_section[start..end];
+      let compressed = &region[METADATA_HEADER.len()..];
+
+      let mut inflated = Vec::new();
+      let mut deflate = DeflateDecoder::new(compressed.as_ref());
+      deflate.read_to_end(&mut inflated)
+        .map_err(|e| {
+          MetadataLoadingError::Deflate(src.into(), name.to_string(),
+                                        e)
+        })?;
+
+      all.push((name.to_string(), SharedMetadataBlob::new(inflated)));
     }
 
     Ok(Metadata {
@@ -429,28 +434,6 @@ impl Metadata {
   pub fn owner_blob(&self) -> &SharedMetadataBlob {
     &self.all[self.owner_index].1
   }
-}
-
-fn metadata_section_search<'a>(obj: &'a ObjectFile) -> Result<&'a [u8], MetadataLoadingError> {
-  unsafe {
-    let si = llvm::mk_section_iter(obj.llof);
-    while llvm::LLVMIsSectionIteratorAtEnd(obj.llof, si.llsi) == llvm::False {
-      let mut name_buf = ptr::null();
-      let name_len = llvm::LLVMRustGetSectionName(si.llsi, &mut name_buf);
-      let name = slice::from_raw_parts(name_buf as *const u8,
-                                       name_len as usize).to_vec();
-      let name = String::from_utf8(name).unwrap();
-      if METADATA_SECTION_NAME == name {
-        let cbuf = llvm::LLVMGetSectionContents(si.llsi);
-        let csz = llvm::LLVMGetSectionSize(si.llsi) as usize;
-        // The buffer is valid while the object file is around
-        let buf: &'a [u8] = slice::from_raw_parts(cbuf as *const u8, csz);
-        return Ok(buf);
-      }
-      llvm::LLVMMoveToNextSection(si.llsi);
-    }
-  }
-  Err(MetadataLoadingError::SectionMissing)
 }
 
 #[cfg(not(target_os = "macos"))]

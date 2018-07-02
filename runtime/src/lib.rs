@@ -11,7 +11,6 @@ extern crate hsa_core;
 extern crate serde_json;
 extern crate hsa_rt;
 extern crate rustc;
-extern crate rustc_llvm as llvm;
 extern crate rustc_metadata;
 extern crate rustc_data_structures;
 extern crate rustc_back;
@@ -28,6 +27,7 @@ extern crate indexvec;
 extern crate tempdir;
 extern crate flate2;
 extern crate compiler_builtins;
+extern crate goblin;
 
 use std::fmt::Debug;
 
