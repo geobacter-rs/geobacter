@@ -10,18 +10,18 @@ use std::thread::{spawn};
 
 use rustc;
 use rustc::hir::def_id::{CrateNum, DefId};
-use rustc::ty::maps::Providers;
+use rustc::ty::query::Providers;
 use rustc::ty::{TyCtxt};
 use rustc_driver;
 use rustc_data_structures::fx::{FxHashMap};
 use rustc_metadata;
-use rustc_trans_utils;
+use rustc_codegen_utils;
 use rustc_mir;
 use rustc_incremental;
 
 use tempdir::TempDir;
 
-use hsa_core::kernel_info::KernelId;
+use hsa_core::kernel::KernelId;
 
 use module::{ModuleData, ErasedModule};
 use {Accelerator, AcceleratorId};
@@ -31,6 +31,7 @@ use metadata::{Metadata, DummyMetadataLoader, CrateMetadata, CrateMetadataLoader
 use passes::{Pass, PassType};
 
 mod tls;
+mod collector;
 
 pub enum Message {
   AddAccel(Weak<Accelerator>),
@@ -67,15 +68,16 @@ impl TranslatorData {
 }
 
 #[derive(Clone, Copy)]
-pub struct TranslatorCtxtRef<'a, 'b, 'c, 'tcx>
+pub struct TranslatorCtx<'a, 'b, 'c, 'tcx>
   where 'a: 'c,
         'tcx: 'b,
 {
   tcx: TyCtxt<'b, 'tcx, 'tcx>,
   worker: &'c WorkerTranslatorData<'a>,
+  root: DefId,
 }
 
-impl<'a, 'b, 'c, 'tcx> TranslatorCtxtRef<'a, 'b, 'c, 'tcx>
+impl<'a, 'b, 'c, 'tcx> TranslatorCtx<'a, 'b, 'c, 'tcx>
   where 'a: 'c,
 {
   pub fn passes(&self) -> &[Box<Pass>] { self.worker.passes.as_ref() }
@@ -125,7 +127,7 @@ impl<'a, 'b, 'c, 'tcx> TranslatorCtxtRef<'a, 'b, 'c, 'tcx>
   }
 }
 
-impl<'a, 'b, 'c, 'tcx> Deref for TranslatorCtxtRef<'a, 'b, 'c, 'tcx>
+impl<'a, 'b, 'c, 'tcx> Deref for TranslatorCtx<'a, 'b, 'c, 'tcx>
   where 'a: 'c,
 {
   type Target = TyCtxt<'b, 'tcx, 'tcx>;
@@ -222,14 +224,14 @@ impl<'a> WorkerTranslatorData<'a> {
                                    .clone());
             let defs = defs;
 
-            let result = self.trans_kernel(id, &arena,
-                                           unsafe {
+            let result = self.codegen_kernel(id, &arena,
+                                             unsafe {
                                              ::std::mem::transmute(&mut forest)
                                            },
-                                           unsafe {
+                                             unsafe {
                                              ::std::mem::transmute(&defs)
                                            },
-                                           &dep_graph);
+                                             &dep_graph);
             let _ = ret.send(result);
           },
         }
@@ -257,10 +259,10 @@ impl<'a> WorkerTranslatorData<'a> {
     }
   }
 
-  fn trans_kernel<'b>(&self, id: KernelId, arena: &'a rustc::ty::AllArenas<'b>,
-                      forest: &'b mut rustc::hir::map::Forest,
-                      defs: &'b rustc::hir::map::definitions::Definitions,
-                      dep_graph: &rustc::dep_graph::DepGraph)
+  fn codegen_kernel<'b>(&self, id: KernelId, arena: &'a rustc::ty::AllArenas<'b>,
+                        forest: &'b mut rustc::hir::map::Forest,
+                        defs: &'b rustc::hir::map::definitions::Definitions,
+                        dep_graph: &rustc::dep_graph::DepGraph)
     -> Result<(), ()>
     where 'a: 'b,
   {
@@ -281,7 +283,7 @@ impl<'a> WorkerTranslatorData<'a> {
     };
 
     let trans = super::LlvmTransCrate::new(self.sess, def_id);
-    let trans = Box::new(trans) as Box<rustc_trans_utils::trans_crate::TransCrate>;
+    let trans = Box::new(trans) as Box<rustc_codegen_utils::trans_crate::TransCrate>;
 
     // extern only providers:
     let mut extern_providers = rustc::ty::maps::Providers::default();
@@ -290,7 +292,7 @@ impl<'a> WorkerTranslatorData<'a> {
     trans.provide_extern(&mut extern_providers);
     rustc::traits::provide(&mut extern_providers);
     rustc::ty::provide(&mut extern_providers);
-    rustc_trans_utils::symbol_names::provide(&mut extern_providers);
+    rustc_codegen_utils::symbol_names::provide(&mut extern_providers);
     rustc_metadata::cstore::provide_extern(&mut extern_providers);
     extern_providers.const_eval = rustc_mir::interpret::const_eval_provider;
     provide_extern_overrides(&mut extern_providers);
@@ -442,7 +444,7 @@ pub fn create_rustc_session() -> rustc::session::Session {
       addr_spaces.insert(kind, props);
     };
     insert_as(addr_spaces, global, global_idx);
-    //insert_as(addr_spaces, constant, constant_idx);
+    insert_as(addr_spaces, constant, constant_idx);
     insert_as(addr_spaces, local, local_idx);
     insert_as(addr_spaces, region, region_idx);
     insert_as(addr_spaces, private, private_idx);
@@ -555,8 +557,8 @@ pub fn stub_providers(providers: &mut Providers) {
 
 pub fn providers_local(providers: &mut Providers) {
   use rustc::hir::def_id::{LOCAL_CRATE};
-  use rustc::hir::svh::Svh;
   use rustc::ty::TyCtxt;
+  use rustc_data_structures::svh::Svh;
 
   use std::rc::Rc;
 
@@ -607,4 +609,5 @@ pub fn providers_local(providers: &mut Providers) {
   };
 
   provide_mir_overrides(providers);
+  collector::provide(providers);
 }

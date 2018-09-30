@@ -5,16 +5,12 @@
 #![feature(plugin)]
 #![feature(compiler_builtins_lib)]
 
-#![plugin(hsa_rustc_plugin)]
-
 extern crate hsa_core;
-extern crate serde_json;
 extern crate hsa_rt;
-extern crate rustc;
+#[macro_use] extern crate rustc;
 extern crate rustc_metadata;
 extern crate rustc_data_structures;
-extern crate rustc_back;
-extern crate rustc_trans_utils;
+extern crate rustc_codegen_utils;
 extern crate rustc_driver;
 extern crate rustc_mir;
 extern crate rustc_incremental;
@@ -23,20 +19,25 @@ extern crate syntax_pos;
 #[macro_use]
 extern crate serde_derive;
 #[macro_use]
-extern crate indexvec;
+extern crate indexed_vec as indexvec;
 extern crate tempdir;
 extern crate flate2;
 extern crate compiler_builtins;
 extern crate goblin;
+#[macro_use]
+extern crate log;
+extern crate serde_json;
 
 use std::fmt::Debug;
+use std::hash::Hash;
 
 pub mod context;
 pub mod module;
-pub mod trans;
+pub mod codegen;
 pub mod hsa;
 pub mod accelerators;
 pub mod passes;
+pub mod error;
 mod metadata;
 mod util;
 mod platform;
@@ -60,15 +61,18 @@ impl AcceleratorId {
 }
 
 pub trait Accelerator: Debug + Send + Sync {
-  fn id_opt(&self) -> Option<AcceleratorId>;
-  fn id(&self) -> AcceleratorId {
-    self.id_opt()
-      .expect("accelerator not added to context")
-  }
-  fn set_id(&self, id: AcceleratorId);
+  /// A type with all arch specific data present, for use as a key
+  /// in the object cache.
+  type CacheKey: Hash;
+  fn id(&self) -> AcceleratorId;
 
-  fn llvm_target(&self) -> String;
+  fn target_triple(&self) -> String;
   fn target_arch(&self) -> String;
   fn target_cpu(&self) -> String;
   // no ptr info: it's all 64 bits.
+  fn target_datalayout(&self) -> String;
+
+  fn allow_indirect_function_calls(&self) -> bool;
+
+
 }

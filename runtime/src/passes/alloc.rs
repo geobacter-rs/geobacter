@@ -5,7 +5,7 @@
 
 use std::intrinsics::abort;
 
-use hsa_core::kernel_info::kernel_info_for;
+use hsa_core::kernel::kernel_id_for;
 
 use rustc::ty::item_path::{with_forced_absolute_paths};
 
@@ -91,34 +91,34 @@ impl Pass for AllocPass {
       let path = with_forced_absolute_paths(|| tcx.item_path_str(def_id) );
       let info = match &path[..] {
         "alloc::heap::::__rust_alloc" => {
-          kernel_info_for(&__rust_alloc)
+          kernel_id_for(&__rust_alloc)
         },
         "alloc::heap::::__rust_alloc_zeroed" => {
-          kernel_info_for(&__rust_alloc_zeroed)
+          kernel_id_for(&__rust_alloc_zeroed)
         },
         "alloc::heap::::__rust_realloc" => {
-          kernel_info_for(&__rust_realloc)
+          kernel_id_for(&__rust_realloc)
         },
         "alloc::heap::::__rust_oom" => {
-          kernel_info_for(&__rust_oom)
+          kernel_id_for(&__rust_oom)
         },
         "alloc::heap::::__rust_usable_size" => {
-          kernel_info_for(&__rust_usable_size)
+          kernel_id_for(&__rust_usable_size)
         },
         "alloc::heap::::__rust_dealloc" => {
-          kernel_info_for(&__rust_dealloc)
+          kernel_id_for(&__rust_dealloc)
         },
         "alloc::heap::::__rust_alloc_excess" => {
-          kernel_info_for(&__rust_alloc_excess)
+          kernel_id_for(&__rust_alloc_excess)
         },
         "alloc::heap::::__rust_realloc_excess" => {
-          kernel_info_for(&__rust_realloc_excess)
+          kernel_id_for(&__rust_realloc_excess)
         },
         "alloc::heap::::__rust_grow_in_place" => {
-          kernel_info_for(&__rust_grow_in_place)
+          kernel_id_for(&__rust_grow_in_place)
         },
         "alloc::heap::::__rust_shrink_in_place" => {
-          kernel_info_for(&__rust_shrink_in_place)
+          kernel_id_for(&__rust_shrink_in_place)
         },
         _ => { return None; },
       };

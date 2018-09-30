@@ -3,6 +3,7 @@ use std::error::Error;
 use std::mem::transmute;
 
 use ffi;
+use ApiContext;
 
 pub trait CodeObjectReader {
   #[doc(hidden)]
@@ -11,7 +12,7 @@ pub trait CodeObjectReader {
 
 #[doc(hidden)]
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct CodeObjectReaderSys(pub(crate) ffi::hsa_code_object_reader_t);
+pub struct CodeObjectReaderSys(pub(crate) ffi::hsa_code_object_reader_t, ApiContext);
 
 impl Drop for CodeObjectReaderSys {
   fn drop(&mut self) {
@@ -31,7 +32,7 @@ impl<'a> CodeObjectReaderRef<'a> {
   pub fn create(from: &'a [u8]) -> Result<Self, Box<Error>> {
     let mut out = CodeObjectReaderSys(ffi::hsa_code_object_reader_s {
       handle: 0,
-    });
+    }, ApiContext::upref());
     let sys = check_err!(ffi::hsa_code_object_reader_create_from_memory(from.as_ptr() as _,
                                                                         from.len(),
                                                                         transmute(&mut out.0)) => out)?;
@@ -50,7 +51,7 @@ impl CodeObjectReaderOwned {
   pub fn create(from: Vec<u8>) -> Result<Self, Box<Error>> {
     let mut out = CodeObjectReaderSys(ffi::hsa_code_object_reader_s {
       handle: 0,
-    });
+    }, ApiContext::upref());
     let sys = check_err!(ffi::hsa_code_object_reader_create_from_memory(from.as_ptr() as _,
                                                                         from.len(),
                                                                         transmute(&mut out.0)) => out)?;

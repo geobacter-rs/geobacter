@@ -1,0 +1,12 @@
+[package]
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+autobins = false
+name = "hsa-rustc-driver"
+version = "0.1.0"
+[[bin]]
+name = "hsa-rustc"
+path = "src/main.rs"
+
+[dependencies]
+env_logger = "0.5.13"
+log = "0.4.5"

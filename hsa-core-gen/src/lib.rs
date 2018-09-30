@@ -1,5 +1,7 @@
 #![feature(proc_macro)]
 
+#![allow(dead_code)]
+
 #[macro_use]
 extern crate quote;
 extern crate syn;

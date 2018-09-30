@@ -5,7 +5,7 @@ use std::mem::transmute;
 use std::os::raw::c_void;
 
 use ffi;
-
+use ApiContext;
 use agent::{Profiles, DefaultFloatRoundingModes, Agent};
 use code_object::{CodeObjectReader, LoadedCodeObject};
 
@@ -20,7 +20,7 @@ macro_rules! exe_info {
 }
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct Executable(ffi::hsa_executable_t);
+pub struct Executable(ffi::hsa_executable_t, ApiContext);
 
 impl Executable {
   pub fn create<T>(profile: Profiles,
@@ -31,7 +31,8 @@ impl Executable {
     let options = CString::new(options.as_ref())?;
     let mut this = Executable(ffi::hsa_executable_s {
       handle: 0,
-    });
+    },
+                              ApiContext::upref());
     let o = check_err!(ffi::hsa_executable_create_alt(profile.into(),
                                                       rounding_mode.into(),
                                                       options.as_ptr(),

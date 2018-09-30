@@ -1,12 +1,15 @@
 
 [workspace]
 members = ["hsa-core-gen", "hsa-core", "runtime",
-           "ir", "ir-gen", "kernel", "rustc-plugin",
+           "ir", "ir-gen", "kernel", "rustc-driver",
 
            "hsa-rt-sys", "hsa-rt",
            "tools/hsa-agent-info",
 
            "indexvec", "recycled-arc-vec",
 
-           "examples/trivial", "examples/ndarray",
-           "test-internal-dlopen"]
+           "examples/trivial", "examples/ndarray"]
+
+[profile.release]
+debug = true
+debug-assertions = true

@@ -15,7 +15,3 @@ optional = false
 path = "../hsa-core-gen"
 
 [dev-dependencies]
-
-[dependencies.hsa-rustc-plugin]
-optional = false
-path = "../rustc-plugin"

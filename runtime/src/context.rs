@@ -7,19 +7,21 @@ use std::path::{Component};
 
 use indexvec::{Idx, IndexVec};
 
-use hsa_core::kernel_info::KernelId;
+use hsa_core::kernel::KernelId;
 use hsa_rt;
 
 use module::{ModuleData, ErasedModule};
 use {Accelerator, AcceleratorId};
 use metadata::{Metadata, MetadataLoadingError, CrateSource, CrateNameHash};
 use platform::os::{get_mapped_files, dylib_search_paths};
-use trans::worker::TranslatorData;
+use codegen::worker::TranslatorData;
 
 type Translators = IndexVec<AcceleratorId, Option<TranslatorData>>;
 
 pub struct ContextData {
+  hsa_ctx: hsa_rt::ApiContext,
   metadata: Arc<Mutex<Vec<Metadata>>>,
+  local_accels: Vec<Arc<Accelerator>>,
   accelerators: IndexVec<AcceleratorId, Option<Weak<Accelerator>>>,
   modules: HashMap<KernelId, Weak<ErasedModule>>,
   translators: Translators,
@@ -91,7 +93,10 @@ impl Context {
       }
     }
 
+    let hsa_ctx = hsa_rt::ApiContext::new();
+
     let data = ContextData {
+      hsa_ctx: hsa_rt::ApiContext,
       metadata: Arc::new(Mutex::new(rust_mapped)),
       accelerators: Default::default(),
       modules: Default::default(),
@@ -102,9 +107,14 @@ impl Context {
     let data = Arc::new(data);
     Ok(Context(data))
   }
-  pub fn add_accelerator<T>(&self, accel: T)
+  pub fn add_local_agents(&self) -> Result<Vec<Arc<Accelerator>>, Box<Error>> {
+    let mut lock = self.0.write()?;
+
+  }
+  pub fn add_accelerator<T, F>(&self, ctor: F)
     -> Result<Arc<T>, Box<Error>>
     where T: Accelerator + 'static,
+          F: FnOnce(AcceleratorId) -> T,
   {
     let accel = Arc::new(accel);
 

@@ -13,7 +13,6 @@ pub struct ModuleData<'a, F, Args, Ret>
   id: u64,
   f: &'a F,
   upvars: &'a [&'a NumaSend],
-  codegens: Vec<Vec<u8>>,
   _marker: PhantomData<(Args, Ret)>,
 }
 

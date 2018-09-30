@@ -11,5 +11,3 @@ env_logger = "0.5.5"
 [dependencies.hsa-core]
 path = "../../hsa-core"
 
-[dependencies.hsa-rustc-plugin]
-path = "../../rustc-plugin/"

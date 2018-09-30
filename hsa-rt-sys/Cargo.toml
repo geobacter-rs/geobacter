@@ -7,7 +7,7 @@ version = "0.1.0"
 [dependencies]
 
 [build-dependencies]
-bindgen = "0.31.3"
+bindgen = "0.40.0"
 
 [lib]
 name = "hsa_rt_sys"

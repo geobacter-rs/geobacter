@@ -2,7 +2,7 @@
 use rustc::ty::item_path::{with_forced_absolute_paths};
 
 use super::{Pass, PassType};
-use hsa_core::kernel_info::kernel_info_for;
+use hsa_core::kernel::kernel_id_for;
 use compiler_builtins;
 
 fn memcmp(s1: *const u8, s2: *const u8, n: usize) -> i32 {
@@ -18,7 +18,7 @@ impl Pass for CompilerBuiltinsReplacerPass {
       let path = with_forced_absolute_paths(|| tcx.item_path_str(def_id) );
       let info = match &path[..] {
         "core::slice::::memcmp" => {
-          kernel_info_for(&memcmp)
+          kernel_id_for(&memcmp)
         },
         _ => { return None; },
       };

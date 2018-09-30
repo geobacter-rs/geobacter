@@ -9,18 +9,7 @@
 // Note that we don't need to reference rustc_trans.
 
 extern crate rustc;
-extern crate rustc_back;
-extern crate rustc_data_structures;
 extern crate rustc_driver;
-extern crate rustc_errors;
-extern crate rustc_incremental;
-extern crate rustc_lint;
-extern crate rustc_metadata;
-extern crate rustc_mir;
-extern crate rustc_passes;
-extern crate rustc_platform_intrinsics;
-extern crate rustc_resolve;
-extern crate rustc_trans_utils;
 extern crate syntax;
 extern crate syntax_pos;
 
@@ -30,15 +19,15 @@ use std::path::{Path, PathBuf};
 
 #[inline(never)]
 fn force_rustc_link() -> rustc::session::Session {
-  let opts = rustc::session::config::basic_options();
+  let opts = rustc::session::config::Options::default();
   let registry = rustc_driver::diagnostics_registry();
 
   rustc::session::build_session(opts, None, registry)
 }
 #[inline(never)]
-fn force_rustc_deps_link() -> rustc::ty::maps::Providers<'static> {
+fn force_rustc_deps_link() -> rustc::ty::query::Providers<'static> {
   // this will pull in the rustc deps:
-  let mut providers = rustc::ty::maps::Providers::default();
+  let mut providers = rustc::ty::query::Providers::default();
   rustc_driver::driver::default_provide(&mut providers);
   rustc_driver::driver::default_provide_extern(&mut providers);
   providers

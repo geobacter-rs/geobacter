@@ -9,34 +9,32 @@ use rustc::session::Session;
 use rustc::middle::cstore::{MetadataLoader};
 use rustc::hir::def_id::{DefId};
 use rustc::ty::{TyCtxt};
-use rustc::ty::maps::Providers;
-use rustc_trans_utils::trans_crate::{TransCrate};
+use rustc::ty::query::Providers;
+use rustc_codegen_utils::codegen_backend::{CodegenBackend};
 use syntax_pos::symbol::{Symbol};
 
 use self::target_options::{TargetOptions, CodeModel};
 
 use indexvec::IndexVec;
 
-use llvm;
-
 pub mod target_options;
 pub mod worker;
 
 pub struct LlvmTransCrate {
-  inner: Box<TransCrate>,
+  inner: Box<CodegenBackend>,
   entry_shim: DefId,
 }
 impl LlvmTransCrate {
   pub fn new(sess: &Session, entry_shim: DefId) -> LlvmTransCrate {
-    use rustc_driver::get_trans;
+    use rustc_driver::get_codegen_backend;
     LlvmTransCrate {
-      inner: get_trans(sess),
+      inner: get_codegen_backend(sess),
       entry_shim,
     }
   }
 }
 
-impl TransCrate for LlvmTransCrate {
+impl CodegenBackend for LlvmTransCrate {
   fn init(&self, sess: &Session) {
     self.inner.init(sess)
   }
@@ -68,7 +66,7 @@ impl TransCrate for LlvmTransCrate {
     -> Box<Any>
   {
     use rustc::ty::Instance;
-    use syntax::abi::Abi;
+    use rustc_target::spec::Abi;
 
     let root = Instance::mono(tcx, self.entry_shim);
     tcx.override_root(root, Abi::AmdGpuKernel);

@@ -8,6 +8,3 @@ runtime = { path = "../../runtime" }
 
 [dependencies.hsa-core]
 path = "../../hsa-core"
-
-[dependencies.hsa-rustc-plugin]
-path = "../../rustc-plugin/"

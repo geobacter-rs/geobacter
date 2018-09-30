@@ -47,24 +47,24 @@ macro_rules! wavefront_info {
   }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum Feature {
   Agent,
   Kernel,
 }
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum QueueType {
   Single,
   Multiple,
 }
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum DeviceType {
   Cpu,
   Gpu,
   Dsp,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct MachineModels(bool, bool);
 impl MachineModels {
   pub fn supports_small(&self) -> bool {
@@ -74,7 +74,7 @@ impl MachineModels {
     self.1
   }
 }
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct Profiles(pub(crate) bool, pub(crate) bool);
 impl Profiles {
   pub fn supports_base(&self) -> bool { self.0 }
@@ -90,7 +90,7 @@ impl Into<ffi::hsa_profile_t> for Profiles {
   }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct DefaultFloatRoundingModes(pub(crate) bool,
                                      pub(crate) bool,
                                      pub(crate) bool);
@@ -116,8 +116,8 @@ impl Into<ffi::hsa_default_float_rounding_mode_t> for DefaultFloatRoundingModes 
 }
 
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct Cache(ffi::hsa_cache_t);
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct Cache(ffi::hsa_cache_t, ApiContext);
 
 impl Cache {
   pub fn name(&self) -> Result<String, Box<Error>> {
@@ -139,20 +139,42 @@ impl Cache {
     Ok(cache_info!(self, ffi::hsa_cache_info_t_HSA_CACHE_INFO_SIZE,
                    [0u32; 1])?[0])
   }
+  pub fn info(&self) -> Result<CacheInfo, Box<Error>> {
+    Ok(CacheInfo {
+      name: self.name()?,
+      level: self.level()?,
+      size: self.size()?,
+    })
+  }
+}
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub struct CacheInfo {
+  pub name: String,
+  pub level: u8,
+  pub size: u32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct Wavefront(ffi::hsa_wavefront_t);
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct Wavefront(ffi::hsa_wavefront_t, ApiContext);
 impl Wavefront {
   pub fn size(&self) -> Result<u32, Box<Error>> {
     let size = wavefront_info!(self, ffi::hsa_wavefront_info_t_HSA_WAVEFRONT_INFO_SIZE,
                                [0u32; 1])?;
     Ok(size[0])
   }
+  pub fn info(&self) -> Result<WavefrontInfo, Box<Error>> {
+    Ok(WavefrontInfo {
+      size: self.size()?,
+    })
+  }
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub struct WavefrontInfo {
+  pub size: u32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct Isa(ffi::hsa_isa_t);
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct Isa(ffi::hsa_isa_t, ApiContext);
 impl Isa {
   pub fn name(&self) -> Result<String, Box<Error>> {
     let len = isa_info!(self, ffi::hsa_isa_info_t_HSA_ISA_INFO_NAME_LENGTH,
@@ -237,7 +259,7 @@ impl Isa {
       let items: &mut Vec<Wavefront> = unsafe {
         transmute(items)
       };
-      items.push(Wavefront(out));
+      items.push(Wavefront(out, ApiContext::default()));
       ffi::hsa_status_t_HSA_STATUS_SUCCESS
     }
 
@@ -245,10 +267,50 @@ impl Isa {
     Ok(check_err!(ffi::hsa_isa_iterate_wavefronts(self.0, Some(get),
                                                   transmute(&mut out)) => out)?)
   }
+  pub fn info(&self) -> Result<IsaInfo, Box<Error>> {
+    Ok(IsaInfo {
+      name: self.name()?,
+      machine_model: self.machine_model()?,
+      profiles: self.profiles()?,
+      default_float_rounding_modes: self.default_float_rounding_modes()?,
+      base_profile_default_float_rounding_modes: self.base_profile_default_float_rounding_modes()?,
+      fast_f16: self.fast_f16()?,
+      workgroup_max_dim: self.workgroup_max_dim()?,
+      workgroup_max_size: self.workgroup_max_size()?,
+      grid_max_dim: {
+        let dim = self.grid_max_dim()?;
+        [dim.x, dim.y, dim.z]
+      },
+      grid_max_size: self.grid_max_size()?,
+      fbarrier_max_size: self.fbarrier_max_size()?,
+      wavefronts: {
+        let mut o = vec![];
+        for wavefront in self.wavefronts().unwrap_or_default().into_iter() {
+          o.push(wavefront.info()?);
+        }
+        o
+      },
+    })
+  }
+}
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub struct IsaInfo {
+  pub name: String,
+  pub machine_model: MachineModels,
+  pub profiles: Profiles,
+  pub default_float_rounding_modes: DefaultFloatRoundingModes,
+  pub base_profile_default_float_rounding_modes: DefaultFloatRoundingModes,
+  pub fast_f16: bool,
+  pub workgroup_max_dim: [u16; 3],
+  pub workgroup_max_size: u32,
+  pub grid_max_dim: [u32; 3],
+  pub grid_max_size: u64,
+  pub fbarrier_max_size: u32,
+  pub wavefronts: Vec<WavefrontInfo>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct Agent(pub(crate) ffi::hsa_agent_t);
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct Agent(pub(crate) ffi::hsa_agent_t, ApiContext);
 impl Agent {
   pub fn name(&self) -> Result<String, Box<Error>> {
     let bytes = agent_info!(self, ffi::hsa_agent_info_t_HSA_AGENT_INFO_NAME, [0u8; 64])?;
@@ -330,10 +392,7 @@ impl Agent {
       let items: &mut Vec<Cache> = unsafe {
         transmute(items)
       };
-      let c = Cache(out);
-      //println!("name: {:?}", c.name());
-      //println!("level: {:?}", c.level());
-      //println!("size: {:?}", c.size());
+      let c = Cache(out, ApiContext::default());
       items.push(c);
       ffi::hsa_status_t_HSA_STATUS_SUCCESS
     }
@@ -349,7 +408,7 @@ impl Agent {
       let items: &mut Vec<Isa> = unsafe {
         transmute(items)
       };
-      items.push(Isa(out));
+      items.push(Isa(out, ApiContext::upref()));
       ffi::hsa_status_t_HSA_STATUS_SUCCESS
     }
 
@@ -357,18 +416,62 @@ impl Agent {
     Ok(check_err!(ffi::hsa_agent_iterate_isas(self.0, Some(get),
                                               transmute(&mut out)) => out)?)
   }
+
+  pub fn info(&self) -> Result<AgentInfo, Box<Error>> {
+    Ok(AgentInfo {
+      name: self.name()?,
+      vendor: self.vendor_name()?,
+      feature: self.feature()?,
+      queue_size: self.queue_size()?,
+      queue_type: self.queue_type()?,
+      extensions: self.extensions()?.into_iter()
+        .map(|&v| v )
+        .collect(),
+      version: self.version()?,
+      device_type: self.device_type()?,
+      caches: {
+        let mut o = vec![];
+        for cache in self.caches().unwrap_or_default().into_iter() {
+          o.push(cache.info()?);
+        }
+        o
+      },
+      isas: {
+        let mut o = vec![];
+        for isa in self.isas().unwrap_or_default().into_iter() {
+          o.push(isa.info()?);
+        }
+        o
+      },
+    })
+  }
+}
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub struct AgentInfo {
+  pub name: String,
+  pub vendor: String,
+  pub feature: Feature,
+  pub queue_size: Range<u32>,
+  pub queue_type: QueueType,
+  pub extensions: Vec<u8>,
+  pub version: (u16, u16),
+  pub device_type: DeviceType,
+  pub caches: Vec<CacheInfo>,
+  pub isas: Vec<IsaInfo>,
 }
 
-pub fn find_agents(_: &ApiContext) -> Result<Vec<Agent>, Box<Error>> {
-  extern "C" fn get_agent(agent_out: ffi::hsa_agent_t,
-                          agents: *mut c_void) -> ffi::hsa_status_t {
-    let agents: &mut Vec<Agent> = unsafe {
-      transmute(agents)
-    };
-    agents.push(Agent(agent_out));
-    ffi::hsa_status_t_HSA_STATUS_SUCCESS
-  }
+impl ApiContext {
+  pub fn agents(&self) -> Result<Vec<Agent>, Box<Error>> {
+    extern "C" fn get_agent(agent_out: ffi::hsa_agent_t,
+                            agents: *mut c_void) -> ffi::hsa_status_t {
+      let agents: &mut Vec<Agent> = unsafe {
+        transmute(agents)
+      };
+      agents.push(Agent(agent_out, ApiContext::upref()));
+      ffi::hsa_status_t_HSA_STATUS_SUCCESS
+    }
 
-  let mut out: Vec<Agent> = vec![];
-  Ok(check_err!(ffi::hsa_iterate_agents(Some(get_agent), transmute(&mut out)) => out)?)
+    let mut out: Vec<Agent> = vec![];
+    Ok(check_err!(ffi::hsa_iterate_agents(Some(get_agent), transmute(&mut out)) => out)?)
+  }
 }
