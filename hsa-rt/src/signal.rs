@@ -1,5 +1,6 @@
 
 use std::error::Error;
+use std::ops::Deref;
 
 use ffi;
 use agent::Agent;
@@ -7,7 +8,7 @@ use agent::Agent;
 pub use std::sync::atomic::Ordering;
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct Signal(ffi::hsa_signal_t);
+pub struct Signal(pub(crate) ffi::hsa_signal_t);
 pub type Value = ffi::hsa_signal_value_t;
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -46,16 +47,37 @@ impl Into<ffi::hsa_wait_state_t> for WaitState {
 }
 
 impl Signal {
-  pub fn new(consumers: &[Agent]) -> Result<Self, Box<Error>> {
+  pub fn new(initial: Value,
+             consumers: &[Agent])
+    -> Result<Self, Box<Error>>
+  {
     let len = consumers.len();
-    let consumers_ptr = unsafe { consumers.as_ptr() as *const ffi::hsa_agent_t };
+    let consumers_ptr = consumers.as_ptr() as *const ffi::hsa_agent_t;
     let mut out: ffi::hsa_signal_t = unsafe { ::std::mem::uninitialized() };
-    let out = check_err!(ffi::hsa_signal_create(0, len as _,
+    let out = check_err!(ffi::hsa_signal_create(initial,
+                                                len as _,
                                                 consumers_ptr,
                                                 &mut out as *mut _) => out)?;
     Ok(Signal(out))
   }
+}
+impl Deref for Signal {
+  type Target = SignalRef;
+  fn deref(&self) -> &SignalRef {
+    unsafe {
+      ::std::mem::transmute(self)
+    }
+  }
+}
+impl AsRef<Signal> for Signal {
+  fn as_ref(&self) -> &Signal {
+    self
+  }
+}
 
+#[repr(transparent)]
+pub struct SignalRef(pub(crate) ffi::hsa_signal_t);
+impl SignalRef {
   pub fn load_scacquire(&self) -> Value {
     unsafe {
       ffi::hsa_signal_load_scacquire(self.0)
@@ -104,7 +126,7 @@ impl Signal {
 
 macro_rules! impl_exchange {
   ($f:ident, $ffi:ident) => (
-    impl Signal {
+    impl SignalRef {
       pub fn $f(&self, val: Value) -> Value {
         unsafe {
           ffi::$ffi(self.0, val)
@@ -120,7 +142,7 @@ impl_exchange!(exchange_screlease, hsa_signal_exchange_screlease);
 
 macro_rules! impl_cas {
   ($f:ident, $ffi:ident) => (
-    impl Signal {
+    impl SignalRef {
       pub fn $f(&self, expected: Value, new: Value) -> Value {
         unsafe {
           ffi::$ffi(self.0, expected, new)
@@ -136,7 +158,7 @@ impl_cas!(cas_screlease, hsa_signal_cas_screlease);
 
 macro_rules! impl_binop {
   ($f:ident, $ffi:ident) => (
-    impl Signal {
+    impl SignalRef {
       pub fn $f(&self, val: Value) {
         unsafe {
           ffi::$ffi(self.0, val)
@@ -170,10 +192,11 @@ impl_binop!(xor_scacquire, hsa_signal_xor_scacquire);
 impl_binop!(xor_relaxed, hsa_signal_xor_relaxed);
 impl_binop!(xor_screlease, hsa_signal_xor_screlease);
 
-impl Signal {
+impl SignalRef {
   pub fn wait_scacquire(&self, condition: ConditionOrdering,
-                        compare: Value, timeout_hint: u64,
+                        compare: Value, timeout_hint: Option<u64>,
                         wait_state_hint: WaitState) -> Value {
+    let timeout_hint = timeout_hint.unwrap_or(u64::max_value());
     unsafe {
       ffi::hsa_signal_wait_scacquire(self.0, condition.into(),
                                      compare, timeout_hint,
@@ -181,8 +204,9 @@ impl Signal {
     }
   }
   pub fn wait_relaxed(&self, condition: ConditionOrdering,
-                      compare: Value, timeout_hint: u64,
+                      compare: Value, timeout_hint: Option<u64>,
                       wait_state_hint: WaitState) -> Value {
+    let timeout_hint = timeout_hint.unwrap_or(u64::max_value());
     unsafe {
       ffi::hsa_signal_wait_relaxed(self.0, condition.into(),
                                    compare, timeout_hint,
@@ -212,8 +236,8 @@ impl SignalGroup {
     let signals_len = signals.len();
     let consumers_len = consumers.len();
 
-    let signals_ptr = unsafe { signals.as_ptr() as *const ffi::hsa_signal_t };
-    let consumers_ptr = unsafe { consumers.as_ptr() as *const ffi::hsa_agent_t };
+    let signals_ptr = signals.as_ptr() as *const ffi::hsa_signal_t;
+    let consumers_ptr = consumers.as_ptr() as *const ffi::hsa_agent_t;
 
     let mut out: ffi::hsa_signal_group_t = unsafe { ::std::mem::uninitialized() };
     let out = check_err!(ffi::hsa_signal_group_create(signals_len as _, signals_ptr,

@@ -6,7 +6,6 @@ pub struct LangItemPass;
 impl Pass for LangItemPass {
   fn pass_type(&self) -> PassType {
     PassType::Replacer(|tcx, def_id| {
-      use syntax::attr::*;
       use rustc::middle::lang_items::*;
 
       // check for "panic_fmt". this is used in an extern fashion: libcore calls an
@@ -21,7 +20,7 @@ impl Pass for LangItemPass {
           match attr.value_str() {
             Some(v) if v == "panic_fmt" => {
               let new_def_id = tcx.lang_items()
-                .require(LangItem::PanicFmtLangItem)
+                .require(LangItem::PanicFnLangItem)
                 .unwrap();
               return Some(new_def_id);
             },

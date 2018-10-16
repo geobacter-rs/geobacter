@@ -1,6 +1,6 @@
 
 use std::error::Error;
-use std::ffi::CString;
+use std::fmt;
 use std::os::raw::{c_void};
 use std::ops::Range;
 use std::result::Result;
@@ -77,9 +77,16 @@ impl MachineModels {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct Profiles(pub(crate) bool, pub(crate) bool);
 impl Profiles {
+  pub fn base() -> Self {
+    Profiles(true, false)
+  }
+  pub fn full() -> Self {
+    Profiles(true, true)
+  }
   pub fn supports_base(&self) -> bool { self.0 }
   pub fn supports_full(&self) -> bool { self.1 }
 }
+#[doc(hidden)]
 impl Into<ffi::hsa_profile_t> for Profiles {
   fn into(self) -> ffi::hsa_profile_t {
     if self.supports_full() {
@@ -99,6 +106,15 @@ impl DefaultFloatRoundingModes {
   pub fn supports_default(&self) -> bool { self.0 }
   pub fn supports_zero(&self) -> bool { self.1 }
   pub fn supports_near(&self) -> bool { self.2 }
+
+  pub fn near() -> Self {
+    DefaultFloatRoundingModes(false, false, true)
+  }
+}
+impl Default for DefaultFloatRoundingModes {
+  fn default() -> Self {
+    DefaultFloatRoundingModes(true, false, false)
+  }
 }
 
 #[doc(hidden)]
@@ -173,7 +189,7 @@ pub struct WavefrontInfo {
   pub size: u32,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Isa(ffi::hsa_isa_t, ApiContext);
 impl Isa {
   pub fn name(&self) -> Result<String, Box<Error>> {
@@ -293,6 +309,17 @@ impl Isa {
     })
   }
 }
+
+impl fmt::Debug for Isa {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    let name = self.name();
+    let name = name.as_ref()
+      .map(|v| v.as_ref() )
+      .unwrap_or_else(|_| "<bad name!>" );
+    write!(f, "Isa({})", name)
+  }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct IsaInfo {
   pub name: String,
@@ -309,7 +336,7 @@ pub struct IsaInfo {
   pub wavefronts: Vec<WavefrontInfo>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Agent(pub(crate) ffi::hsa_agent_t, ApiContext);
 impl Agent {
   pub fn name(&self) -> Result<String, Box<Error>> {
@@ -374,7 +401,7 @@ impl Agent {
   pub fn device_type(&self) -> Result<DeviceType, Box<Error>> {
     let ty = agent_info!(self, ffi::hsa_agent_info_t_HSA_AGENT_INFO_DEVICE,
                          [0u32; 1])?;
-    let o =match ty[0] {
+    let o = match ty[0] {
       ffi::hsa_device_type_t_HSA_DEVICE_TYPE_CPU => DeviceType::Cpu,
       ffi::hsa_device_type_t_HSA_DEVICE_TYPE_GPU => DeviceType::Gpu,
       ffi::hsa_device_type_t_HSA_DEVICE_TYPE_DSP => DeviceType::Dsp,
@@ -444,6 +471,18 @@ impl Agent {
         o
       },
     })
+  }
+}
+impl ::ContextRef for Agent {
+  fn context(&self) -> &ApiContext { &self.1 }
+}
+impl fmt::Debug for Agent {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    let name = self.name();
+    let name = name.as_ref()
+      .map(|v| v.as_ref() )
+      .unwrap_or_else(|_| "<bad name!>" );
+    write!(f, "Agent({}, \"{}\")", self.0.handle, name)
   }
 }
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]

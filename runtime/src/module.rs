@@ -1,8 +1,6 @@
 
 use std::marker::PhantomData;
-use serde_json;
 
-use hsa_core;
 use hsa_core::traits::NumaSend;
 
 use context::Context;

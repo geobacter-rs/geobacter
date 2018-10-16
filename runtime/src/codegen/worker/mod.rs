@@ -1,69 +1,124 @@
 
 use std::cell::{RefCell};
-use std::collections::{BTreeMap};
-use std::error::Error;
-use std::sync::mpsc::{channel, Sender, Receiver, RecvTimeoutError};
-use std::sync::{Arc, Weak, RwLock, Mutex};
+use std::collections::{BTreeMap, };
+use std::fs::File;
+use std::io::{self, Read, };
+use std::sync::mpsc::{channel, Sender, Receiver, RecvTimeoutError, };
+use std::sync::{Arc, Weak, Mutex};
 use std::ops::{Deref};
 use std::time::Duration;
-use std::thread::{spawn};
+use std::path::{Path, };
 
 use rustc;
 use rustc::hir::def_id::{CrateNum, DefId};
+use rustc::middle::exported_symbols::{SymbolExportLevel, };
+use rustc::session::config::{OutputType, CrateType, };
 use rustc::ty::query::Providers;
-use rustc::ty::{TyCtxt};
-use rustc_driver;
+use rustc::ty::{self, TyCtxt, subst::Substs, };
+use rustc::util::nodemap::DefIdMap;
+use rustc_driver::{self, driver::compute_crate_disambiguator, };
 use rustc_data_structures::fx::{FxHashMap};
+use rustc_data_structures::sync::{Lrc, };
 use rustc_metadata;
 use rustc_codegen_utils;
-use rustc_mir;
 use rustc_incremental;
+use syntax::feature_gate;
+use syntax_pos::symbol::Symbol;
 
 use tempdir::TempDir;
 
 use hsa_core::kernel::KernelId;
 
-use module::{ModuleData, ErasedModule};
-use {Accelerator, AcceleratorId};
+use {Accelerator, AcceleratorTargetDesc};
 use metadata::{Metadata, DummyMetadataLoader, CrateMetadata, CrateMetadataLoader,
                CrateNameHash};
+use utils::UnsafeSyncSender;
 
 use passes::{Pass, PassType};
 
+use self::error::IntoErrorWithKernelId;
+
 mod tls;
 mod collector;
+pub mod error;
+
+/// Since we can't send MIR directly, or even serialized (we'd have to
+/// serialize the whole crate too), the host codegenner will be responsible
+/// for creating wrapping code to extract host kernel args.
+/// Initially, no MIR will be created, eg by extracting a part of a function,
+/// so this won't result in new host functions being codegenned (any function
+/// we can reach would also be reachable in the original compilation).
+pub enum HostCreateFuncMessage {
+  /// A unmodified function in some crate
+  ImplDefId(TyCtxtLessKernelId),
+
+}
 
 pub enum Message {
+  /// So we can know when to exit.
   AddAccel(Weak<Accelerator>),
-  Trans {
+  HostCreateFunc {
+    msg: HostCreateFuncMessage,
+    accel_desc: Arc<AcceleratorTargetDesc>,
+    ret: Sender<Result<usize, error::Error>>,
+  },
+  Codegen {
     id: KernelId,
-    ret: Sender<Result<(), ()>>,
-  }
+
+    host_accel: Option<Sender<Message>>,
+
+    ret: Sender<Result<BTreeMap<OutputType, Vec<u8>>, error::Error>>,
+  },
 }
 
 #[derive(Clone)]
-pub struct TranslatorData(Sender<Message>);
-impl TranslatorData {
-  pub fn new(accel: Arc<Accelerator>, metadata: Arc<Mutex<Vec<Metadata>>>)
-    -> TranslatorData
+pub struct CodegenComms(Sender<Message>);
+impl CodegenComms {
+  pub fn new(accel_desc: Arc<AcceleratorTargetDesc>,
+             accel: &Arc<Accelerator>,
+             metadata: Arc<Mutex<Vec<Metadata>>>)
+    -> io::Result<CodegenComms>
   {
-    WorkerTranslatorData::new(accel, metadata)
+    WorkerTranslatorData::new(accel_desc, accel, metadata)
   }
-  pub fn translate(&self, id: KernelId) -> Result<(), Box<Error>> {
+  pub fn codegen(&self, id: KernelId,
+                 host: Option<CodegenComms>)
+    -> Result<BTreeMap<OutputType, Vec<u8>>, error::Error>
+  {
     let (tx, rx) = channel();
-    let msg = Message::Trans {
+    let msg = Message::Codegen {
       id,
+      host_accel: host
+        .map(|host| {
+          let CodegenComms(host) = host;
+          host
+        }),
       ret: tx,
     };
 
-    self.0.send(msg)?;
+    self.0.send(msg)
+      .expect("the codegen thread crashed/exited");
 
-    rx.recv()?
-      .map_err(|()| {
-        format!("generic translation error :^(")
-      })?;
+    let ret = rx.recv()
+      .expect("the codegen thread crashed/exited")?;
 
-    Ok(())
+    Ok(ret)
+  }
+  pub fn add_accel(&self, accel: &Arc<Accelerator>) {
+    let msg = Message::AddAccel(Arc::downgrade(accel));
+    self.0.send(msg)
+      .expect("the codegen thread crashed/exited");
+  }
+
+  pub unsafe fn sync_comms(self) -> CodegenUnsafeSyncComms {
+    let CodegenComms(this) = self;
+    UnsafeSyncSender(this)
+  }
+}
+pub type CodegenUnsafeSyncComms = UnsafeSyncSender<Message>;
+impl From<CodegenUnsafeSyncComms> for CodegenComms {
+  fn from(UnsafeSyncSender(v): CodegenUnsafeSyncComms) -> Self {
+    CodegenComms(v)
   }
 }
 
@@ -109,7 +164,6 @@ impl<'a, 'b, 'c, 'tcx> TranslatorCtx<'a, 'b, 'c, 'tcx>
         PassType::Replacer(f) => {
           f(*self, new_def_id)
         },
-        _ => { continue; }
       };
       match replaced {
         Some(id) => {
@@ -125,6 +179,9 @@ impl<'a, 'b, 'c, 'tcx> TranslatorCtx<'a, 'b, 'c, 'tcx>
     self.worker.replaced_def_ids.borrow_mut().insert(id, new_def_id);
     new_def_id
   }
+  pub fn is_root(&self, def_id: DefId) -> bool {
+    self.root == def_id
+  }
 }
 
 impl<'a, 'b, 'c, 'tcx> Deref for TranslatorCtx<'a, 'b, 'c, 'tcx>
@@ -136,6 +193,7 @@ impl<'a, 'b, 'c, 'tcx> Deref for TranslatorCtx<'a, 'b, 'c, 'tcx>
 
 
 pub struct WorkerTranslatorData<'a> {
+  pub accel_desc: Arc<AcceleratorTargetDesc>,
   pub accels: Vec<Weak<Accelerator>>,
   pub sess: &'a rustc::session::Session,
   pub cstore: &'a rustc_metadata::cstore::CStore,
@@ -143,110 +201,166 @@ pub struct WorkerTranslatorData<'a> {
   replaced_def_ids: RefCell<FxHashMap<DefId, DefId>>,
 }
 impl<'a> WorkerTranslatorData<'a> {
-  pub fn new(accel: Arc<Accelerator>, metadata: Arc<Mutex<Vec<Metadata>>>)
-    -> TranslatorData
+  pub fn new(accel_desc: Arc<AcceleratorTargetDesc>,
+             accel: &Arc<Accelerator>,
+             metadata: Arc<Mutex<Vec<Metadata>>>)
+    -> io::Result<CodegenComms>
   {
+    use std::thread::Builder;
+
     use passes::alloc::AllocPass;
     use passes::lang_item::LangItemPass;
     use passes::panic::PanicPass;
-    use passes::compiler_builtins::CompilerBuiltinsReplacerPass;
+    //use passes::compiler_builtins::CompilerBuiltinsReplacerPass;
+
+    use rustc::middle::cstore::MetadataLoader;
+    use rustc::middle::dependency_format::Dependencies;
+
     let (tx, rx) = channel();
+    let accel = Arc::downgrade(&accel);
+
+    let name = format!("codegen thread for {}",
+                       accel_desc.target.llvm_target);
 
     let f = move || {
-      let mut sess = create_rustc_session();
-      sess.target.target.llvm_target = accel.llvm_target();
-      sess.target.target.arch = accel.target_arch();
-      sess.target.target.options.cpu = accel.target_cpu();
-      sess.target.target.data_layout = "e-p:64:64-p1:64:64-p2:64:64-p3:32:32-\
-                                        p4:32:32-p5:32:32-i64:64-v16:16-v24:32-\
-                                        v32:32-v48:64-v96:128-v192:256-v256:256-\
-                                        v512:512-v1024:1024-v2048:2048-n32:64-A5"
-        .into();
+      info!("codegen thread for {} startup",
+            accel_desc.target.llvm_target);
 
-      let md_loader = Box::new(DummyMetadataLoader);
-      let md_loader = md_loader as Box<rustc::middle::cstore::MetadataLoader>;
-      let cstore = rustc_metadata::cstore::CStore::new(md_loader);
+      ::syntax::with_globals(move || {
+        with_rustc_session(move |mut sess| {
+          sess.entry_fn.set(None);
+          sess.plugin_registrar_fn.set(None);
+          sess.derive_registrar_fn.set(None);
+          let ctype = CrateType::Executable;
+          //let ctype = CrateType::Cdylib;
+          sess.crate_types.set(vec![ctype.clone()]);
+          sess.recursion_limit.set(512);
+          sess.allocator_kind.set(None);
 
-      let mut data = WorkerTranslatorData {
-        accels: vec![Arc::downgrade(&accel)],
-        sess: &sess,
-        cstore: &cstore,
-        passes: vec![Box::new(LangItemPass),
-                     Box::new(AllocPass),
-                     Box::new(PanicPass),
-                     Box::new(CompilerBuiltinsReplacerPass),],
-        replaced_def_ids: Default::default(),
-      };
-      {
-        let metadata = metadata.lock().unwrap();
-        data.initialize_cstore(metadata.as_ref());
-      }
+          let mut deps: Dependencies = Default::default();
+          deps.insert(ctype, vec![]);
+          sess.dependency_formats.set(deps);
 
-      data.thread(rx);
+          sess.init_features(feature_gate::Features::new());
+
+          let dis = compute_crate_disambiguator(&sess);
+          sess.crate_disambiguator.set(dis);
+          accel_desc.rustc_target_options(&mut sess.target.target);
+
+          let md_loader = Box::new(DummyMetadataLoader);
+          let md_loader = md_loader as Box<dyn MetadataLoader + Sync>;
+          let cstore = rustc_metadata::cstore::CStore::new(md_loader);
+
+          let mut data = WorkerTranslatorData {
+            accel_desc,
+            accels: vec![accel],
+            sess: &sess,
+            cstore: &cstore,
+            passes: vec![Box::new(LangItemPass),
+                         Box::new(AllocPass),
+                         Box::new(PanicPass),
+                         //Box::new(CompilerBuiltinsReplacerPass),
+            ],
+            replaced_def_ids: Default::default(),
+          };
+          {
+            let metadata = metadata.lock().unwrap();
+            data.initialize_cstore(metadata.as_ref());
+          }
+
+          data.thread(&rx);
+        })
+      })
     };
 
-    let _ = spawn(f);
+    let _ = Builder::new()
+      .name(name)
+      .spawn(f)?;
 
-    TranslatorData(tx)
+    Ok(CodegenComms(tx))
   }
 
-  fn thread(&mut self, rx: Receiver<Message>) {
+  fn thread(&mut self, rx: &Receiver<Message>) {
+    let to = Duration::from_secs(10);
 
-    let to = Duration::from_secs(1);
+    let mut recv_msg = None;
 
     'outer: loop {
-      'inner: loop {
-        let msg = match rx.recv_timeout(to) {
-          Ok(msg) => msg,
-          Err(RecvTimeoutError::Timeout) => {
-            break 'inner;
-          },
-          Err(RecvTimeoutError::Disconnected) => { return; },
-        };
+      {
+        let arena = rustc::ty::AllArenas::new();
+        let krate = create_empty_hir_crate();
+        let dep_graph = rustc::dep_graph::DepGraph::new_disabled();
+        let mut forest = rustc::hir::map::Forest::new(krate, &dep_graph);
+        let mut defs = rustc::hir::map::definitions::Definitions::new();
+        let disambiguator = self.sess.crate_disambiguator
+          .borrow()
+          .clone();
+        defs.create_root_def("jit-methods", disambiguator);
+        let defs = defs;
 
-        match msg {
-          Message::AddAccel(accel) => {
-            self.accels.push(accel);
-          },
-          Message::Trans {
-            id,
-            ret,
-          } => {
-            let arena = rustc::ty::AllArenas::new();
-            let krate = create_empty_hir_crate();
-            let dep_graph = rustc::dep_graph::DepGraph::new_disabled();
-            let mut forest = rustc::hir::map::Forest::new(krate, &dep_graph);
-            let mut defs = rustc::hir::map::definitions::Definitions::new();
-            defs.create_root_def("jit-methods",
-                                 self.sess.crate_disambiguator.borrow()
-                                   .as_ref()
-                                   .unwrap()
-                                   .clone());
-            let defs = defs;
+        'inner: loop {
+          let msg = recv_msg
+            .take()
+            .unwrap_or_else(|| {
+              rx.recv_timeout(to)
+            });
+          let msg = match msg {
+            Ok(msg) => msg,
+            Err(RecvTimeoutError::Timeout) => {
+              break 'inner;
+            },
+            Err(RecvTimeoutError::Disconnected) => {
+              return;
+            },
+          };
 
-            let result = self.codegen_kernel(id, &arena,
-                                             unsafe {
-                                             ::std::mem::transmute(&mut forest)
-                                           },
-                                             unsafe {
-                                             ::std::mem::transmute(&defs)
-                                           },
-                                             &dep_graph);
-            let _ = ret.send(result);
-          },
+          match msg {
+            Message::AddAccel(accel) => {
+              self.accels.push(accel);
+            },
+            Message::HostCreateFunc {
+              msg, accel_desc, ret,
+            } => {
+              unimplemented!();
+            },
+            Message::Codegen {
+              id,
+              host_accel,
+              ret,
+            } => {
+              let result = self.codegen_kernel(id, &arena,
+                                               unsafe {
+                                                 ::std::mem::transmute(&mut forest)
+                                               },
+                                               unsafe {
+                                                 ::std::mem::transmute(&defs)
+                                               },
+                                               &dep_graph);
+              let _ = ret.send(result);
+            },
+          }
+
+          continue 'inner;
         }
-
-        continue 'outer;
       }
 
-      let live = self.accels.iter().any(|a| a.upgrade().is_some());
+      let live = self.accels.iter()
+        .any(|a| a.upgrade().is_some());
       if !live { return; }
+      // else wait for the next message, at which point we will reinitialize.
+      match rx.recv() {
+        Err(_) => { return; },
+        Ok(msg) => {
+          recv_msg = Some(Ok(msg));
+        },
+      }
     }
   }
 
   fn initialize_cstore(&mut self, md: &[Metadata]) {
     let mut loader = CrateMetadataLoader::default();
-    let CrateMetadata(meta) = loader.build(md, &self.sess)
+    let CrateMetadata(meta) = loader.build(md, &self.sess,
+                                           self.cstore)
       .unwrap();
     for meta in meta.into_iter() {
       let name = CrateNameHash {
@@ -259,58 +373,51 @@ impl<'a> WorkerTranslatorData<'a> {
     }
   }
 
-  fn codegen_kernel<'b>(&self, id: KernelId, arena: &'a rustc::ty::AllArenas<'b>,
+  fn codegen_kernel<'b>(&self, id: KernelId,
+                        arena: &'a rustc::ty::AllArenas<'b>,
                         forest: &'b mut rustc::hir::map::Forest,
                         defs: &'b rustc::hir::map::definitions::Definitions,
                         dep_graph: &rustc::dep_graph::DepGraph)
-    -> Result<(), ()>
+    -> Result<BTreeMap<OutputType, Vec<u8>>, error::Error>
     where 'a: 'b,
   {
     use rustc::hir::def_id::{DefId, DefIndex};
-    use rustc::session::config::OutputTypes;
 
-    let crate_num = self.lookup_crate_num(id)
+    let crate_num = self
+      .lookup_crate_num(id)
       .ok_or_else(|| {
-        println!("crate metadata missing for `{}`", id.crate_name);
-        ()
+        error::Error::NoCrateMetadata(id)
       })?;
 
-    println!("translating defid => {:?}:{}", crate_num, id.index);
+    info!("translating defid {:?}:{}", crate_num, id.index);
 
     let def_id = DefId {
       krate: crate_num,
       index: DefIndex::from_raw_u32(id.index as u32),
     };
+    assert!(!def_id.is_local());
 
-    let trans = super::LlvmTransCrate::new(self.sess, def_id);
-    let trans = Box::new(trans) as Box<rustc_codegen_utils::trans_crate::TransCrate>;
+    let trans = super::LlvmTransCrate::new(self.sess,
+                                           def_id);
+    let trans = Box::new(trans) as Box<rustc_codegen_utils::codegen_backend::CodegenBackend>;
 
     // extern only providers:
-    let mut extern_providers = rustc::ty::maps::Providers::default();
-    stub_providers(&mut extern_providers);
-    trans.provide(&mut extern_providers);
-    trans.provide_extern(&mut extern_providers);
-    rustc::traits::provide(&mut extern_providers);
-    rustc::ty::provide(&mut extern_providers);
-    rustc_codegen_utils::symbol_names::provide(&mut extern_providers);
-    rustc_metadata::cstore::provide_extern(&mut extern_providers);
-    extern_providers.const_eval = rustc_mir::interpret::const_eval_provider;
-    provide_extern_overrides(&mut extern_providers);
-
-    let mut local_providers = extern_providers.clone();
-    stub_providers(&mut local_providers);
+    let mut local_providers = rustc::ty::query::Providers::default();
+    rustc_driver::driver::default_provide(&mut local_providers);
     trans.provide(&mut local_providers);
-    rustc::traits::provide(&mut local_providers);
-    rustc_metadata::cstore::provide(&mut local_providers);
-    rustc_mir::provide(&mut local_providers);
     providers_local(&mut local_providers);
+
+    let mut extern_providers = local_providers.clone();
+    rustc_driver::driver::default_provide_extern(&mut extern_providers);
+    trans.provide_extern(&mut extern_providers);
+    provide_extern_overrides(&mut extern_providers);
 
     let disk_cache = rustc_incremental::load_query_result_cache(self.sess);
 
     let (tx, rx) = channel();
 
     let tmpdir = TempDir::new("hsa-trans-runtime")
-      .expect("can't create output temp dir");
+      .with_kernel_id(id)?;
 
     let out = rustc::session::config::OutputFilenames {
       out_directory: tmpdir.path().into(),
@@ -335,40 +442,62 @@ impl<'a> WorkerTranslatorData<'a> {
                                         local_providers,
                                         extern_providers,
                                         &arena,
-                                        Some((resolutions, map_crate)),
+                                        resolutions,
+                                        map_crate,
                                         disk_cache,
                                         "", tx,
                                         &out, |tcx| -> Result<(), _> {
-        use rustc::middle::lang_items::*;
+        info!("output dir for {:?}: {}", def_id, out.out_directory.display());
 
-        println!("trans.elf => {}", out.out_directory.display());
-        tmpdir.into_path();
+        self::tls::enter(self, tcx, def_id, |tcx| {
+          let trans_data = trans.codegen_crate(tcx.tcx, rx);
 
-        self::tls::enter(self, |tcx| {
-          let trans_data = trans.trans_crate(tcx.tcx, rx);
-
-          trans.join_trans_and_link(trans_data, self.sess,
-                                    dep_graph, &out)
+          trans.join_codegen_and_link(trans_data, self.sess,
+                                      dep_graph, &out)
             .map_err(|err| {
-              println!("warning: trans failed: `{:?}`", err);
-              ()
+              error!("codegen failed: `{:?}`!", err);
+              error::Error::Codegen(id)
             })?;
 
           Ok(())
         })
-      })
+      })?;
+    info!("codegen complete {:?}:{}", crate_num, id.index);
+
+    //let output_dir = tmpdir.path();
+    let output_dir = tmpdir.into_path();
+
+    let mut outputs = BTreeMap::new();
+    for &output_type in out.outputs.keys() {
+      let filename = Path::new("trans.elf")
+        .with_extension(output_type.extension());
+      let output = output_dir.join(filename);
+      info!("reading output {}", output.display());
+      let mut file = File::open(output).with_kernel_id(id)?;
+      let mut data = Vec::new();
+      {
+        file.read_to_end(&mut data)
+          .with_kernel_id(id)?;
+      }
+
+      outputs.insert(output_type, data);
+    }
+
+    Ok(outputs)
   }
 
   fn lookup_crate_num(&self, kernel_id: KernelId) -> Option<CrateNum> {
     let mut out = None;
-    let needed_fingerprint = (kernel_id.crate_hash_hi, kernel_id.crate_hash_lo);
+    let needed_fingerprint =
+      (kernel_id.crate_hash_hi,
+       kernel_id.crate_hash_lo);
     self.cstore.iter_crate_data(|num, data| {
       if out.is_some() { return; }
 
-      if data.name() != kernel_id.crate_name {
+      if data.name != kernel_id.crate_name {
         return;
       }
-      let finger = data.disambiguator().to_fingerprint().as_value();
+      let finger = data.root.disambiguator.to_fingerprint().as_value();
       if needed_fingerprint == finger {
         out = Some(num);
       }
@@ -391,91 +520,41 @@ fn output_types() -> rustc::session::config::OutputTypes {
   OutputTypes::new(&out[..])
 }
 
-pub fn create_rustc_session() -> rustc::session::Session {
-  use rustc_back::{AddrSpaceIdx, AddrSpaceProps, AddrSpaceKind};
-  use rustc_driver::driver::compute_crate_disambiguator;
-
-  use std::str::FromStr;
+pub fn with_rustc_session<F, R>(f: F) -> R
+  where F: FnOnce(rustc::session::Session) -> R,
+{
+  use rustc_driver::driver::spawn_thread_pool;
 
   let opts = create_rustc_options();
-  let registry = rustc_driver::diagnostics_registry();
-
-  let mut sess = rustc::session::build_session(opts, None, registry);
-  sess.target.target.options.requires_lto = false;
-  sess.target.target.options.codegen_backend = "llvm".into();
-  sess.target.target.options.trap_unreachable = true;
-  {
-    let addr_spaces = &mut sess.target.target.options.addr_spaces;
-    addr_spaces.clear();
-
-    let flat = AddrSpaceKind::Flat;
-    let flat_idx = AddrSpaceIdx(0);
-
-    let global = AddrSpaceKind::ReadWrite;
-    let global_idx = AddrSpaceIdx(1);
-
-    let constant = AddrSpaceKind::ReadOnly;
-    let constant_idx = AddrSpaceIdx(2);
-
-    let local = AddrSpaceKind::from_str("local").unwrap();
-    let local_idx = AddrSpaceIdx(3);
-
-    let region = AddrSpaceKind::from_str("region").unwrap();
-    let region_idx = AddrSpaceIdx(4);
-
-    let private = AddrSpaceKind::Alloca;
-    let private_idx = AddrSpaceIdx(5);
-
-    let props = AddrSpaceProps {
-      index: flat_idx,
-      shared_with: vec![private, region, local,
-                        constant, global]
-        .into_iter()
-        .collect(),
-    };
-    addr_spaces.insert(flat, props);
-
-    let insert_as = |addr_spaces: &mut BTreeMap<_, _>, kind,
-                     idx| {
-      let props = AddrSpaceProps {
-        index: idx,
-        shared_with: vec![flat].into_iter().collect(),
-      };
-      addr_spaces.insert(kind, props);
-    };
-    insert_as(addr_spaces, global, global_idx);
-    insert_as(addr_spaces, constant, constant_idx);
-    insert_as(addr_spaces, local, local_idx);
-    insert_as(addr_spaces, region, region_idx);
-    insert_as(addr_spaces, private, private_idx);
-  }
-
-  let dis = compute_crate_disambiguator(&sess);
-  *sess.crate_disambiguator.borrow_mut() = Some(dis);
-
-  sess
+  spawn_thread_pool(opts, move |opts| {
+    let registry = rustc_driver::diagnostics_registry();
+    let sess = rustc::session::build_session(opts, None, registry);
+    f(sess)
+  })
 }
 
 pub fn create_rustc_options() -> rustc::session::config::Options {
   use rustc::session::config::*;
-  use rustc_back::*;
+  use rustc_target::spec::*;
 
-  let mut opts = basic_options();
-  opts.crate_types.push(CrateType::CrateTypeCdylib);
+  let mut opts = Options::default();
+  opts.crate_types.push(CrateType::Executable);
+  //opts.crate_types.push(CrateType::Cdylib);
   opts.output_types = output_types();
   opts.optimize = OptLevel::No;
-  //opts.optimize = OptLevel::Default;
-  opts.cg.retrans_all_deps = true;
-  opts.cg.codegen_units = Some(1);
-  opts.cg.lto = Lto::No;
+  opts.optimize = OptLevel::Aggressive;
   opts.cg.panic = Some(PanicStrategy::Abort);
   opts.cg.incremental = None;
+  opts.cg.overflow_checks = Some(false);
+  opts.cg.link_dead_code = true;
   opts.cli_forced_codegen_units = Some(1);
   opts.incremental = None;
   opts.cli_forced_thinlto_off = true;
-  //opts.debugging_opts.no_verify = true;
+  opts.debugging_opts.verify_llvm_ir = false;
   opts.debugging_opts.no_landing_pads = true;
   opts.debugging_opts.incremental_queries = false;
+  opts.debugging_opts.print_llvm_passes = false;
+  opts.debugging_opts.print_mono_items = Some("yes".into());
   opts
 }
 
@@ -544,6 +623,8 @@ pub fn provide_mir_overrides(providers: &mut Providers) {
 }
 pub fn provide_extern_overrides(providers: &mut Providers) {
   provide_mir_overrides(providers);
+  collector::provide(providers);
+  providers_remote_and_local(providers);
 }
 
 pub fn stub_providers(providers: &mut Providers) {
@@ -557,7 +638,6 @@ pub fn stub_providers(providers: &mut Providers) {
 
 pub fn providers_local(providers: &mut Providers) {
   use rustc::hir::def_id::{LOCAL_CRATE};
-  use rustc::ty::TyCtxt;
   use rustc_data_structures::svh::Svh;
 
   use std::rc::Rc;
@@ -570,14 +650,11 @@ pub fn providers_local(providers: &mut Providers) {
     },
     crate_name: |tcx, id| {
       assert_eq!(id, LOCAL_CRATE);
-      "jit-methods".into()
+      Symbol::intern("jit-methods")
     },
     crate_disambiguator: |tcx, cnum| {
       assert_eq!(cnum, LOCAL_CRATE);
-      tcx.sess.crate_disambiguator.borrow()
-        .as_ref()
-        .unwrap()
-        .clone()
+      tcx.sess.crate_disambiguator.borrow().clone()
     },
     native_libraries: |tcx, cnum| {
       assert_eq!(cnum, LOCAL_CRATE);
@@ -607,7 +684,87 @@ pub fn providers_local(providers: &mut Providers) {
     },
     .. *providers
   };
-
   provide_mir_overrides(providers);
   collector::provide(providers);
+  providers_remote_and_local(providers);
+}
+
+fn providers_remote_and_local(providers: &mut Providers) {
+  use rustc_typeck::provide;
+
+  *providers = Providers {
+    fn_sig,
+    reachable_non_generics,
+    upstream_monomorphizations,
+    upstream_monomorphizations_for,
+    .. *providers
+  };
+
+  fn fn_sig<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> ty::PolyFnSig<'tcx> {
+    use rustc::ty::{Binder, FnSig, };
+    use rustc_target::spec::abi::Abi;
+
+    let mut providers = Providers::default();
+    rustc_metadata::cstore::provide_extern(&mut providers);
+    let sig = (providers.fn_sig)(tcx, def_id);
+
+    self::tls::with_tcx(tcx, |tcx| {
+      if tcx.is_root(def_id) {
+        // modify the abi:
+        let sig = FnSig {
+          abi: Abi::AmdGpuKernel,
+          .. *sig.skip_binder()
+        };
+        Binder::bind(sig)
+      } else {
+        sig
+      }
+    })
+  }
+  fn reachable_non_generics<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                      cnum: CrateNum)
+    -> Lrc<DefIdMap<SymbolExportLevel>>
+  {
+    // we need to recodegen everything
+    Lrc::new(DefIdMap())
+  }
+  fn upstream_monomorphizations<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                          cnum: CrateNum)
+    -> Lrc<DefIdMap<Lrc<FxHashMap<&'tcx Substs<'tcx>, CrateNum>>>>
+  {
+    // we never have any upstream monomorphizations.
+    Lrc::new(Default::default())
+  }
+  fn upstream_monomorphizations_for<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                                       def_id: DefId)
+    -> Option<Lrc<FxHashMap<&'tcx Substs<'tcx>, CrateNum>>>
+  {
+    None
+  }
+}
+
+pub struct TyCtxtLessKernelId {
+  pub crate_name: String,
+  pub crate_hash_hi: u64,
+  pub crate_hash_lo: u64,
+  pub index: u64,
+}
+impl TyCtxtLessKernelId {
+  pub fn from_def_id(tcx: TyCtxt<'_, '_, '_>,
+                     def_id: DefId) -> Self {
+    let crate_name = tcx.crate_name(def_id.krate);
+    let crate_name = format!("{}", crate_name);
+
+    let disambiguator = tcx.crate_disambiguator(def_id.krate);
+    let (crate_hash_hi, crate_hash_lo) = disambiguator.to_fingerprint().as_value();
+
+    let index = def_id.index.as_raw_u32() as u64;
+
+    TyCtxtLessKernelId {
+      crate_name,
+      crate_hash_hi,
+      crate_hash_lo,
+      index,
+    }
+  }
 }

@@ -63,7 +63,7 @@ pub fn main() {
   use std::io::{Write};
   use std::time::{SystemTime, UNIX_EPOCH};
 
-  let _ = force_rustc_link();
+  //let _ = force_rustc_link();
   let _ = force_rustc_deps_link();
 
   let out = Path::new(&var_os("OUT_DIR").unwrap()).join("timestamp.rs");

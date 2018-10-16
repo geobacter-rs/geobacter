@@ -1,6 +1,3 @@
-#![feature(plugin)]
-
-#![plugin(hsa_rustc_plugin)]
 
 extern crate runtime;
 extern crate hsa_core;

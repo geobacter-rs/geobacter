@@ -1,11 +1,8 @@
 #![feature(custom_attribute)]
-#![feature(use_extern_macros)]
 #![feature(intrinsics)]
 #![feature(unboxed_closures)]
-#![feature(extern_prelude)]
 
-#[macro_use]
-extern crate serde_derive;
+#[macro_use] extern crate serde_derive;
 extern crate serde;
 
 #[macro_use] extern crate hsa_core_gen;

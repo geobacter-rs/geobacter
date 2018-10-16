@@ -18,14 +18,13 @@ macro_rules! exe_info {
     }
   }
 }
-
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Executable(ffi::hsa_executable_t, ApiContext);
 
 impl Executable {
-  pub fn create<T>(profile: Profiles,
-                   rounding_mode: DefaultFloatRoundingModes,
-                   options: T) -> Result<Executable, Box<Error>>
+  pub fn new<T>(profile: Profiles,
+                rounding_mode: DefaultFloatRoundingModes,
+                options: T) -> Result<Executable, Box<Error>>
     where T: AsRef<str>,
   {
     let options = CString::new(options.as_ref())?;
@@ -40,7 +39,7 @@ impl Executable {
     Ok(o)
   }
 
-  pub fn load_agent_code_object<T, U>(&self, agent: Agent, reader: &T,
+  pub fn load_agent_code_object<T, U>(&self, agent: &Agent, reader: &T,
                                       options: U) -> Result<LoadedCodeObject, Box<Error>>
     where T: CodeObjectReader,
           U: AsRef<str>,
@@ -141,6 +140,52 @@ pub trait CommonExecutable {
       },
     }
   }
+  fn agent_symbols(&self, agent: &Agent)
+    -> Result<Vec<Symbol>, Box<Error>>
+  {
+    extern "C" fn get_symbol(exec: ffi::hsa_executable_t,
+                             _agent: ffi::hsa_agent_t,
+                             symbol: ffi::hsa_executable_symbol_t,
+                             data: *mut c_void)
+      -> ffi::hsa_status_t
+    {
+      let &mut (exe, ref mut data): &mut (&Executable, &mut Vec<Symbol>) = unsafe {
+        transmute(data)
+      };
+      let symbol = Symbol(exe, symbol);
+      data.push(symbol);
+      ffi::hsa_status_t_HSA_STATUS_SUCCESS
+    }
+
+    let mut out = Vec::new();
+    {
+      let mut data = (self, &mut out);
+      check_err!(ffi::hsa_executable_iterate_agent_symbols(self.sys().0,
+                                                           agent.0,
+                                                           Some(get_symbol),
+                                                           transmute(&mut data)))?;
+    }
+    Ok(out)
+  }
+
+  fn symbol_by_linker_name<T>(&self, name: T,
+                              agent: Option<&Agent>)
+    -> Result<Symbol, Box<Error>>
+    where T: AsRef<str>,
+  {
+    let name = CString::new(name.as_ref().to_string())?;
+    let agent = agent
+      .map(|a| &a.0 as *const _ )
+      .unwrap_or(0 as *const _);
+    let mut out: ffi::hsa_executable_symbol_t = unsafe {
+      ::std::mem::uninitialized()
+    };
+    check_err!(ffi::hsa_executable_get_symbol_by_name(self.sys().0,
+                                                      name.as_ptr(),
+                                                      agent,
+                                                      &mut out as *mut _))?;
+    Ok(Symbol(self.sys(), out))
+  }
 }
 
 impl CommonExecutable for Executable {
@@ -160,3 +205,35 @@ impl Drop for Executable {
   }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
+pub struct Symbol<'a>(&'a Executable, ffi::hsa_executable_symbol_t);
+
+macro_rules! sym_info {
+  ($self:expr, $id:expr, $out:expr) => {
+    {
+      let mut out = $out;
+      check_err!(ffi::hsa_executable_symbol_get_info($self.1, $id, out.as_mut_ptr() as *mut _) => out)
+    }
+  }
+}
+
+impl<'a> Symbol<'a> {
+  pub fn name(&self) -> Result<String, Box<Error>> {
+    let len = sym_info!(self, ffi::hsa_executable_symbol_info_t_HSA_EXECUTABLE_SYMBOL_INFO_NAME_LENGTH,
+                        [0u32; 1])?[0] as usize;
+    let bytes = sym_info!(self, ffi::hsa_executable_symbol_info_t_HSA_EXECUTABLE_SYMBOL_INFO_NAME,
+                          vec![0u8; len])?;
+    Ok(String::from_utf8(bytes)?)
+  }
+  pub fn kernel_object(&self) -> Result<Option<u64>, Box<Error>> {
+    let attr = ffi::hsa_executable_symbol_info_t_HSA_EXECUTABLE_SYMBOL_INFO_KERNEL_OBJECT;
+    let mut out: u64 = 0;
+    check_err!(ffi::hsa_executable_symbol_get_info(self.1, attr,
+                                                   &mut out as *mut u64 as *mut _))?;
+    Ok(if out != 0 {
+      Some(out)
+    } else {
+      None
+    })
+  }
+}

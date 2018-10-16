@@ -1,5 +1,3 @@
-#![feature(proc_macro)]
-
 #![allow(dead_code)]
 
 #[macro_use]

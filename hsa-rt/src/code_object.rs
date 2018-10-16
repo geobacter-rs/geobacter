@@ -29,7 +29,7 @@ pub struct CodeObjectReaderRef<'a> {
 }
 
 impl<'a> CodeObjectReaderRef<'a> {
-  pub fn create(from: &'a [u8]) -> Result<Self, Box<Error>> {
+  pub fn new(from: &'a [u8]) -> Result<Self, Box<Error>> {
     let mut out = CodeObjectReaderSys(ffi::hsa_code_object_reader_s {
       handle: 0,
     }, ApiContext::upref());
@@ -41,6 +41,9 @@ impl<'a> CodeObjectReaderRef<'a> {
       buf: from,
     })
   }
+}
+impl<'a> CodeObjectReader for CodeObjectReaderRef<'a> {
+  fn sys(&self) -> &CodeObjectReaderSys { &self.sys }
 }
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct CodeObjectReaderOwned {

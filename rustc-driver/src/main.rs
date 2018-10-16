@@ -16,7 +16,6 @@ use std::path::PathBuf;
 
 use rustc_driver::{driver, Compilation, CompilerCalls, RustcDefaultCalls, };
 use rustc::hir::def_id::{DefId, };
-use rustc::middle::lang_items::FnTraitLangItem;
 use rustc::mir::{Constant, Operand, Rvalue, Statement,
                  StatementKind, AggregateKind, Local, };
 use rustc::mir::interpret::{ConstValue, Scalar, };
@@ -35,6 +34,9 @@ use rustc_driver::getopts;
 pub fn main() {
   use std::mem::transmute;
 
+  rustc_driver::env_logger::init();
+  env_logger::init();
+
   let mut args: Vec<_> = ::std::env::args()
     .enumerate()
     .filter_map(|(idx, arg)| {
@@ -47,6 +49,8 @@ pub fn main() {
   // force MIR to be encoded:
   args.push("-Z".into());
   args.push("always-encode-mir".into());
+  args.push("-Z".into());
+  args.push("always-emit-metadata".into());
 
   let generators = Generators::default();
   {
@@ -297,7 +301,7 @@ impl CustomIntrinsicMirGen for KernelIdFor {
 
     let rvalue = Rvalue::Aggregate(Box::new(AggregateKind::Tuple),
                                    vec![crate_name, d_hi, d_lo, id]);
-    let stmt_kind = StatementKind::Assign(ret, rvalue);
+    let stmt_kind = StatementKind::Assign(ret, Box::new(rvalue));
     let stmt = Statement {
       source_info: source_info.clone(),
       kind: stmt_kind,

@@ -1,47 +1,46 @@
 
-use std::collections::{HashMap, VecDeque};
-use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, };
 use std::error::Error;
 use std::io;
-use std::iter::{once, };
 use std::path::{PathBuf, Path};
-use std::slice;
 use std::str::Utf8Error;
-use std::rc::Rc;
-use std::{ptr, fmt};
-use std::ops::{Range, Deref};
+use std::{fmt};
+use std::ops::{Deref};
 use std::sync::{Arc, };
 
+use rustc_data_structures::sync::{Lock, RwLock, Lrc};
 use rustc_data_structures::owning_ref::{OwningRef, ErasedBoxRef};
-use rustc_data_structures::fx::FxHashSet;
 use rustc::hir::def_id::{CrateNum,};
 use rustc::{self, session};
-use rustc_metadata::cstore::{self, MetadataBlob};
+use rustc_metadata::cstore::{self, MetadataBlob, CStore, };
 use rustc_metadata::schema::{self, METADATA_HEADER};
-use rustc_back;
+use rustc::mir::interpret::AllocDecodingState;
+use rustc_target;
 use syntax_pos::symbol::{Symbol};
 use flate2::read::DeflateDecoder;
-
-use util::{path2cstr, };
-use platform::os::locate_dylib;
 
 #[derive(Debug)]
 pub enum MetadataLoadingError {
   Generic(Box<Error>),
+  Io(io::Error),
   Read,
   ObjectFile,
   SectionMissing,
   SymbolUtf(Utf8Error),
   Deflate(PathBuf, String, io::Error),
+  Elf(goblin::error::Error),
 }
 impl Error for MetadataLoadingError {
   fn description(&self) -> &str {
     match self {
       &MetadataLoadingError::Generic(ref e) => e.description(),
+      &MetadataLoadingError::Io(ref e) => e.description(),
       &MetadataLoadingError::Read => "error reading file into memory",
       &MetadataLoadingError::ObjectFile => "object file format error",
       &MetadataLoadingError::SectionMissing => "metadata section missing from file",
       &MetadataLoadingError::SymbolUtf(ref e) => e.description(),
+      &MetadataLoadingError::Deflate(_, _, ref e) => e.description(),
+      &MetadataLoadingError::Elf(ref e) => e.description(),
     }
   }
 }
@@ -60,6 +59,16 @@ impl From<Utf8Error> for MetadataLoadingError {
     MetadataLoadingError::SymbolUtf(v)
   }
 }
+impl From<io::Error> for MetadataLoadingError {
+  fn from(v: io::Error) -> Self {
+    MetadataLoadingError::Io(v)
+  }
+}
+impl From<goblin::error::Error> for MetadataLoadingError {
+  fn from(v: goblin::error::Error) -> Self {
+    MetadataLoadingError::Elf(v)
+  }
+}
 #[derive(Hash, Clone, PartialEq, Eq, Debug)]
 pub struct CrateNameHash {
   pub name: Symbol,
@@ -67,31 +76,21 @@ pub struct CrateNameHash {
 }
 
 pub struct CrateMetadataLoader {
-  next_crate_num: CrateNum,
-
   name_to_blob: HashMap<CrateNameHash, (CrateSource, String,
                                         SharedMetadataBlob)>,
 
   crate_nums: HashMap<CrateNameHash, CrateNum>,
   roots: HashMap<CrateNameHash, Option<schema::CrateRoot>>,
-
 }
 impl CrateMetadataLoader {
-  pub fn take_crate_num(&mut self) -> CrateNum {
-    let id = self.next_crate_num;
-    self.next_crate_num = CrateNum::from_u32(id.as_u32() + 1);
-    id
-  }
-
-  fn process_crate_metadata(&mut self, src: &PathBuf,
+  fn process_crate_metadata(&mut self,
+                            src: &PathBuf,
                             symbol_name: &str,
-                            krate: &MetadataBlob)
+                            krate: &MetadataBlob,
+                            cstore: &CStore)
     -> (CrateNum, CrateNameHash, bool)
   {
     use std::collections::hash_map::Entry;
-    //println!("processing: {}, symbol: {}",
-    //         Path::new(src.file_name().unwrap()).display(),
-    //         symbol_name);
 
     let root = krate.get_root();
     let name = CrateNameHash {
@@ -103,12 +102,11 @@ impl CrateMetadataLoader {
         return (o.get().clone(), name, false);
       },
       Entry::Vacant(mut v) => {
-        //let cnum = self.take_crate_num();
-        let cnum = {
-          let id = self.next_crate_num;
-          self.next_crate_num = CrateNum::from_u32(id.as_u32() + 1);
-          id
-        };
+        let cnum = cstore.alloc_new_crate_num();
+        info!("crate_num: {}, source: {}, symbol_name: {}",
+              cnum,
+              Path::new(src.file_name().unwrap()).display(),
+              symbol_name);
         v.insert(cnum);
         cnum
       },
@@ -121,27 +119,28 @@ impl CrateMetadataLoader {
     (cnum, name, true)
   }
 
-  pub fn build(&mut self, allmd: &[Metadata],
-               sess: &session::Session)
+  pub fn build(&mut self,
+               allmd: &[Metadata],
+               sess: &session::Session,
+               cstore: &CStore)
     -> Result<CrateMetadata, String>
   {
-    let _local_crate = self.take_crate_num();
     let mut out = CrateMetadata::default();
 
     self.name_to_blob.clear();
     'outer: for object in allmd.iter() {
-      //println!("scanning object {:?}", object.src);
+      info!("scanning object {:?}", object.src);
       // First we need to find the owning crate for this object and
       // see if it is a rustc plugin. If so, we must skip it!
       let root = object.owner_blob().get_root();
       if root.plugin_registrar_fn.is_some() ||
         root.macro_derive_registrar.is_some() {
-        //println!("looks like a rustc plugin, skipping");
+        info!("looks like a rustc plugin, skipping");
         continue 'outer;
       }
 
       for &(ref symbol_name, ref dep_blob) in object.all.iter() {
-        println!("parsing metadata from {}", symbol_name);
+        info!("parsing metadata from {}", symbol_name);
         let root = dep_blob.get_root();
         let name = CrateNameHash {
           name: root.name,
@@ -151,9 +150,14 @@ impl CrateMetadataLoader {
         let value = (object.src.clone(),
                      symbol_name.clone(),
                      dep_blob.clone());
-        let prev = self.name_to_blob.insert(name, value);
-        assert!(prev.is_none(), "duplicate! first from {}, second from {}",
-                prev.unwrap().0.display(), object.src.display());
+        if self.name_to_blob.get(&name).is_none() {
+          self.name_to_blob.insert(name, value);
+        }
+        /*if let Some(prev) = prev {
+          // this is expected from `compiler_builtins`
+          warn!("duplicate! first from {}, second from {}",
+                prev.0.display(), object.src.display());
+        }*/
       }
     }
 
@@ -168,24 +172,30 @@ impl CrateMetadataLoader {
       .collect();
 
     for name in required_names.into_iter() {
-      self.build_impl(sess, name, &mut out)?;
+      self.build_impl(sess, name, &mut out,
+                      cstore)?;
     }
 
-    println!("finished loading metadata");
+    info!("finished loading metadata");
 
     Ok(out)
   }
 
-  fn build_impl(&mut self, sess: &session::Session,
-                what: CrateNameHash, into: &mut CrateMetadata)
+  fn build_impl(&mut self,
+                sess: &session::Session,
+                what: CrateNameHash,
+                into: &mut CrateMetadata,
+                cstore: &CStore)
     -> Result<CrateNum, String>
   {
     use rustc::session::search_paths::PathKind;
     use rustc::middle::cstore::DepKind;
+    use rustc_metadata::cstore;
 
     let (src, symbol_name, shared_krate) = {
       let &(ref src, ref symbol_name, ref krate) =
-        self.name_to_blob.get(&what)
+        self.name_to_blob
+          .get(&what)
           .ok_or_else(|| {
             format!("failed to find metadata for {}-{:x}",
                     what.name, what.hash)
@@ -194,25 +204,32 @@ impl CrateMetadataLoader {
     };
 
     let (cnum, name, is_new) = self
-      .process_crate_metadata(&src, symbol_name.as_str(), &*shared_krate);
+      .process_crate_metadata(&src,
+                              symbol_name.as_str(),
+                              &*shared_krate,
+                              cstore);
     if !is_new { return Ok(cnum); }
 
     let root = shared_krate.get_root();
 
-    println!("loading: {}, name: {}, cnum: {}",
-             Path::new(src.file_name().unwrap()).display(),
-             root.name, cnum);
+    debug!("loading from: {}, name: {}, cnum: {}",
+           Path::new(src.file_name().unwrap()).display(),
+           root.name, cnum);
 
     // Some notes: a specific dep can be found inside an arbitrary dylib.
     // On top of that, we won't get any linkage to a dep crate if all of
     // a dependee crate's symbols are inlined into the dependent crate.
     // This means we have to load all possible dylibs in our search paths
     // and look inside everyone.
-    let cnum_map = {
-      let mut map = vec![cnum];
+    let cnum_map: cstore::CrateNumMap = {
+      let mut map: cstore::CrateNumMap = Default::default();
+      map.push(cnum);
 
       for dep in root.crate_deps.decode(&*shared_krate) {
-        if dep.kind.macros_only() { continue; }
+        if dep.kind.macros_only() {
+          map.push(cnum);
+          continue;
+        }
 
         let name = CrateNameHash {
           name: dep.name,
@@ -224,50 +241,59 @@ impl CrateMetadataLoader {
             continue;
           },
           None => {
-            //println!("crate num not found for `{:?}`, finding manually", dep);
+            //info!("crate num not found for `{:?}`, finding manually", dep.name);
           },
         }
 
-        let cnum = self.build_impl(sess, name, into)?;
+        let cnum = self.build_impl(sess, name,
+                                   into, cstore)?;
         map.push(cnum);
       }
 
       map.into_iter().collect()
     };
 
-    let def_path_table = root.def_path_table
+    let dependencies: Vec<CrateNum> = cnum_map.iter().cloned().collect();
+
+    let def_path_table = root
+      .def_path_table
       .decode((&*shared_krate, sess));
-    let exported_symbols = root.exported_symbols
-      .decode((&*shared_krate, sess))
+
+    let interpret_alloc_index: Vec<u32> = root
+      .interpret_alloc_index
+      .decode(&*shared_krate)
       .collect();
-    let trait_impls = root.impls
+
+    let trait_impls = root
+      .impls
       .decode((&*shared_krate, sess))
       .map(|impls| (impls.trait_id, impls.impls) )
       .collect();
 
     let cmeta = cstore::CrateMetadata {
       name: root.name,
-      extern_crate: Cell::new(None),
-      def_path_table: Rc::new(def_path_table),
-      exported_symbols,
+      // Is it okay to just ignore this?
+      imported_name: root.name,
+      extern_crate: Lock::new(None),
+      def_path_table: Lrc::new(def_path_table),
       trait_impls,
       proc_macros: None,
       root,
       blob: shared_krate.unwrap(),
-      cnum_map: RefCell::new(cnum_map),
+      cnum_map,
       cnum,
-      codemap_import_info: RefCell::new(vec![]),
-      attribute_cache: RefCell::new([vec![], vec![]]),
-      dep_kind: Cell::new(DepKind::Explicit),
+      dependencies: Lock::new(dependencies),
+      source_map_import_info: RwLock::new(vec![]),
+      alloc_decoding_state: AllocDecodingState::new(interpret_alloc_index),
+      dep_kind: Lock::new(DepKind::Explicit),
       source: cstore::CrateSource {
         // Not sure PathKind::Crate is correct.
         dylib: Some((src.to_path_buf(), PathKind::Crate)),
         rlib: None,
         rmeta: None,
       },
-      dllimport_foreign_items: FxHashSet(),
     };
-    let cmeta = Rc::new(cmeta);
+    let cmeta = Lrc::new(cmeta);
     into.0.push(cmeta);
 
     Ok(cnum)
@@ -280,9 +306,7 @@ impl CrateMetadataLoader {
 }
 impl Default for CrateMetadataLoader {
   fn default() -> Self {
-    use rustc::hir::def_id::LOCAL_CRATE;
     CrateMetadataLoader {
-      next_crate_num: LOCAL_CRATE,
       name_to_blob: Default::default(),
       crate_nums: Default::default(),
       roots: Default::default(),
@@ -291,7 +315,7 @@ impl Default for CrateMetadataLoader {
 }
 
 #[derive(Default)]
-pub struct CrateMetadata(pub Vec<Rc<cstore::CrateMetadata>>);
+pub struct CrateMetadata(pub Vec<Lrc<cstore::CrateMetadata>>);
 
 pub struct SharedMetadataBlob(Arc<Vec<u8>>, MetadataBlob);
 impl SharedMetadataBlob {
@@ -371,9 +395,9 @@ impl Metadata {
 
     let mut metadata_section = None;
     for section_header in object.section_headers {
-      if section_header.st_type == 0 { continue; }
+      if section_header.sh_type == 0 { continue; }
 
-      let name = match object.shdr_strtab.get(section_header.st_name) {
+      let name = match object.shdr_strtab.get(section_header.sh_name) {
         Some(Ok(name)) => name,
         _ => continue,
       };
@@ -390,7 +414,7 @@ impl Metadata {
 
     let mut all = vec![];
     let mut owner_index = None;
-    for sym in object.symtab.iter() {
+    for sym in object.syms.iter() {
       let name = match object.strtab.get(sym.st_name) {
         Some(Ok(name)) => name,
         _ => continue,
@@ -398,8 +422,8 @@ impl Metadata {
 
       if !name.starts_with("rust_metadata_") { continue; }
 
-      let start = sym.st_value;
-      let end   = sym.st_value + sym.st_size;
+      let start = sym.st_value as usize;
+      let end   = (sym.st_value + sym.st_size) as usize;
 
       if owner_index.is_some() {
         assert!(start != 0);
@@ -414,7 +438,7 @@ impl Metadata {
       let mut deflate = DeflateDecoder::new(compressed.as_ref());
       deflate.read_to_end(&mut inflated)
         .map_err(|e| {
-          MetadataLoadingError::Deflate(src.into(), name.to_string(),
+          MetadataLoadingError::Deflate(src.as_path().into(), name.to_string(),
                                         e)
         })?;
 
@@ -444,13 +468,13 @@ const METADATA_SECTION_NAME: &'static str = "__DATA,.rustc";
 pub struct DummyMetadataLoader;
 impl rustc::middle::cstore::MetadataLoader for DummyMetadataLoader {
   fn get_rlib_metadata(&self,
-                       _target: &rustc_back::target::Target,
+                       _target: &rustc_target::spec::Target,
                        _filename: &Path) -> Result<ErasedBoxRef<[u8]>, String>
   {
     Err("this should never be called".into())
   }
   fn get_dylib_metadata(&self,
-                        _target: &rustc_back::target::Target,
+                        _target: &rustc_target::spec::Target,
                         _filename: &Path) -> Result<ErasedBoxRef<[u8]>, String>
   {
     Err("this should never be called".into())

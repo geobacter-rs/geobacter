@@ -1,58 +1,63 @@
 
-use std::sync::atomic::{AtomicUsize, Ordering, };
+use std::error::Error;
+use std::fmt;
+use std::sync::{RwLock, };
 
-use hsa_rt::{self, agent::Agent, agent::Isa, };
+use hsa_rt::{agent::Agent, agent::DeviceType, };
 
-use {Accelerator, AcceleratorId, };
+use {Accelerator, AcceleratorId, AcceleratorTargetDesc, };
+use codegen::worker::{CodegenComms, CodegenUnsafeSyncComms, };
 
 pub struct HostAccel {
-  id: AtomicUsize,
+  id: AcceleratorId,
 
-  hsa_ctx: hsa_rt::ApiContext,
   hsa_agent: Agent,
-  hsa_isa: Isa,
 
-  target_triple: String,
-  host_arch: String,
-  host_cpu: String,
+  codegen: RwLock<Option<CodegenUnsafeSyncComms>>,
 }
 impl HostAccel {
-  /// This isn't ideal, but for now, make the user provide the host cpu.
-  pub fn new(agent: Agent, isa: Isa,
-             host_arch: String, host_cpu: String) -> Self {
-    HostAccel {
-      id: AtomicUsize::new(AcceleratorId::default().index()),
-
-      hsa_ctx: hsa_rt::ApiContext::new(),
-      hsa_agent: agent,
-      hsa_isa: isa,
-
-      target_triple: format!("{}-unknown-linux-gnu", host_arch),
-      host_arch,
-      host_cpu,
+  pub fn new(id: AcceleratorId, agent: Agent) -> Result<Self, Box<Error>> {
+    if agent.device_type()? != DeviceType::Cpu {
+      return Err(format!("host accelerator isn't a CPU").into());
     }
+
+    Ok(HostAccel {
+      id,
+
+      hsa_agent: agent,
+
+      codegen: Default::default(),
+    })
   }
 }
 
 impl Accelerator for HostAccel {
-  fn id_opt(&self) -> Option<AcceleratorId> {
-    let id = self.id.load(Ordering::Acquire);
-    let id = AcceleratorId::new(id);
-    id.check_invalid()
-  }
-  fn set_id(&self, id: AcceleratorId) {
-    self.id.store(id.index(), Ordering::Release);
+  fn id(&self) -> AcceleratorId {
+    self.id
   }
 
-  fn target_triple(&self) -> String {
-    self.target_triple.clone()
-  }
-  fn target_arch(&self) -> String {
-    self.host_arch.clone()
-  }
-  fn target_cpu(&self) -> String {
-    self.host_cpu.clone()
+  fn agent(&self) -> &Agent { &self.hsa_agent }
+
+  fn accel_target_desc(&self) -> Result<AcceleratorTargetDesc, Box<Error>> {
+    Ok(AcceleratorTargetDesc::default())
   }
 
-  fn allow_indirect_function_calls(&self) -> bool { true }
+  fn set_codegen(&self, comms: CodegenComms) -> Option<CodegenComms> {
+    let mut lock = self.codegen.write().unwrap();
+    let ret = lock.take();
+    *lock = Some(unsafe { comms.sync_comms() });
+
+    ret.map(|v| v.clone_into() )
+  }
+  fn get_codegen(&self) -> Option<CodegenComms> {
+    let lock = self.codegen.read().unwrap();
+    (*&lock).as_ref().map(|v| v.clone_into() )
+  }
+}
+
+impl fmt::Debug for HostAccel {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "HostAccel {{ id: {:?}, agent: {:?}, }}",
+           self.id, self.hsa_agent)
+  }
 }

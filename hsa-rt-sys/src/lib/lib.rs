@@ -4,3 +4,11 @@
          non_snake_case)]
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+
+impl Default for hsa_signal_s {
+  fn default() -> Self {
+    hsa_signal_s {
+      handle: 0,
+    }
+  }
+}

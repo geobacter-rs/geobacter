@@ -1,12 +1,12 @@
 
 extern crate hsa_rt as hsa;
 
-use hsa::agent;
 use hsa::mem::region::{QueryRegions};
 
 pub fn main() {
-  let ctxt = hsa::ApiContext::new();
-  let agents = agent::find_agents(&ctxt)
+  let ctxt = hsa::ApiContext::try_upref()
+    .expect("error creating HSA context");
+  let agents = ctxt.agents()
     .expect("find_agents");
 
   for (num, agent) in agents.into_iter().enumerate() {
@@ -23,6 +23,7 @@ pub fn main() {
     println!("\tQueue type = {:?}", agent.queue_type().unwrap());
     println!("\tVersion = {:?}", agent.version().unwrap());
 
+    // not sure why, but this gives us a bunch of invalid, possibly corrupt, data.
     /*let caches = agent.caches().unwrap();
     for (num, cache) in caches.into_iter().enumerate() {
       println!("\tCache #{}:", num);
@@ -35,7 +36,9 @@ pub fn main() {
       Ok(isas) => {
         for (num, isa) in isas.into_iter().enumerate() {
           println!("\tISA #{}:", num);
-          println!("\t\tName: {}", isa.name().unwrap_or_else(|_| "<bad name!>".into()));
+          let info = isa.info().expect("get all ISA info");
+
+          println!("{:#?}", info);
         }
       },
       Err(e) => {
@@ -68,6 +71,11 @@ pub fn main() {
       Err(e) => {
         println!("\tFailed to get available regions: `{:?}`", e);
       },
+    }
+    if let Ok(pools) = agent.amd_memory_pools() {
+      for pool in pools.into_iter() {
+
+      }
     }
   }
 }

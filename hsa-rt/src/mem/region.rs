@@ -1,7 +1,7 @@
 
 use std::error::Error;
 use std::fmt;
-use std::mem::transmute;
+use std::mem::{transmute, size_of, };
 use std::os::raw::c_void;
 
 use ffi;
@@ -66,8 +66,8 @@ impl fmt::Debug for GlobalFlags {
   }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct Region(ffi::hsa_region_t);
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct Region(pub(crate) ffi::hsa_region_t);
 
 impl Region {
   pub fn id(&self) -> u64 { self.0.handle }
@@ -128,14 +128,28 @@ impl Region {
                             [0usize; 1])?;
     Ok(size[0])
   }
+  /// All allocations will have alignment `runtime_alloc_alignment`.
+  /// This is generally the page size.
+  #[allow(unused_unsafe)]
+  pub unsafe fn allocate<T>(&self, count: usize) -> Result<*mut T, Box<Error>> {
+    assert_ne!(size_of::<T>(), 0, "can't allocate with a zero size");
+    let bytes = size_of::<T>() * count;
+    let mut ptr: *mut T = 0 as _;
+    check_err!(ffi::hsa_memory_allocate(self.0, bytes,
+                                        transmute(&mut ptr)))?;
+
+    Ok(ptr)
+  }
+  #[allow(unused_unsafe)]
+  pub unsafe fn deallocate<T>(&self, ptr: *mut T) -> Result<(), Box<Error>>  {
+    // actually don't need `self`.
+    check_err!(ffi::hsa_memory_free(ptr as *mut _))?;
+    Ok(())
+  }
 }
 
-pub trait QueryRegions {
-  fn all_regions(&self) -> Result<Vec<Region>, Box<Error>>;
-}
-
-impl QueryRegions for Agent {
-  fn all_regions(&self) -> Result<Vec<Region>, Box<Error>> {
+impl Agent {
+  pub fn all_regions(&self) -> Result<Vec<Region>, Box<Error>> {
     extern "C" fn get(out: ffi::hsa_region_t,
                       items: *mut c_void) -> ffi::hsa_status_t {
       let items: &mut Vec<Region> = unsafe {

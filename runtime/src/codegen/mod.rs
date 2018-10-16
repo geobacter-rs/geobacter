@@ -1,6 +1,4 @@
 
-use std::error::Error;
-use std::ffi::{CString};
 use std::sync::{mpsc};
 use std::any::Any;
 
@@ -12,10 +10,6 @@ use rustc::ty::{TyCtxt};
 use rustc::ty::query::Providers;
 use rustc_codegen_utils::codegen_backend::{CodegenBackend};
 use syntax_pos::symbol::{Symbol};
-
-use self::target_options::{TargetOptions, CodeModel};
-
-use indexvec::IndexVec;
 
 pub mod target_options;
 pub mod worker;
@@ -51,7 +45,7 @@ impl CodegenBackend for LlvmTransCrate {
     self.inner.diagnostics()
   }
 
-  fn metadata_loader(&self) -> Box<MetadataLoader> {
+  fn metadata_loader(&self) -> Box<dyn MetadataLoader + Sync> {
     Box::new(::metadata::DummyMetadataLoader)
   }
   fn provide(&self, providers: &mut Providers) {
@@ -60,17 +54,12 @@ impl CodegenBackend for LlvmTransCrate {
   fn provide_extern(&self, providers: &mut Providers) {
     self.inner.provide_extern(providers)
   }
-  fn trans_crate<'a, 'tcx>(&self,
+  fn codegen_crate<'a, 'tcx>(&self,
                            tcx: TyCtxt<'a, 'tcx, 'tcx>,
                            rx: mpsc::Receiver<Box<Any + Send>>)
     -> Box<Any>
   {
-    use rustc::ty::Instance;
-    use rustc_target::spec::Abi;
-
-    let root = Instance::mono(tcx, self.entry_shim);
-    tcx.override_root(root, Abi::AmdGpuKernel);
-    self.inner.trans_crate(tcx, rx)
+    self.inner.codegen_crate(tcx, rx)
   }
 
   /// This is called on the returned `Box<Any>` from `trans_crate`
@@ -78,14 +67,13 @@ impl CodegenBackend for LlvmTransCrate {
   /// # Panics
   ///
   /// Panics when the passed `Box<Any>` was not returned by `trans_crate`.
-  fn join_trans_and_link(
+  fn join_codegen_and_link(
     &self,
     trans: Box<Any>,
     sess: &Session,
     dep_graph: &rustc::dep_graph::DepGraph,
     outputs: &rustc::session::config::OutputFilenames,
   ) -> Result<(), rustc::session::CompileIncomplete> {
-    self.inner.join_trans_and_link(trans, sess, dep_graph, outputs)
+    self.inner.join_codegen_and_link(trans, sess, dep_graph, outputs)
   }
 }
-

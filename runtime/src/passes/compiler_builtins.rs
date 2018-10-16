@@ -23,7 +23,7 @@ impl Pass for CompilerBuiltinsReplacerPass {
         _ => { return None; },
       };
 
-      Some(tcx.as_def_id(info.id).unwrap())
+      Some(tcx.as_def_id(info).unwrap())
     })
   }
 }

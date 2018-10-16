@@ -54,7 +54,7 @@ pub fn locate_dylib<T>(name: T, hash: u64) -> Result<Option<PathBuf>, Box<Error>
   let paths = var_os("LD_LIBRARY_PATH").unwrap_or("".into());
   for path in split_paths(&paths) {
     let candidate = path.join(&full);
-    println!("considering {}", candidate.display());
+    debug!("considering {}", candidate.display());
     if candidate.exists() {
       return Ok(Some(candidate));
     }
