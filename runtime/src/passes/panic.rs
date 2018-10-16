@@ -4,7 +4,6 @@ use rustc::ty::item_path::{with_forced_absolute_paths};
 use super::{Pass, PassType};
 use hsa_core::kernel::kernel_id_for;
 
-use std::any::Any;
 use std::fmt;
 
 use std::intrinsics::abort;
@@ -29,19 +28,6 @@ impl Pass for PanicPass {
       // the linker to resolve the call. BUT, we don't have the linker, plus we
       // currently require all functions have MIR available, so for the
       // "panic_fmt" case we manually rewrite the def_id to the libstd one.
-
-      /*let attrs = tcx.get_attrs(def_id);
-      for attr in attrs.iter() {
-        if attr.check_name("lang") {
-          match attr.value_str() {
-            Some(v) if v == "panic_fmt" => {
-              let info = kernel_id_for(&rust_panic_impl);
-              return Some(tcx.as_def_id(info).unwrap());
-            },
-            _ => { },
-          }
-        }
-      }*/
 
       let path = with_forced_absolute_paths(|| tcx.item_path_str(def_id) );
       let info = match &path[..] {

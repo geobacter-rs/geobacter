@@ -9,28 +9,23 @@ extern crate runtime;
 extern crate log;
 extern crate env_logger;
 extern crate rand;
-extern crate rustc_driver;
 
-use std::io::{stdout, Write, };
-use std::slice::from_raw_parts_mut;
-use std::mem::size_of;
 use std::time::Instant;
 
 use rand::rngs::SmallRng;
 use rand::{Rng, FromEntropy, };
 
-use hsa_rt::{ApiContext, ffi, };
+use hsa_rt::{ext::HostLockedAgentMemory, };
 use hsa_rt::agent::{DeviceType, Profiles, DefaultFloatRoundingModes, };
 use hsa_rt::code_object::CodeObjectReaderRef;
 use hsa_rt::executable::{CommonExecutable, Executable, };
 use hsa_rt::queue::{QueueType, DispatchPacket, };
 use hsa_rt::signal::Signal;
-use hsa_rt::mem::region::Region;
 
 use runtime::context::{Context, OutputType, };
 
-pub fn vector_fill(into: &mut [f64],
-                   value: f64) {
+pub fn vector_fill_chunked(into: &mut [f64],
+                           value: f64) {
   for chunk in into.chunks_mut(64) {
     for chunk in chunk.chunks_mut(8) {
       for into in chunk.iter_mut() {
@@ -39,39 +34,28 @@ pub fn vector_fill(into: &mut [f64],
     }
   }
 }
-pub fn mat_mat_mul(alpha: f32,
-                   a: &nd::ArrayView2<f32>,
-                   b: &nd::ArrayView2<f32>,
-                   beta: f32,
-                   c: &mut nd::ArrayViewMut2<f32>) {
-  nd::linalg::general_mat_mul(alpha, a, b, beta, c)
+pub fn vector_fill_single(mut into: nd::ArrayViewMut1<f64>,
+                          value: f64) {
+  for into in into.iter_mut() {
+    *into += value;
+  }
+}
+pub fn vector_fill(into: nd::ArrayViewMut1<f64>,
+                   value: f64) {
+  vector_fill_single(into, value)
 }
 
-fn debug_region(region: &Region) {
-  println!("\tRegion ID(0x{:x}):", region.id());
-  println!("\t\tSegment: {:?}", region.segment().expect("can't get region segment"));
-  println!("\t\tGlobal Flags: {:?}",
-           region.global_flags().expect("can't get region global flags"));
-  println!("\t\tSize: {}", region.size().expect("can't get region size"));
-  println!("\t\tAlloc Max Size: {}", region.alloc_max_size().unwrap());
-  println!("\t\tAlloc Max Private Workgroup Size: {}",
-           match region.alloc_max_private_workgroup_size() {
-             Ok(size) => format!("{}", size),
-             Err(_) => "N/A".to_string(),
-           });
-  println!("\t\tRuntime Alloc Allowed: {}",
-           region.runtime_alloc_allowed().unwrap());
-  println!("\t\tRuntime Alloc Granule: {}",
-           region.runtime_alloc_granule().unwrap());
-  println!("\t\tRuntime Alloc Alignment: {}",
-           region.runtime_alloc_alignment().unwrap());
+pub fn matrix_matrix_mul(alpha: f64,
+                         a: nd::ArrayView2<f64>,
+                         b: nd::ArrayView2<f64>,
+                         beta: f64,
+                         mut c: nd::ArrayViewMut2<f64>)
+{
+  nd::linalg::general_mat_mul(alpha, &a, &b, beta, &mut c);
 }
-
-const SYMBOL_NAME: &'static str = "_ZN7ndarray11vector_fill17h261b425b617eccaeE";
 
 pub fn main() {
   env_logger::init();
-  //rustc_driver::env_logger::init();
   let ctxt = Context::new()
     .expect("create context");
 
@@ -88,17 +72,11 @@ pub fn main() {
       ctxt.primary_host_accel().unwrap()
     });
 
-  let id = hsa_core::kernel::kernel_id_for(&vector_fill);
-  let outputs = ctxt.manually_compile(&accel, id)
+  let id = hsa_core::kernel::kernel_id_for(&matrix_matrix_mul);
+  let codegen = ctxt.manually_compile(&accel, id)
     .expect("codegen failed");
 
-  let asm = outputs.get(&OutputType::Assembly)
-    .expect("no asm output?");
-
-  //let mut out = stdout();
-  //out.write_all(asm.as_ref()).expect("write failed");
-
-  let exe_bin = outputs.get(&OutputType::Exe)
+  let exe_bin = codegen.outputs.get(&OutputType::Exe)
     .expect("link failed");
   let exe_reader = CodeObjectReaderRef::new(exe_bin.as_ref())
     .expect("CodeObjectReaderRef::new");
@@ -132,56 +110,48 @@ pub fn main() {
     })
     .expect("no kernel argument region");
 
-  let alloc_region = regions
-    .iter()
-    .filter(|region| {
-      region.runtime_alloc_allowed()
-        .unwrap_or(false)
-    })
-    .find(|region| {
-      match region.global_flags() {
-        Ok(Some(flags)) => flags.fine_grained(),
-        _ => false,
-      }
-    })
-    .expect("no fine alloc region");
+  //const COUNT: usize = 512 * 1024 * 1024 / size_of::<f64>();
+  //info!("allocating {} MB of agent memory", COUNT * size_of::<f64>() / 1024 / 1024);
 
-  info!("allocating agent memory");
+  const SIDE: usize = 1000;
+  const DIM: (usize, usize) = (SIDE, SIDE);
+  let alpha = 1.0f64;
+  let beta = 0.0f64;
 
-  const COUNT: usize = 1024 / size_of::<f64>();
+  let mut a = nd::Array::zeros(DIM);
+  let mut b = nd::Array::zeros(DIM);
 
-  let agent_values = unsafe {
-    let ptr = alloc_region.allocate::<f64>(COUNT)
-      .expect("not enough agent memory");
+  let c = nd::Array::zeros(DIM);
 
-    from_raw_parts_mut(ptr, COUNT * size_of::<f64>())
-  };
-
-  let mut values = vec![0.0; COUNT];
-  info!("allocated agent memory");
+  //let mut values = vec![0.0; COUNT];
 
   let mut rng = SmallRng::from_entropy();
-  for value in values.iter_mut() {
+  for value in a.iter_mut() {
+    *value = rng.gen();
+  }
+  for value in b.iter_mut() {
     *value = rng.gen();
   }
 
   let start = Instant::now();
-  assert_eq!(unsafe {
-    ffi::hsa_memory_copy(agent_values.as_mut_ptr() as *mut _,
-                         values.as_ptr() as *const _,
-                         values.len())
-  },
-             0);
+  //let mut values = values.lock_memory(Some(agent).into_iter())
+  //  .expect("lock host memory for agent");
+  let a = a.lock_memory(Some(agent).into_iter())
+    .expect("lock host memory for agent");
+  let b = b.lock_memory(Some(agent).into_iter())
+    .expect("lock host memory for agent");
+  let mut c = c.lock_memory(Some(agent).into_iter())
+    .expect("lock host memory for agent");
   let elapsed = start.elapsed();
-  let micros = elapsed.as_micros();
-  println!("mem copy took {}us", micros);
+  info!("mem lock took {}us", elapsed.as_micros());
+  //info!("agent_ptr {:p}", values.agent_ptr());
 
   let symbols = exe.agent_symbols(agent)
     .expect("agent symbols");
   let kernel_symbol = symbols.into_iter()
     .find(|symbol| {
       match symbol.name() {
-        Ok(ref n) if n == SYMBOL_NAME => true,
+        Ok(ref n) if n == &codegen.kernel_symbol => true,
         Ok(n) => {
           info!("ignoring symbol {}", n);
           false
@@ -205,26 +175,43 @@ pub fn main() {
   let completion_signal = Signal::new(1, &[])
     .expect("create completion signal");
 
+  struct MatrixMatrixMulArgs<'a> {
+    alpha: f64,
+    a: nd::ArrayView2<'a, f64>,
+    b: nd::ArrayView2<'a, f64>,
+    beta: f64,
+    c: nd::ArrayViewMut2<'a, f64>,
+  }
+
   struct Args<'a> {
-    into: &'a mut [f64],
+    into: nd::ArrayViewMut1<'a, f64>,
     value: f64,
   }
-  assert_eq!(size_of::<Args>(), 24);
 
   {
-    let args: &mut Args = unsafe {
+    /*let args: &mut Args = unsafe {
       let args = kernel_arg_region.allocate::<Args>(1)
         .expect("allocate kernel arg");
       ::std::mem::transmute(args)
     };
-    args.into = agent_values;
-    args.value = 4.0;
+    args.into = nd::aview_mut1(values.as_agent_mut());
+    args.value = 4.0;*/
+    let args: &mut MatrixMatrixMulArgs = unsafe {
+      let args = kernel_arg_region.allocate::<MatrixMatrixMulArgs>(1)
+        .expect("allocate kernel arg");
+      ::std::mem::transmute(args)
+    };
+    args.alpha = alpha;
+    args.a = a.agent_view();
+    args.b = b.agent_view();
+    args.beta = beta;
+    args.c = c.agent_view_mut();
 
     let dispatch = DispatchPacket {
       workgroup_size: (1, ),
       grid_size: (1, ),
       group_segment_size: 4096,
-      private_segment_size: 128,
+      private_segment_size: 472,
       ordered: true,
       kernel_object,
       kernel_args: args,
@@ -237,13 +224,6 @@ pub fn main() {
       .expect("write_dispatch_packet");
     wait.wait();
     let elapsed = start.elapsed();
-    let millis = elapsed.as_millis();
-    println!("dispatch took {}ms", millis);
-
-  }
-
-  unsafe {
-    alloc_region.deallocate(agent_values.as_mut_ptr())
-      .expect("free values");
+    info!("dispatch took {}ms", elapsed.as_millis());
   }
 }

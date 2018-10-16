@@ -133,7 +133,7 @@ impl<T> SoftQueue<T>
 
 pub struct Queue {
   sys: RawQueue,
-  callback_data: Option<Box<Any>>,
+  _callback_data: Option<Box<Any>>,
   _ctxt: ApiContext,
 }
 impl Agent {
@@ -161,7 +161,7 @@ impl Agent {
 
     Ok(Queue {
       sys: RawQueue(out),
-      callback_data: None,
+      _callback_data: None,
       _ctxt: ApiContext::upref(),
     })
   }
@@ -193,7 +193,7 @@ impl Agent {
       .unwrap_or(u32::max_value());
     let mut callback_data = callback
       .map(|cb| Box::new(cb));
-    let mut callback_data_ptr = callback_data
+    let callback_data_ptr = callback_data
       .as_mut()
       .map(|v| {
         let v: &mut *mut c_void = unsafe {
@@ -211,7 +211,7 @@ impl Agent {
 
     Ok(Queue {
       sys: RawQueue(out),
-      callback_data: callback_data
+      _callback_data: callback_data
         .map(|cb| cb as Box<Any>),
       _ctxt: ApiContext::upref(),
     })
@@ -424,7 +424,7 @@ impl<'a, KernArg> Drop for DispatchCompletion<'a, KernArg> {
     loop {
       let val = self.completion_signal
         .wait_scacquire(ConditionOrdering::Equal,
-                        0, None, WaitState::Active);
+                        0, None, WaitState::Blocked);
       if val == 0 { break; }
     }
   }

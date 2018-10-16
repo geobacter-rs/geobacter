@@ -70,7 +70,7 @@ impl Accelerator for AmdGpuAccel {
     let mut desc = AcceleratorTargetDesc::default();
     desc.allow_indirect_function_calls = false;
     {
-      let mut target = &mut desc.target;
+      let target = &mut desc.target;
 
       // we get the triple and gpu "cpu" from the name of the isa:
       let triple = self.hsa_isa.name()?;
@@ -87,7 +87,7 @@ impl Accelerator for AmdGpuAccel {
         target.options.cpu = triple[idx + 1..].into();
       }
 
-      target.options.features = "+dpp,+s-memrealtime".into();
+      target.options.features = "+dpp,+s-memrealtime,+trap-handler".into();
       if self.hsa_isa.fast_f16()? {
         target.options.features.push_str(",+16-bit-insts");
       }
@@ -110,7 +110,7 @@ impl Accelerator for AmdGpuAccel {
       target.options.atomic_cas = true;
       target.options.default_codegen_units = Some(1);
       target.options.i128_lowering = true;
-      //target.options.obj_is_bitcode = true;
+      target.options.obj_is_bitcode = true;
       {
         let addr_spaces = &mut target.options.addr_spaces;
         addr_spaces.clear();
@@ -162,7 +162,7 @@ impl Accelerator for AmdGpuAccel {
         insert_as(addr_spaces, global.clone(), global_idx);
         insert_as(addr_spaces, region.clone(), region_idx);
         insert_as(addr_spaces, local.clone(), local_idx);
-        //insert_as(addr_spaces, constant.clone(), constant_idx);
+        insert_as(addr_spaces, constant.clone(), constant_idx);
         insert_as(addr_spaces, private.clone(), private_idx);
         insert_as(addr_spaces, constant_32b.clone(), constant_32b_idx);
       }
@@ -226,15 +226,10 @@ impl DeviceLibsBuilder for AmdGpuDeviceLibsBuilder {
     let ar = format!("-DCMAKE_AR={}", ar.display());
     let ranlib = format!("-DCMAKE_RANLIB={}", ranlib.display());
 
-    let target_flags = {
-      let target = &device_libs.target_desc().target.llvm_target;
-      let arch = &device_libs.target_desc().target.options.cpu;
-      format!("-target {} -march {}", target, arch)
-    };
-    let c_flags = format!("-DCMAKE_C_FLAGS={}", target_flags);
-    let cxx_flags = format!("-DCMAKE_CXX_FLAGS={}", target_flags);
-
     let llvm_dir = format!("-DLLVM_DIR={}", llvm_root.display());
+
+    let amdgpu_target_triple = format!("-DAMDGPU_TARGET_TRIPLE={}",
+                                       device_libs.target_desc().target.llvm_target);
 
     let mut cmake = Command::new("cmake");
     cmake.current_dir(&device_libs_build)
@@ -242,12 +237,13 @@ impl DeviceLibsBuilder for AmdGpuDeviceLibsBuilder {
       .arg("-G")
       .arg("Unix Makefiles")
       .arg("-DCMAKE_BUILD_TYPE=Release")
-      .arg(cc).arg(c_flags)
-      .arg(cxx).arg(cxx_flags)
+      .arg(cc)
+      .arg(cxx)
       .arg(ar)
       .arg(ranlib)
       .arg(llvm_dir)
-      .arg("-DROCM_DEVICELIB_INCLUDE_TESTS:BOOL=Off");
+      .arg("-DROCM_DEVICELIB_INCLUDE_TESTS:BOOL=Off")
+      .arg(amdgpu_target_triple);
 
     run_cmd(cmake)?;
 
@@ -258,9 +254,24 @@ impl DeviceLibsBuilder for AmdGpuDeviceLibsBuilder {
 
     run_cmd(make)?;
 
-    unimplemented!();
+    const OBJS: &'static [&'static str] = &[
+      "ockl/ockl.lib.bc",
+      "ocml/ocml.lib.bc",
+      "opencl/opencl.lib.bc",
+      "irif/irif.amdgcn.bc",
+    ];
+    for &obj in OBJS.iter() {
+      let p = device_libs_build.join(obj);
+      device_libs.add_bc_obj(p);
+    }
 
-    //Ok(())
+    let oclc = {
+      let arch_num = &device_libs.target_desc().target.options.cpu[3..];
+      format!("oclc_isa_version_{}.amdgcn.bc", arch_num)
+    };
+    device_libs.add_bc_obj(device_libs_build.join("oclc").join(oclc));
+
+    Ok(())
   }
 }
 

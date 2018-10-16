@@ -1,32 +1,30 @@
 
-use std::collections::BTreeMap;
 use std::error::Error;
-use std::ffi::{CString, OsStr, };
+use std::ffi::{OsStr, };
 use std::sync::{Arc, RwLock, Mutex};
 use std::path::{Component};
-
-use elfkit;
-use goblin::elf::Elf;
 
 use indexvec::{Idx, IndexVec};
 
 use hsa_core::kernel::KernelId;
-use hsa_rt::ffi;
 use hsa_rt::agent::{DeviceType, };
 
 use {Accelerator, AcceleratorId, AcceleratorTargetDesc, };
 use metadata::{Metadata, MetadataLoadingError, CrateSource, CrateNameHash};
 use platform::os::{get_mapped_files, dylib_search_paths};
-use codegen::worker::{CodegenComms, CodegenUnsafeSyncComms, };
-use accelerators::{host::HostAccel, amd::AmdGpuAccel, RustBuildRoot, };
+use codegen::worker::{CodegenComms, CodegenUnsafeSyncComms, CodegenResults, };
+use accelerators::{host::HostAccel, amd::AmdGpuAccel, RustBuildRoot,
+                   DeviceLibsStaging, };
 use utils::{HashMap, new_hash_set, };
 
 pub use rustc::session::config::OutputType;
 
 type Translators = HashMap<Arc<AcceleratorTargetDesc>, CodegenUnsafeSyncComms>;
 
+const FRAMEWORK_DATA_SUBDIR: &'static str = ".legionella";
+
 pub struct ContextData {
-  hsa_ctx: hsa_rt::ApiContext,
+  _hsa_ctx: hsa_rt::ApiContext,
 
   metadata: Arc<Mutex<Vec<Metadata>>>,
   local_accels: Vec<Arc<Accelerator>>,
@@ -146,7 +144,7 @@ impl Context {
     local_accels.push(host.clone());
 
     let mut data = ContextData {
-      hsa_ctx,
+      _hsa_ctx: hsa_ctx,
       metadata,
       accelerators,
       local_accels,
@@ -246,13 +244,13 @@ impl Context {
     Ok(r)
   }
   pub fn manually_compile(&self, accel: &Arc<Accelerator>, id: KernelId)
-    -> Result<BTreeMap<OutputType, Vec<u8>>, Box<Error>>
+    -> Result<CodegenResults, Box<Error>>
   {
     use std::fs::File;
-    use std::io::{Read, Write, Cursor, };
+    use std::io::{Read, Write, };
     use std::process::Command;
 
-    use byteorder::{WriteBytesExt, LittleEndian, };
+    use dirs::home_dir;
 
     use tempdir::TempDir;
 
@@ -265,36 +263,89 @@ impl Context {
     let host = accel.host_accel()
       .and_then(|host| host.get_codegen() );
 
-    let mut outputs = codegen.codegen(id, host)?;
+    let target_desc = accel.accel_target_desc()?;
+
+    let objs = if let Some(builder) = accel.device_libs_builder() {
+      // create the target specific cache dir:
+      let fw_dir = home_dir()
+        .ok_or_else(|| {
+          "no home dir available; please set $HOME"
+        })?
+        .join(FRAMEWORK_DATA_SUBDIR)
+        .join("device-libs");
+
+      let mut staging = DeviceLibsStaging::new(fw_dir.as_path(),
+                                               &target_desc,
+                                               builder);
+      {
+        let mut build = staging.create_build()?;
+        build.build()?;
+      }
+      staging.into_bc_objs()
+    } else {
+      vec![]
+    };
+
+    let mut codegen = codegen.codegen(id, host)?;
 
     let obj_len;
     let tdir = TempDir::new("link-compilation")?;
-    let obj_filename = tdir.path().join("obj.obj");
+    let obj_filename = tdir.path().join("obj.bc");
     {
       let mut out = File::create(&obj_filename)?;
 
-      let obj = outputs.get(&OutputType::Object)
+      let obj = codegen.outputs.remove(&OutputType::Object)
         .expect("no object output");
       obj_len = obj.len();
 
       out.write_all(&obj[..])?;
     }
-    let elf_filename = tdir.path().join("elf.so");
+
+    let linked_filename = tdir.path().join("linked.bc");
 
     let rbr = RustBuildRoot::default();
-
-    let mut cmd = Command::new(rbr.lld());
-    cmd.arg(obj_filename)
-      .arg("-E")
-      .arg("-e").arg("0")
-      .arg("--shared")
-      .arg("-o").arg(&elf_filename);
-
+    let mut cmd = Command::new(rbr.llvm_tool("llvm-link"));
+    cmd.arg("-only-needed")
+      .arg("-o").arg(&linked_filename)
+      .arg(obj_filename)
+      .args(objs);
     info!("linking: {:?}", cmd);
 
     if !cmd.spawn()?.wait()?.success() {
       return Err("linking failed".into());
     }
+
+    let obj_filename = tdir.path().join("codegen.obj");
+    let mut cmd = Command::new(rbr.llvm_tool("llc"));
+    cmd.arg("-filetype=obj")
+      .arg(format!("-mcpu={}", target_desc.target.options.cpu))
+      .arg(format!("-mtriple={}", target_desc.target.llvm_target))
+      .arg(format!("-mattr={}", target_desc.target.options.features))
+      .arg("-O2")
+      .arg("-o").arg(&obj_filename)
+      .arg(linked_filename);
+    info!("codegen-ing: {:?}", cmd);
+
+    if !cmd.spawn()?.wait()?.success() {
+      return Err("codegen failed".into());
+    }
+
+    let elf_filename = tdir.path().join("elf.so");
+
+    let mut cmd = Command::new(rbr.lld());
+    cmd.arg(obj_filename)
+      .arg("-E")
+      .arg("-e").arg("0")
+      .arg("-O2")
+      .arg("--shared")
+      .arg("-o").arg(&elf_filename);
+    info!("linking: {:?}", cmd);
+
+    if !cmd.spawn()?.wait()?.success() {
+      return Err("linking failed".into());
+    }
+
+    tdir.into_path();
 
     let mut elf = Vec::with_capacity(obj_len);
     {
@@ -307,9 +358,9 @@ impl Context {
       file.write_all(elf.as_ref())?;
     }
 
-    outputs.insert(OutputType::Exe, elf);
+    codegen.outputs.insert(OutputType::Exe, elf);
 
-    Ok(outputs)
+    Ok(codegen)
   }
 }
 
@@ -341,5 +392,3 @@ impl ContextData {
     Ok(())
   }
 }
-
-// force loading librustc_trans so that

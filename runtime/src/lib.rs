@@ -1,7 +1,6 @@
 #![feature(rustc_private)]
 #![feature(unboxed_closures)]
 #![feature(core_intrinsics)]
-#![feature(compiler_builtins_lib)]
 #![feature(custom_attribute)]
 #![feature(std_internals)]
 
@@ -27,7 +26,6 @@ extern crate serde_derive;
 extern crate indexed_vec as indexvec;
 extern crate tempdir;
 extern crate flate2;
-//extern crate compiler_builtins;
 extern crate goblin;
 #[macro_use]
 extern crate log;
@@ -35,9 +33,9 @@ extern crate serde_json;
 extern crate git2;
 extern crate num_cpus;
 extern crate seahash;
-extern crate elfkit;
-extern crate byteorder;
 extern crate core;
+extern crate dirs;
+extern crate fs2;
 
 use std::error::Error;
 use std::fmt::Debug;
@@ -99,6 +97,12 @@ impl AcceleratorTargetDesc {
 
   pub fn rustc_target_options(&self, target: &mut Target) {
     *target = self.target.clone();
+  }
+
+  pub fn get_stable_hash(&self) -> u64 {
+    let mut hasher = seahash::SeaHasher::new();
+    self.hash(&mut hasher);
+    hasher.finish()
   }
 }
 impl Eq for AcceleratorTargetDesc { }

@@ -1,14 +1,9 @@
 use std::env::{var_os, };
 use std::error::Error;
-use std::hash::{Hash, Hasher, };
-use std::io;
 use std::path::{Path, PathBuf, };
-use std::sync::{Arc, };
-
-use seahash::SeaHasher;
 
 use {AcceleratorTargetDesc, DeviceLibsBuilder, };
-use utils::CreateIfNotExists;
+use utils::{CreateIfNotExists, FileLockGuard, };
 
 use rustc::session::config::host_triple;
 
@@ -19,19 +14,28 @@ pub mod amd;
 
 pub struct DeviceLibsStaging<'a> {
   staging_path: &'a Path,
-  target_desc: &'a Arc<AcceleratorTargetDesc>,
+  target_desc: &'a AcceleratorTargetDesc,
   builder: Box<DeviceLibsBuilder>,
 
   bc_obj_libs: Vec<PathBuf>,
 }
 
 impl<'a> DeviceLibsStaging<'a> {
-  pub fn build(&mut self) -> io::Result<DeviceLibsBuild> {
-    let mut hasher = SeaHasher::default();
+  pub fn new(device_libs_dir: &'a Path,
+             target_desc: &'a AcceleratorTargetDesc,
+             builder: Box<DeviceLibsBuilder>)
+    -> Self
+  {
+    DeviceLibsStaging {
+      staging_path: device_libs_dir,
+      target_desc,
+      builder,
 
-    self.target_desc.hash(&mut hasher);
-
-    let hash = hasher.finish();
+      bc_obj_libs: vec![],
+    }
+  }
+  pub fn create_build(&mut self) -> Result<DeviceLibsBuild, Box<Error>> {
+    let hash = self.target_desc.get_stable_hash();
 
     let build_path = self.staging_path
       .join(format!("{}", hash));
@@ -39,18 +43,26 @@ impl<'a> DeviceLibsStaging<'a> {
     build_path.create_if_not_exists()?;
 
     Ok(DeviceLibsBuild {
+      _lock: FileLockGuard::enter_create(build_path.join("build.lock"))?,
       build_path,
       target_desc: &self.target_desc,
       builder: Some(&self.builder),
       bc_obj_libs: &mut self.bc_obj_libs,
     })
   }
+  pub fn into_bc_objs(self) -> Vec<PathBuf> {
+    let DeviceLibsStaging {
+      bc_obj_libs, ..
+    } = self;
+    bc_obj_libs
+  }
 }
 
 pub struct DeviceLibsBuild<'a> {
+  _lock: FileLockGuard,
   build_path: PathBuf,
 
-  target_desc: &'a Arc<AcceleratorTargetDesc>,
+  target_desc: &'a AcceleratorTargetDesc,
   builder: Option<&'a Box<DeviceLibsBuilder>>,
 
   bc_obj_libs: &'a mut Vec<PathBuf>,
@@ -71,10 +83,11 @@ impl<'a> DeviceLibsBuild<'a> {
     self.build_path.as_ref()
   }
   pub fn target_desc(&self) -> &AcceleratorTargetDesc {
-    &**self.target_desc
+    self.target_desc
   }
 
   pub fn add_bc_obj(&mut self, bc: PathBuf) {
+    info!("adding {} to the link", bc.display());
     self.bc_obj_libs.push(bc);
   }
 }

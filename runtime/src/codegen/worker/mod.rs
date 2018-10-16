@@ -14,13 +14,12 @@ use rustc::hir::def_id::{CrateNum, DefId};
 use rustc::middle::exported_symbols::{SymbolExportLevel, };
 use rustc::session::config::{OutputType, CrateType, };
 use rustc::ty::query::Providers;
-use rustc::ty::{self, TyCtxt, subst::Substs, };
+use rustc::ty::{self, TyCtxt, subst::Substs, Instance, };
 use rustc::util::nodemap::DefIdMap;
 use rustc_driver::{self, driver::compute_crate_disambiguator, };
 use rustc_data_structures::fx::{FxHashMap};
 use rustc_data_structures::sync::{Lrc, };
 use rustc_metadata;
-use rustc_codegen_utils;
 use rustc_incremental;
 use syntax::feature_gate;
 use syntax_pos::symbol::Symbol;
@@ -41,6 +40,12 @@ use self::error::IntoErrorWithKernelId;
 mod tls;
 mod collector;
 pub mod error;
+
+#[derive(Debug, Clone)]
+pub struct CodegenResults {
+  pub kernel_symbol: String,
+  pub outputs: BTreeMap<OutputType, Vec<u8>>,
+}
 
 /// Since we can't send MIR directly, or even serialized (we'd have to
 /// serialize the whole crate too), the host codegenner will be responsible
@@ -67,7 +72,7 @@ pub enum Message {
 
     host_accel: Option<Sender<Message>>,
 
-    ret: Sender<Result<BTreeMap<OutputType, Vec<u8>>, error::Error>>,
+    ret: Sender<Result<CodegenResults, error::Error>>,
   },
 }
 
@@ -83,7 +88,7 @@ impl CodegenComms {
   }
   pub fn codegen(&self, id: KernelId,
                  host: Option<CodegenComms>)
-    -> Result<BTreeMap<OutputType, Vec<u8>>, error::Error>
+    -> Result<CodegenResults, error::Error>
   {
     let (tx, rx) = channel();
     let msg = Message::Codegen {
@@ -232,7 +237,6 @@ impl<'a> WorkerTranslatorData<'a> {
           sess.plugin_registrar_fn.set(None);
           sess.derive_registrar_fn.set(None);
           let ctype = CrateType::Executable;
-          //let ctype = CrateType::Cdylib;
           sess.crate_types.set(vec![ctype.clone()]);
           sess.recursion_limit.set(512);
           sess.allocator_kind.set(None);
@@ -259,7 +263,6 @@ impl<'a> WorkerTranslatorData<'a> {
             passes: vec![Box::new(LangItemPass),
                          Box::new(AllocPass),
                          Box::new(PanicPass),
-                         //Box::new(CompilerBuiltinsReplacerPass),
             ],
             replaced_def_ids: Default::default(),
           };
@@ -378,10 +381,11 @@ impl<'a> WorkerTranslatorData<'a> {
                         forest: &'b mut rustc::hir::map::Forest,
                         defs: &'b rustc::hir::map::definitions::Definitions,
                         dep_graph: &rustc::dep_graph::DepGraph)
-    -> Result<BTreeMap<OutputType, Vec<u8>>, error::Error>
+    -> Result<CodegenResults, error::Error>
     where 'a: 'b,
   {
     use rustc::hir::def_id::{DefId, DefIndex};
+    use rustc_driver::get_codegen_backend;
 
     let crate_num = self
       .lookup_crate_num(id)
@@ -397,31 +401,29 @@ impl<'a> WorkerTranslatorData<'a> {
     };
     assert!(!def_id.is_local());
 
-    let trans = super::LlvmTransCrate::new(self.sess,
-                                           def_id);
-    let trans = Box::new(trans) as Box<rustc_codegen_utils::codegen_backend::CodegenBackend>;
+    let codegen = get_codegen_backend(self.sess);
 
     // extern only providers:
     let mut local_providers = rustc::ty::query::Providers::default();
     rustc_driver::driver::default_provide(&mut local_providers);
-    trans.provide(&mut local_providers);
+    codegen.provide(&mut local_providers);
     providers_local(&mut local_providers);
 
     let mut extern_providers = local_providers.clone();
     rustc_driver::driver::default_provide_extern(&mut extern_providers);
-    trans.provide_extern(&mut extern_providers);
+    codegen.provide_extern(&mut extern_providers);
     provide_extern_overrides(&mut extern_providers);
 
     let disk_cache = rustc_incremental::load_query_result_cache(self.sess);
 
     let (tx, rx) = channel();
 
-    let tmpdir = TempDir::new("hsa-trans-runtime")
+    let tmpdir = TempDir::new("hsa-runtime-codegen")
       .with_kernel_id(id)?;
 
     let out = rustc::session::config::OutputFilenames {
       out_directory: tmpdir.path().into(),
-      out_filestem: "trans.elf".into(),
+      out_filestem: "codegen.elf".into(),
       single_output_file: None,
       extra: "".into(),
       outputs: output_types(),
@@ -437,22 +439,22 @@ impl<'a> WorkerTranslatorData<'a> {
       export_map: Default::default(),
     };
 
-    rustc::ty::TyCtxt::create_and_enter(self.sess,
-                                        self.cstore,
-                                        local_providers,
-                                        extern_providers,
-                                        &arena,
-                                        resolutions,
-                                        map_crate,
-                                        disk_cache,
-                                        "", tx,
-                                        &out, |tcx| -> Result<(), _> {
+    let kernel_symbol = rustc::ty::TyCtxt::create_and_enter(self.sess,
+                                                            self.cstore,
+                                                            local_providers,
+                                                            extern_providers,
+                                                            &arena,
+                                                            resolutions,
+                                                            map_crate,
+                                                            disk_cache,
+                                                            "", tx,
+                                                            &out, |tcx| -> Result<String, _> {
         info!("output dir for {:?}: {}", def_id, out.out_directory.display());
 
         self::tls::enter(self, tcx, def_id, |tcx| {
-          let trans_data = trans.codegen_crate(tcx.tcx, rx);
+          let trans_data = codegen.codegen_crate(tcx.tcx, rx);
 
-          trans.join_codegen_and_link(trans_data, self.sess,
+          codegen.join_codegen_and_link(trans_data, self.sess,
                                       dep_graph, &out)
             .map_err(|err| {
               error!("codegen failed: `{:?}`!", err);
@@ -460,7 +462,13 @@ impl<'a> WorkerTranslatorData<'a> {
             })?;
 
           Ok(())
-        })
+        })?;
+
+        let root = Instance::mono(tcx, def_id);
+        let kernel_symbol = tcx.symbol_name(root);
+        info!("kernel symbol for def_id {:?}: {}", root,
+              kernel_symbol);
+        Ok(format!("{}", kernel_symbol))
       })?;
     info!("codegen complete {:?}:{}", crate_num, id.index);
 
@@ -469,7 +477,7 @@ impl<'a> WorkerTranslatorData<'a> {
 
     let mut outputs = BTreeMap::new();
     for &output_type in out.outputs.keys() {
-      let filename = Path::new("trans.elf")
+      let filename = Path::new(&out.out_filestem)
         .with_extension(output_type.extension());
       let output = output_dir.join(filename);
       info!("reading output {}", output.display());
@@ -483,7 +491,10 @@ impl<'a> WorkerTranslatorData<'a> {
       outputs.insert(output_type, data);
     }
 
-    Ok(outputs)
+    Ok(CodegenResults {
+      kernel_symbol,
+      outputs
+    })
   }
 
   fn lookup_crate_num(&self, kernel_id: KernelId) -> Option<CrateNum> {
@@ -539,22 +550,18 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
 
   let mut opts = Options::default();
   opts.crate_types.push(CrateType::Executable);
-  //opts.crate_types.push(CrateType::Cdylib);
   opts.output_types = output_types();
-  opts.optimize = OptLevel::No;
   opts.optimize = OptLevel::Aggressive;
+  opts.cg.lto = LtoCli::No;
   opts.cg.panic = Some(PanicStrategy::Abort);
   opts.cg.incremental = None;
   opts.cg.overflow_checks = Some(false);
-  opts.cg.link_dead_code = true;
   opts.cli_forced_codegen_units = Some(1);
   opts.incremental = None;
-  opts.cli_forced_thinlto_off = true;
   opts.debugging_opts.verify_llvm_ir = false;
   opts.debugging_opts.no_landing_pads = true;
   opts.debugging_opts.incremental_queries = false;
   opts.debugging_opts.print_llvm_passes = false;
-  opts.debugging_opts.print_mono_items = Some("yes".into());
   opts
 }
 
@@ -643,12 +650,12 @@ pub fn providers_local(providers: &mut Providers) {
   use std::rc::Rc;
 
   *providers = Providers {
-    crate_hash: |tcx, cnum| {
+    crate_hash: |_tcx, cnum| {
       assert_eq!(cnum, LOCAL_CRATE);
       // XXX?
       Svh::new(1)
     },
-    crate_name: |tcx, id| {
+    crate_name: |_tcx, id| {
       assert_eq!(id, LOCAL_CRATE);
       Symbol::intern("jit-methods")
     },
@@ -656,11 +663,11 @@ pub fn providers_local(providers: &mut Providers) {
       assert_eq!(cnum, LOCAL_CRATE);
       tcx.sess.crate_disambiguator.borrow().clone()
     },
-    native_libraries: |tcx, cnum| {
+    native_libraries: |_tcx, cnum| {
       assert_eq!(cnum, LOCAL_CRATE);
       Rc::new(vec![])
     },
-    link_args: |tcx, cnum| {
+    link_args: |_tcx, cnum| {
       assert_eq!(cnum, LOCAL_CRATE);
       Rc::new(vec![])
     },
@@ -690,8 +697,6 @@ pub fn providers_local(providers: &mut Providers) {
 }
 
 fn providers_remote_and_local(providers: &mut Providers) {
-  use rustc_typeck::provide;
-
   *providers = Providers {
     fn_sig,
     reachable_non_generics,
@@ -721,22 +726,22 @@ fn providers_remote_and_local(providers: &mut Providers) {
       }
     })
   }
-  fn reachable_non_generics<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                      cnum: CrateNum)
+  fn reachable_non_generics<'a, 'tcx>(_tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                      _cnum: CrateNum)
     -> Lrc<DefIdMap<SymbolExportLevel>>
   {
     // we need to recodegen everything
     Lrc::new(DefIdMap())
   }
-  fn upstream_monomorphizations<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                          cnum: CrateNum)
+  fn upstream_monomorphizations<'a, 'tcx>(_tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                          _cnum: CrateNum)
     -> Lrc<DefIdMap<Lrc<FxHashMap<&'tcx Substs<'tcx>, CrateNum>>>>
   {
     // we never have any upstream monomorphizations.
     Lrc::new(Default::default())
   }
-  fn upstream_monomorphizations_for<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                                       def_id: DefId)
+  fn upstream_monomorphizations_for<'a, 'tcx>(_tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                              _def_id: DefId)
     -> Option<Lrc<FxHashMap<&'tcx Substs<'tcx>, CrateNum>>>
   {
     None

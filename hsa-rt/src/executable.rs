@@ -143,7 +143,7 @@ pub trait CommonExecutable {
   fn agent_symbols(&self, agent: &Agent)
     -> Result<Vec<Symbol>, Box<Error>>
   {
-    extern "C" fn get_symbol(exec: ffi::hsa_executable_t,
+    extern "C" fn get_symbol(_exec: ffi::hsa_executable_t,
                              _agent: ffi::hsa_agent_t,
                              symbol: ffi::hsa_executable_symbol_t,
                              data: *mut c_void)

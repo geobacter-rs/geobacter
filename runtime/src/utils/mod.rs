@@ -1,13 +1,16 @@
 use std::collections::{HashMap as StdHashMap, HashSet as StdHashSet, };
 use std::error::Error;
-use std::fs::create_dir_all;
+use std::fs::{create_dir_all, File, };
 use std::hash::{BuildHasherDefault, Hash, };
 use std::io;
+use std::ops::{Deref, DerefMut, };
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::Sender;
 
 use seahash::{SeaHasher, };
+
+use fs2::FileExt;
 
 pub mod git;
 
@@ -64,3 +67,32 @@ impl<T> Clone for UnsafeSyncSender<T> {
   }
 }
 unsafe impl<T> Sync for UnsafeSyncSender<T> { }
+
+pub struct FileLockGuard(File);
+impl FileLockGuard {
+  pub fn enter_create<T>(file: T) -> Result<Self, Box<Error>>
+    where T: AsRef<Path>,
+  {
+    let file = File::create(file)?;
+    file.lock_exclusive()?;
+    Ok(FileLockGuard(file))
+  }
+}
+
+impl Deref for FileLockGuard {
+  type Target = File;
+  fn deref(&self) -> &File { &self.0 }
+}
+impl DerefMut for FileLockGuard {
+  fn deref_mut(&mut self) -> &mut File { &mut self.0 }
+}
+impl Drop for FileLockGuard {
+  fn drop(&mut self) {
+    match self.0.unlock() {
+      Ok(_) => {},
+      Err(e) => {
+        error!("failed to unlock file in guard drop: {}", e);
+      }
+    }
+  }
+}

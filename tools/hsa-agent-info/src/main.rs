@@ -1,8 +1,6 @@
 
 extern crate hsa_rt as hsa;
 
-use hsa::mem::region::{QueryRegions};
-
 pub fn main() {
   let ctxt = hsa::ApiContext::try_upref()
     .expect("error creating HSA context");

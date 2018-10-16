@@ -8,8 +8,17 @@ members = ["hsa-core-gen", "hsa-core", "runtime",
 
            "indexvec", "recycled-arc-vec",
 
-           "examples/trivial", "examples/ndarray"]
+           "examples/trivial", "examples/ndarray",
+           "examples/mat_mat_mul", ]
 
 [profile.release]
 debug = true
 debug-assertions = true
+rpath = true
+
+[profile.dev]
+rpath = true
+[profile.test]
+rpath = true
+[profile.bench]
+rpath = true

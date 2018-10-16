@@ -212,7 +212,7 @@ fn collect_items_rec<'a, 'b, 'tcx>(tcx: TranslatorCtx<'a, 'b, 'a, 'tcx>,
   //debug!("END collect_items_rec({})", start.to_string(tcx.tcx));
 }
 
-fn record_accesses<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+fn record_accesses<'a, 'tcx>(_tcx: TyCtxt<'a, 'tcx, 'tcx>,
                              caller: MonoItem<'tcx>,
                              callees: &[MonoItem<'tcx>],
                              inlining_map: &mut InliningMap<'tcx>) {
@@ -247,7 +247,7 @@ fn visit_fn_use<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
   }
 }
 
-fn visit_instance_use<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+fn visit_instance_use<'a, 'tcx>(_tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                 instance: ty::Instance<'tcx>,
                                 is_direct_call: bool,
                                 output: &mut Vec<MonoItem<'tcx>>)

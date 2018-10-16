@@ -17,7 +17,7 @@ pub struct ModuleData<'a, F, Args, Ret>
 impl<'a, F, Args, Ret> ModuleData<'a, F, Args, Ret>
   where F: Fn<Args, Output = Ret> + 'a,
 {
-  pub fn new(ctxt: Context, f: &'a F) -> Self {
+  pub fn new(_ctxt: Context, _f: &'a F) -> Self {
     unimplemented!();
     /*
     let info = hsa_core::kernel_info::json_kernel_info_for(&f);

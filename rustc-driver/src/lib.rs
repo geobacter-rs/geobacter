@@ -1,4 +1,5 @@
 #![feature(rustc_private)]
+
 extern crate rustc;
 extern crate rustc_driver;
 extern crate rustc_errors;
@@ -24,61 +25,81 @@ use rustc::session::{config, Session, };
 use rustc::session::config::{ErrorOutputType, Input, };
 use rustc::ty::{self, TyCtxt, Instance, layout::Size, };
 use rustc_codegen_utils::codegen_backend::CodegenBackend;
+use rustc_data_structures::fx::{FxHashMap, }
 use rustc_data_structures::sync::{Lrc, };
 use syntax::ast;
 use syntax_pos::DUMMY_SP;
-use syntax_pos::symbol::Symbol;
+use syntax_pos::symbol::{Symbol, InternedString, };
 
 use rustc_driver::getopts;
 
-pub fn main() {
+pub fn main<F>(f: F)
+  where F: FnOnce(&mut Generators),
+{
   use std::mem::transmute;
 
   rustc_driver::env_logger::init();
   env_logger::init();
 
-  let mut args: Vec<_> = ::std::env::args()
-    .enumerate()
-    .filter_map(|(idx, arg)| {
-      match (idx, arg.as_str()) {
-        (1, "rustc") => None,
-        _ => Some(arg),
-      }
-    }).collect();
-
-  // force MIR to be encoded:
-  args.push("-Z".into());
-  args.push("always-encode-mir".into());
-  args.push("-Z".into());
-  args.push("always-emit-metadata".into());
-
-  let generators = Generators::default();
+  let exit;
   {
-    unsafe {
-      GENERATORS = Some(transmute(&generators));
-    }
+    let mut args: Vec<_> = ::std::env::args()
+      .enumerate()
+      .filter_map(|(idx, arg)| {
+        match (idx, arg.as_str()) {
+          (1, "rustc") => None,
+          _ => Some(arg),
+        }
+      }).collect();
 
-    let driver = HsaRustcDriver::new();
-    let driver = Box::new(driver);
-    rustc_driver::run(move || {
-      rustc_driver::run_compiler(&args, driver, None, None)
-    });
+    // force MIR to be encoded:
+    args.push("-Z".into());
+    args.push("always-encode-mir".into());
+    args.push("-Z".into());
+    args.push("always-emit-metadata".into());
 
-    unsafe {
-      GENERATORS.take();
+    let mut generators = Generators::default();
+    f(&mut generators);
+    {
+      unsafe {
+        GENERATORS = Some(transmute(&generators));
+      }
+
+      let driver = HsaRustcDriver::new();
+      let driver = Box::new(driver);
+      exit = rustc_driver::run(move || {
+        rustc_driver::run_compiler(&args, driver, None, None)
+      });
+
+      unsafe {
+        GENERATORS.take();
+      }
     }
   }
+
+  ::std::process::exit(exit);
 }
 
-struct Generators {
+pub struct Generators {
   kernel_id_for: Lrc<dyn CustomIntrinsicMirGen>,
   kernel_upvars_for: Lrc<dyn CustomIntrinsicMirGen>,
+  extra: FxHashMap<InternedString, Lrc<dyn CustomIntrinsicMirGen>>,
+}
+impl Generators {
+  pub fn add<T>(&mut self, name: T, mirgen: Lrc<dyn CustomIntrinsicMirGen>)
+    where T: AsRef<str>,
+  {
+    let name = Symbol::intern(name.as_ref()).as_interned_str();
+    assert!(self.extra.insert(name, mirgen).is_none(),
+            "duplicate name: {}", name);
+  }
 }
 impl Default for Generators {
   fn default() -> Self {
     Generators {
       kernel_id_for: Lrc::new(KernelIdFor) as Lrc<_>,
       kernel_upvars_for: Lrc::new(KernelUpvars) as Lrc<_>,
+      extra: Default::default(),
     }
   }
 }
@@ -164,16 +185,24 @@ fn custom_intrinsic_mirgen<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                      def_id: DefId)
   -> Option<Lrc<dyn CustomIntrinsicMirGen>>
 {
-  let name = tcx.item_name(def_id).as_str();
+  let name = tcx.item_name(def_id);
+  let name_str = name.as_str();
   info!("custom_intrinsic_mirgen: {}", name);
-  match &name[..] {
+
+  let gen = generators();
+
+  match &name_str[..] {
     "kernel_id_for" => {
-      Some(generators().kernel_id_for.clone())
+      Some(gen.kernel_id_for.clone())
     },
     "kernel_env_for" => {
-      Some(generators().kernel_upvars_for.clone())
+      Some(gen.kernel_upvars_for.clone())
     },
-    _ => None,
+    _ => {
+      gen.extra
+        .get(&name)
+        .cloned()
+    },
   }
 }
 
@@ -334,8 +363,6 @@ impl CustomIntrinsicMirGen for KernelIdFor {
                             tcx.types.u64,
                             tcx.types.u64,].into_iter());
     return inner;
-    //let slice = tcx.mk_slice(inner);
-    //tcx.mk_imm_ref(tcx.types.re_static, slice)
   }
 }
 impl CustomIntrinsicMirGen for KernelUpvars {

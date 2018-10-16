@@ -1,3 +1,4 @@
+#![allow(unused_variables)]
 
 /// rewrites calls to either `liballoc_system` or `liballoc_jemalloc`.
 /// TODO replace these aborts with writes to a AQL queue to the host
@@ -12,7 +13,7 @@ use rustc::ty::item_path::{with_forced_absolute_paths};
 
 use super::{Pass, PassType};
 
-fn __rust_alloc(size: usize, align: usize, err: *mut u8) -> *mut u8 {
+fn __rust_alloc(size: usize, align: usize) -> *mut u8 {
   unsafe { abort() };
 }
 fn __rust_oom(err: *const u8) -> ! {
@@ -28,13 +29,11 @@ fn __rust_usable_size(layout: *const u8,
 }
 fn __rust_realloc(ptr: *mut u8,
                   old_size: usize,
-                  old_align: usize,
-                  new_size: usize,
-                  new_align: usize,
-                  err: *mut u8) -> *mut u8 {
+                  align: usize,
+                  new_size: usize) -> *mut u8 {
   unsafe { abort() };
 }
-fn __rust_alloc_zeroed(size: usize, align: usize, err: *mut u8) -> *mut u8 {
+fn __rust_alloc_zeroed(size: usize, align: usize) -> *mut u8 {
   unsafe { abort() };
 }
 fn __rust_alloc_excess(size: usize,

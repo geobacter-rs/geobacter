@@ -1,11 +1,19 @@
 [package]
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 autobins = false
-name = "hsa-rustc-driver"
+name = "legionella-rustc-driver"
 version = "0.1.0"
+
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
-name = "hsa-rustc"
-path = "src/main.rs"
+name = "legionella-bootstrap-rustc"
+path = "src/bootstrap-main.rs"
+
+[[bin]]
+name = "legionella-rustc"
+path = "src/full-main.rs"
 
 [dependencies]
 env_logger = "=0.5.12"

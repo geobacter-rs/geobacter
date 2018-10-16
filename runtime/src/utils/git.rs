@@ -90,8 +90,7 @@ pub fn checkout_repo(dest: &Path, repo_url: &str,
   Ok(())
 }
 
-pub fn checkout_or_override(name: &str,
-                            dest_path: &Path,
+pub fn checkout_or_override(dest_path: &Path,
                             over: Option<&PathBuf>,
                             repo_url: &str,
                             repo_branch: &str,
