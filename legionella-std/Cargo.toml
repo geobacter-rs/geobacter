@@ -1,13 +1,13 @@
 [package]
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
-name = "hsa-rt"
+name = "legionella-std"
 version = "0.1.0"
 
 [dependencies]
-serde = "1.0.19"
-serde_derive = "1.0.19"
 ndarray = "0.10.12"
-log = "=0.4.4"
 
-[dependencies.hsa-rt-sys]
-path = "../hsa-rt-sys"
+[dependencies.hsa-rt]
+path = "../hsa-rt"
+
+[dependencies.hsa-core]
+path = "../hsa-core"

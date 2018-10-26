@@ -1,9 +1,8 @@
 [package]
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+edition = "2018"
 name = "ndarray"
 version = "0.1.0"
-edition = "2018"
-
 [dependencies]
 env_logger = "0.5.5"
 log = "=0.4.4"
@@ -21,3 +20,6 @@ path = "../../hsa-rt-sys"
 
 [dependencies.runtime]
 path = "../../runtime"
+
+[dependencies.legionella-std]
+path = "../../legionella-std"

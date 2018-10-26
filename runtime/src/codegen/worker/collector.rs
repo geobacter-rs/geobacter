@@ -9,10 +9,10 @@
 //! items, possibly applying transforms specific to device capabilities.
 
 use rustc::hir::def_id::{CrateNum, LOCAL_CRATE, };
-use rustc::middle::lang_items::{ExchangeMallocFnLangItem, };
+use rustc::middle::lang_items::{self, ExchangeMallocFnLangItem, };
 use rustc::mir::{self, Location, Promoted, visit::Visitor, };
 use rustc::mir::interpret::{AllocId, ConstValue, GlobalId, AllocType,
-                            Scalar,};
+                            Scalar, EvalErrorKind, };
 use rustc::mir::mono::{CodegenUnit, MonoItem, Linkage, Visibility, };
 use rustc::ty::adjustment::CustomCoerceUnsized;
 use rustc::ty::query::Providers;
@@ -60,7 +60,7 @@ fn collect_and_partition_mono_items_<'a, 'b, 'tcx>(tcx: TranslatorCtx<'a, 'b, 'a
   let root = Instance::mono(tcx.tcx, tcx.root);
   let mono_root = create_fn_mono_item(root);
 
-  let mut visited = FxHashSet();
+  let mut visited: FxHashSet<_> = Default::default();
   let mut inlining_map = InliningMap::new();
 
   {
@@ -103,7 +103,7 @@ fn collect_and_partition_mono_items_<'a, 'b, 'tcx>(tcx: TranslatorCtx<'a, 'b, 'a
     .collect();
 
   if tcx.tcx.sess.opts.debugging_opts.print_mono_items.is_some() {
-    let mut item_to_cgus: FxHashMap<_, Vec<_>> = FxHashMap();
+    let mut item_to_cgus: FxHashMap<_, Vec<_>> = Default::default();
 
     for cgu in &units {
       for (&mono_item, &linkage) in cgu.items() {
@@ -247,7 +247,7 @@ fn visit_fn_use<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
   }
 }
 
-fn visit_instance_use<'a, 'tcx>(_tcx: TyCtxt<'a, 'tcx, 'tcx>,
+fn visit_instance_use<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                 instance: ty::Instance<'tcx>,
                                 is_direct_call: bool,
                                 output: &mut Vec<MonoItem<'tcx>>)
@@ -260,6 +260,9 @@ fn visit_instance_use<'a, 'tcx>(_tcx: TyCtxt<'a, 'tcx, 'tcx>,
     ty::InstanceDef::Intrinsic(def_id) => {
       if !is_direct_call {
         bug!("intrinsic {:?} being reified", def_id);
+      }
+      if let Some(_mir) = tcx.custom_intrinsic_mir(instance) {
+        output.push(create_fn_mono_item(instance));
       }
     }
     ty::InstanceDef::Virtual(..) |
@@ -401,22 +404,20 @@ fn create_mono_items_for_vtable_methods<'tcx>(tcx: TranslatorCtx<'_, '_, '_, 'tc
     !impl_ty.needs_subst() && !impl_ty.has_escaping_regions());
 
   if let ty::Dynamic(ref trait_ty, ..) = trait_ty.sty {
-    if let Some(principal) = trait_ty.principal() {
-      let poly_trait_ref = principal.with_self_ty(tcx.tcx, impl_ty);
-      assert!(!poly_trait_ref.has_escaping_regions());
+    let poly_trait_ref = trait_ty.principal().with_self_ty(tcx.tcx, impl_ty);
+    assert!(!poly_trait_ref.has_escaping_regions());
 
-      // Walk all methods of the trait, including those of its supertraits
-      let methods = tcx.vtable_methods(poly_trait_ref);
-      let methods = methods.iter().cloned()
-        .filter_map(|method| method)
-        .map(|(def_id, substs)| ty::Instance::resolve(
-          tcx.tcx,
-          ty::ParamEnv::reveal_all(),
-          def_id,
-          substs).unwrap())
-        .map(|instance| create_fn_mono_item(instance));
-      output.extend(methods);
-    }
+    // Walk all methods of the trait, including those of its supertraits
+    let methods = tcx.vtable_methods(poly_trait_ref);
+    let methods = methods.iter().cloned()
+      .filter_map(|method| method)
+      .map(|(def_id, substs)| ty::Instance::resolve(
+        tcx.tcx,
+        ty::ParamEnv::reveal_all(),
+        def_id,
+        substs).unwrap())
+      .map(|instance| create_fn_mono_item(instance));
+    output.extend(methods);
     // Also add the destructor
     visit_drop_use(tcx.tcx, impl_ty, false, output);
   }
@@ -672,14 +673,29 @@ impl<'a, 'b, 'tcx> mir::visit::Visitor<'tcx> for MirNeighborCollector<'a, 'b, 't
           &ty,
         );
         visit_drop_use(self.tcx.tcx, ty, true, self.output);
-      }
+      },
+      mir::TerminatorKind::Assert { ref msg, .. } => {
+        match msg {
+          &EvalErrorKind::BoundsCheck { .. } => {
+            let li = lang_items::PanicBoundsCheckFnLangItem;
+            let def_id = tcx.require_lang_item(li);
+            let inst = Instance::mono(self.tcx.tcx, def_id);
+            self.output.push(create_fn_mono_item(inst));
+          },
+          _ => {
+            let li = lang_items::PanicFnLangItem;
+            let def_id = tcx.require_lang_item(li);
+            let inst = Instance::mono(self.tcx.tcx, def_id);
+            self.output.push(create_fn_mono_item(inst));
+          },
+        }
+      },
       mir::TerminatorKind::Goto { .. } |
       mir::TerminatorKind::SwitchInt { .. } |
       mir::TerminatorKind::Resume |
       mir::TerminatorKind::Abort |
       mir::TerminatorKind::Return |
-      mir::TerminatorKind::Unreachable |
-      mir::TerminatorKind::Assert { .. } => {}
+      mir::TerminatorKind::Unreachable => {}
       mir::TerminatorKind::GeneratorDrop |
       mir::TerminatorKind::Yield { .. } |
       mir::TerminatorKind::FalseEdges { .. } |

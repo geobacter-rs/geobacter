@@ -3,6 +3,7 @@
 #![feature(core_intrinsics)]
 #![feature(custom_attribute)]
 #![feature(std_internals)]
+#![feature(compiler_builtins_lib)]
 
 #![crate_type = "dylib"]
 
@@ -19,6 +20,7 @@ extern crate rustc_target;
 extern crate rustc_typeck;
 extern crate syntax;
 extern crate syntax_pos;
+extern crate compiler_builtins;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
@@ -36,6 +38,7 @@ extern crate seahash;
 extern crate core;
 extern crate dirs;
 extern crate fs2;
+extern crate legionella_intrinsics;
 
 use std::error::Error;
 use std::fmt::Debug;

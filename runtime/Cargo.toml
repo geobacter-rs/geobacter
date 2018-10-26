@@ -26,3 +26,6 @@ path = "../hsa-rt"
 
 [dependencies.hsa-rt-sys]
 path = "../hsa-rt-sys"
+
+[dependencies.legionella-intrinsics]
+path = "../legionella-intrinsics"

@@ -2,7 +2,11 @@
 use super::{WorkerTranslatorData, TranslatorCtx};
 
 use rustc::hir::def_id::{DefId, };
+use rustc::mir::{CustomIntrinsicMirGen, };
 use rustc::ty::TyCtxt;
+use rustc_data_structures::fx::{FxHashMap, };
+use rustc_data_structures::sync::Lrc;
+use syntax_pos::symbol::{InternedString, };
 
 use std::cell::Cell;
 

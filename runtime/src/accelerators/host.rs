@@ -39,7 +39,11 @@ impl Accelerator for HostAccel {
   fn agent(&self) -> &Agent { &self.hsa_agent }
 
   fn accel_target_desc(&self) -> Result<AcceleratorTargetDesc, Box<Error>> {
-    Ok(AcceleratorTargetDesc::default())
+    let mut desc = AcceleratorTargetDesc::default();
+    desc.target.options.cpu = "native".into();
+    desc.target.options.obj_is_bitcode = true;
+    desc.target.options.default_codegen_units = Some(1);
+    Ok(desc)
   }
 
   fn set_codegen(&self, comms: CodegenComms) -> Option<CodegenComms> {

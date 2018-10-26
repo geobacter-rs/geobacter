@@ -9,6 +9,8 @@ pub extern crate hsa_rt_sys as ffi;
 extern crate serde_derive;
 extern crate serde;
 extern crate ndarray as nd;
+#[macro_use]
+extern crate log;
 
 macro_rules! check_err {
   ($call:expr) => {

@@ -13,25 +13,29 @@ extern crate syntax_pos;
 extern crate log;
 extern crate env_logger;
 
+use std::cell::Cell;
 use std::path::PathBuf;
 
-use rustc_driver::{driver, Compilation, CompilerCalls, RustcDefaultCalls, };
-use rustc::hir::def_id::{DefId, };
-use rustc::mir::{Constant, Operand, Rvalue, Statement,
+use self::rustc_driver::{driver, Compilation, CompilerCalls, RustcDefaultCalls, };
+use self::rustc::hir::def_id::{DefId, };
+use self::rustc::mir::{Constant, Operand, Rvalue, Statement,
                  StatementKind, AggregateKind, Local, };
-use rustc::mir::interpret::{ConstValue, Scalar, };
-use rustc::mir::{self, CustomIntrinsicMirGen, };
-use rustc::session::{config, Session, };
-use rustc::session::config::{ErrorOutputType, Input, };
-use rustc::ty::{self, TyCtxt, Instance, layout::Size, };
-use rustc_codegen_utils::codegen_backend::CodegenBackend;
-use rustc_data_structures::fx::{FxHashMap, }
-use rustc_data_structures::sync::{Lrc, };
-use syntax::ast;
-use syntax_pos::DUMMY_SP;
-use syntax_pos::symbol::{Symbol, InternedString, };
+use self::rustc::mir::interpret::{ConstValue, Scalar, };
+use self::rustc::mir::{self, CustomIntrinsicMirGen, };
+use self::rustc::session::{config, Session, };
+use self::rustc::session::config::{ErrorOutputType, Input, };
+use self::rustc::ty::{self, TyCtxt, Instance, layout::Size, };
+use self::rustc::ty::query::Providers;
+use self::rustc::ty::{Const, Closure, ParamEnv, Ref, FnDef, };
+use self::rustc_codegen_utils::codegen_backend::CodegenBackend;
+use self::rustc_data_structures::fx::{FxHashMap, };
+use self::rustc_data_structures::sync::{Lrc, };
+use self::rustc_data_structures::indexed_vec::*;
+use self::syntax::ast;
+use self::syntax_pos::DUMMY_SP;
+use self::syntax_pos::symbol::{Symbol, };
 
-use rustc_driver::getopts;
+use self::rustc_driver::getopts;
 
 pub fn main<F>(f: F)
   where F: FnOnce(&mut Generators),
@@ -77,34 +81,39 @@ pub fn main<F>(f: F)
     }
   }
 
-  ::std::process::exit(exit);
+  ::std::process::exit(exit as _);
 }
 
 pub struct Generators {
+  /// technically unsafe, but *should* only be set from one
+  /// thread in practice.
+  cstore: Cell<Option<&'static rustc_metadata::cstore::CStore>>,
+
   kernel_id_for: Lrc<dyn CustomIntrinsicMirGen>,
   kernel_upvars_for: Lrc<dyn CustomIntrinsicMirGen>,
-  extra: FxHashMap<InternedString, Lrc<dyn CustomIntrinsicMirGen>>,
+  /// no `InternedString` here: the required thread local vars won't
+  /// be initialized
+  pub intrinsics: FxHashMap<String, Lrc<dyn CustomIntrinsicMirGen>>,
 }
 impl Generators {
-  pub fn add<T>(&mut self, name: T, mirgen: Lrc<dyn CustomIntrinsicMirGen>)
-    where T: AsRef<str>,
-  {
-    let name = Symbol::intern(name.as_ref()).as_interned_str();
-    assert!(self.extra.insert(name, mirgen).is_none(),
-            "duplicate name: {}", name);
+  pub fn cstore(&self) -> &'static rustc_metadata::cstore::CStore {
+    self.cstore
+      .get()
+      .expect("requesting the cstore, but CompilerCalls::late_callback has been called yet")
   }
 }
 impl Default for Generators {
   fn default() -> Self {
     Generators {
+      cstore: Cell::new(None),
       kernel_id_for: Lrc::new(KernelIdFor) as Lrc<_>,
       kernel_upvars_for: Lrc::new(KernelUpvars) as Lrc<_>,
-      extra: Default::default(),
+      intrinsics: Default::default(),
     }
   }
 }
 static mut GENERATORS: Option<&'static Generators> = None;
-fn generators() -> &'static Generators {
+pub fn generators() -> &'static Generators {
   unsafe {
     GENERATORS.unwrap()
   }
@@ -155,6 +164,12 @@ impl<'a> CompilerCalls<'a> for HsaRustcDriver {
     odir: &Option<PathBuf>,
     ofile: &Option<PathBuf>,
   ) -> Compilation {
+    let gen = generators();
+    assert!(gen.cstore.get().is_none());
+    gen.cstore.set(Some(unsafe {
+      ::std::mem::transmute(crate_stores)
+    }));
+
     self.default
       .late_callback(trans_crate, matches, sess, crate_stores, input, odir, ofile)
   }
@@ -162,8 +177,6 @@ impl<'a> CompilerCalls<'a> for HsaRustcDriver {
                       matches: &getopts::Matches)
     -> driver::CompileController<'a>
   {
-    use rustc::ty::query::Providers;
-
     let mut controller = self.default.build_controller(sess, matches);
 
     let old_provide = std::mem::replace(&mut controller.provide,
@@ -199,8 +212,8 @@ fn custom_intrinsic_mirgen<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
       Some(gen.kernel_upvars_for.clone())
     },
     _ => {
-      gen.extra
-        .get(&name)
+      gen.intrinsics
+        .get(&name_str[..])
         .cloned()
     },
   }
@@ -216,9 +229,6 @@ impl CustomIntrinsicMirGen for KernelIdFor {
                                        mir: &mut mir::Mir<'tcx>)
     where 'tcx: 'a
   {
-    use rustc::ty::{Const, Closure, ParamEnv, Ref, FnDef, };
-    use rustc_data_structures::indexed_vec::*;
-
     let parent_param_substs = instance.substs;
 
     let reveal_all = ParamEnv::reveal_all();
@@ -284,6 +294,13 @@ impl CustomIntrinsicMirGen for KernelIdFor {
     };
 
     let def_id = instance.def_id();
+    let ty = instance.ty(tcx);
+    let sig = ty.fn_sig(tcx);
+    let inputs = sig.inputs();
+    for input in inputs.skip_binder().iter() {
+      let msg = format!("input ty: {:?}", input);
+      tcx.sess.note_without_error(&msg);
+    }
 
     let crate_name = tcx.crate_name(def_id.krate);
     let crate_name = format!("{}", crate_name);

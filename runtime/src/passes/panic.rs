@@ -1,4 +1,6 @@
 
+//! XXX: print some sort of message.
+
 use rustc::ty::item_path::{with_forced_absolute_paths};
 
 use super::{Pass, PassType};
@@ -9,12 +11,19 @@ use std::fmt;
 use std::intrinsics::abort;
 use core::panic::{PanicInfo, BoxMeUp, };
 
+
+
 fn rust_panic_with_hook(_payload: &mut dyn BoxMeUp,
                         _message: Option<&fmt::Arguments>,
                         _file_line_col: &(&str, u32, u32)) -> ! {
   unsafe { abort() }
 }
 pub fn rust_begin_panic(_: &PanicInfo) -> ! {
+  unsafe { abort() }
+}
+fn rust_panic_bounds_check(_file_line_col: &(&'static str, u32, u32),
+                           _index: usize, _len: usize) -> !
+{
   unsafe { abort() }
 }
 
@@ -36,6 +45,9 @@ impl Pass for PanicPass {
         },
         "std::panicking::rust_panic_with_hook" => {
           kernel_id_for(&rust_panic_with_hook)
+        },
+        "core::panicking::panic_bounds_check::ha83b88848a48c215" => {
+          kernel_id_for(&rust_panic_bounds_check)
         },
         _ => { return None; },
       };

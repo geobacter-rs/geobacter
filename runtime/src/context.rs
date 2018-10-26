@@ -301,18 +301,21 @@ impl Context {
       out.write_all(&obj[..])?;
     }
 
-    let linked_filename = tdir.path().join("linked.bc");
+    let mut linked_filename = tdir.path().join("linked.bc");
 
     let rbr = RustBuildRoot::default();
-    let mut cmd = Command::new(rbr.llvm_tool("llvm-link"));
-    cmd.arg("-only-needed")
-      .arg("-o").arg(&linked_filename)
-      .arg(obj_filename)
-      .args(objs);
-    info!("linking: {:?}", cmd);
-
-    if !cmd.spawn()?.wait()?.success() {
-      return Err("linking failed".into());
+    if objs.len() > 0 {
+      let mut cmd = Command::new(rbr.llvm_tool("llvm-link"));
+      cmd.arg("-only-needed")
+        .arg("-o").arg(&linked_filename)
+        .arg(obj_filename)
+        .args(objs);
+      if !cmd.spawn()?.wait()?.success() {
+        return Err("linking failed".into());
+      }
+      info!("linking: {:?}", cmd);
+    } else {
+      linked_filename = obj_filename;
     }
 
     let obj_filename = tdir.path().join("codegen.obj");
@@ -321,7 +324,8 @@ impl Context {
       .arg(format!("-mcpu={}", target_desc.target.options.cpu))
       .arg(format!("-mtriple={}", target_desc.target.llvm_target))
       .arg(format!("-mattr={}", target_desc.target.options.features))
-      .arg("-O2")
+      .arg(format!("-relocation-model={}", target_desc.target.options.relocation_model))
+      .arg("-O3")
       .arg("-o").arg(&obj_filename)
       .arg(linked_filename);
     info!("codegen-ing: {:?}", cmd);

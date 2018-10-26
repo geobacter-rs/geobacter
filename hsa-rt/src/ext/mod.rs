@@ -58,10 +58,48 @@ impl<T, D> AsPtrValue for nd::ArrayBase<T, D>
   fn as_ptr_value(&self) -> *const T::Elem { self.as_ptr() }
 }
 
+enum HostPtr<T>
+  where T: AsPtrValue,
+{
+  Obj(T),
+  Ptr(*const T::Target),
+}
+impl<T> HostPtr<T>
+  where T: AsPtrValue,
+{
+  fn host_ptr(&self) -> *const T::Target {
+    match self {
+      &HostPtr::Obj(ref obj) => obj.as_ptr_value(),
+      &HostPtr::Ptr(ptr) => ptr,
+    }
+  }
+  fn host_obj_ref(&self) -> &T {
+    match self {
+      &HostPtr::Obj(ref obj) => obj,
+      _ => unreachable!(),
+    }
+  }
+  fn host_obj_mut(&mut self) -> &mut T {
+    match self {
+      &mut HostPtr::Obj(ref mut obj) => obj,
+      _ => unreachable!(),
+    }
+  }
+  fn take_obj(&mut self) -> T {
+    let mut new_val = HostPtr::Ptr(self.host_ptr());
+    ::std::mem::swap(&mut new_val, self);
+    match new_val {
+      HostPtr::Obj(obj) => obj,
+      _ => panic!("don't have object anymore"),
+    }
+  }
+}
+
 pub struct HostLockedAgentPtr<T>
   where T: AsPtrValue,
 {
-  host: T,
+  // always `HostPtr::Obj`, except during `Drop`.
+  host: HostPtr<T>,
   agent_ptr: *const T::Target,
 }
 
@@ -69,12 +107,14 @@ impl<T> HostLockedAgentPtr<T>
   where T: AsPtrValue,
 {
   fn host_ptr(&self) -> *const T::Target {
-    self.host.as_ptr_value()
+    self.host.host_ptr()
   }
   pub fn agent_ptr(&self) -> *const T::Target { self.agent_ptr }
   fn agent_mut_ptr(&self) -> *mut T::Target {
     self.agent_ptr as *mut T::Target
   }
+
+  pub fn unlock(mut self) -> T { self.host.take_obj() }
 }
 impl<T> HostLockedAgentPtr<Vec<T>> {
   pub fn as_agent_ref(&self) -> &[T] {
@@ -96,13 +136,13 @@ impl<T, D> HostLockedAgentPtr<nd::ArrayBase<T, D>>
 {
   pub fn agent_view(&self) -> nd::ArrayView<T::Elem, D> {
     unsafe {
-      nd::ArrayView::from_shape_ptr(self.host.raw_dim(),
+      nd::ArrayView::from_shape_ptr(self.raw_dim(),
                                     self.agent_ptr())
     }
   }
   pub fn agent_view_mut(&mut self) -> nd::ArrayViewMut<T::Elem, D> {
     unsafe {
-      nd::ArrayViewMut::from_shape_ptr(self.host.raw_dim(),
+      nd::ArrayViewMut::from_shape_ptr(self.raw_dim(),
                                        self.agent_mut_ptr())
     }
   }
@@ -122,12 +162,12 @@ impl<T> Deref for HostLockedAgentPtr<T>
   where T: AsPtrValue,
 {
   type Target = T;
-  fn deref(&self) -> &T { &self.host }
+  fn deref(&self) -> &T { self.host.host_obj_ref() }
 }
 impl<T> DerefMut for HostLockedAgentPtr<T>
   where T: AsPtrValue,
 {
-  fn deref_mut(&mut self) -> &mut T { &mut self.host }
+  fn deref_mut(&mut self) -> &mut T { self.host.host_obj_mut() }
 }
 
 /// Locks `self` in host memory, and gives access to the specified agents.
@@ -152,7 +192,7 @@ pub trait HostLockedAgentMemory: Sized + AsPtrValue {
     }
 
     Ok(HostLockedAgentPtr {
-      host: self,
+      host: HostPtr::Obj(self),
       agent_ptr,
     })
   }

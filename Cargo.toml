@@ -1,15 +1,15 @@
 
 [workspace]
-members = ["hsa-core-gen", "hsa-core", "runtime",
-           "ir", "ir-gen", "kernel", "rustc-driver",
+members = ["hsa-core-gen", "hsa-core", "legionella-std",
+           "runtime",
+           "rustc-intrinsics", "legionella-intrinsics",
+           "bootstrap-rustc-driver", "rustc-driver",
 
            "hsa-rt-sys", "hsa-rt",
            "tools/hsa-agent-info",
 
-           "indexvec", "recycled-arc-vec",
-
            "examples/trivial", "examples/ndarray",
-           "examples/mat_mat_mul", ]
+           "examples/mat-mat-mul", "examples/fwd-conv", ]
 
 [profile.release]
 debug = true

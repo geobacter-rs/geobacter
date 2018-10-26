@@ -318,6 +318,12 @@ pub struct TargetOptions {
   /// unwinders.
   pub requires_uwtable: bool,
 
+  /// Whether or not SIMD types are passed by reference in the Rust ABI,
+  /// typically required if a target can be compiled with a mixed set of
+  /// target features. This is `true` by default, and `false` for targets like
+  /// wasm32 where the whole program either has simd or not.
+  pub simd_types_indirect: bool,
+
   /// Description of all address spaces and how they are shared with one another.
   /// Defaults to a single, flat, address space. Note it is generally assumed that
   /// the address space `0` is your flat address space.
@@ -370,6 +376,7 @@ pub enum AddrSpaceKind {
   ReadOnly,
   /// aka global
   ReadWrite,
+  Instruction,
   Named(String),
 }
 impl Into<spec::AddrSpaceKind> for AddrSpaceKind {
@@ -379,6 +386,7 @@ impl Into<spec::AddrSpaceKind> for AddrSpaceKind {
       AddrSpaceKind::Alloca => spec::AddrSpaceKind::Alloca,
       AddrSpaceKind::ReadOnly => spec::AddrSpaceKind::ReadOnly,
       AddrSpaceKind::ReadWrite => spec::AddrSpaceKind::ReadWrite,
+      AddrSpaceKind::Instruction => spec::AddrSpaceKind::Instruction,
       AddrSpaceKind::Named(name) => spec::AddrSpaceKind::Named(name),
     }
   }
@@ -390,6 +398,7 @@ impl From<spec::AddrSpaceKind> for AddrSpaceKind {
       spec::AddrSpaceKind::Alloca => AddrSpaceKind::Alloca,
       spec::AddrSpaceKind::ReadOnly => AddrSpaceKind::ReadOnly,
       spec::AddrSpaceKind::ReadWrite => AddrSpaceKind::ReadWrite,
+      spec::AddrSpaceKind::Instruction => AddrSpaceKind::Instruction,
       spec::AddrSpaceKind::Named(name) => AddrSpaceKind::Named(name),
     }
   }
@@ -769,84 +778,6 @@ impl<'de, InK, OutK> Visitor<'de> for VecDeVisitor<InK, OutK>
     Ok(map)
   }
 }
-/*impl<InK, OutK> Serialize for SerdeBTreeSet<InK, OutK>
-  where InK: Serialize + Into<OutK>,
-{
-  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where S: Serializer,
-  {
-    let mut map = serializer.serialize_seq(Some(self.0.len()))?;
-    for k in self.0.iter() {
-      let k = k.into();
-      map.serialize_seq(k)?;
-    }
-    map.end()
-  }
-}
-impl<'de, InK, OutK> Deserialize<'de> for SerdeBTreeSet<InK, OutK>
-  where InK: Deserialize<'de> + Into<OutK>,
-{
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: Deserializer<'de>,
-  {
-    let visitor: BTreeSetDeVisitor<InK, OutK> = Default::default();
-    let r = deserializer.deserialize_seq(visitor)?;
-    Ok(SerdeBTreeMap(r, PhantomData))
-  }
-}
-
-impl<InK, InV, OutK, OutV> Serialize for SerdeBTreeMap<InK, InV, OutK, OutV>
-  where
-    InK: Serialize + Into<OutK>,
-    InV: Serialize + Into<OutV>,
-{
-  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where S: Serializer,
-  {
-    let mut map = serializer.serialize_map(Some(self.0.len()))?;
-    for (k, v) in self.0.iter() {
-      map.serialize_entry(k, v)?;
-    }
-    map.end()
-  }
-}
-impl<'de, InK, OutK, InV, OutV> Deserialize<'de> for SerdeBTreeMap<InK, OutK, InV, OutV>
-  where InK: Deserialize<'de> + Into<OutK>,
-        InV: Deserialize<'de> + Into<OutV>,
-{
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: Deserializer<'de>,
-  {
-    let visitor: BTreeMapDeVisitor<InK, InV, OutK, OutV> = Default::default();
-    let r = deserializer.deserialize_map(visitor)?;
-    Ok(SerdeBTreeMap(r, PhantomData))
-  }
-}
-
-impl<In, Out> Serialize for SerdeVec<In, Out>
-  where In: Serialize + Into<Out>,
-{
-  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where S: Serializer,
-  {
-    let mut map = serializer.serialize_seq(Some(self.0.len()))?;
-    for k in self.0.iter() {
-      map.serialize_seq(k)?;
-    }
-    map.end()
-  }
-}
-impl<'de, InK, OutK> Deserialize<'de> for SerdeBTreeSet<InK, OutK>
-  where InK: Deserialize<'de> + Into<OutK>,
-{
-  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where D: Deserializer<'de>,
-  {
-    let visitor: BTreeSetDeVisitor<InK, OutK> = Default::default();
-    let r = deserializer.deserialize_seq(visitor)?;
-    Ok(SerdeBTreeMap(r, PhantomData))
-  }
-}*/
 
 mod btree_set {
   use serde::*;

@@ -1,0 +1,7 @@
+[package]
+name = "fwd-conv"
+version = "0.1.0"
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+edition = "2018"
+
+[dependencies]

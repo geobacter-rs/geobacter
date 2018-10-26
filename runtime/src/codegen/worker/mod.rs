@@ -12,6 +12,7 @@ use std::path::{Path, };
 use rustc;
 use rustc::hir::def_id::{CrateNum, DefId};
 use rustc::middle::exported_symbols::{SymbolExportLevel, };
+use rustc::mir::{Mir, CustomIntrinsicMirGen, };
 use rustc::session::config::{OutputType, CrateType, };
 use rustc::ty::query::Providers;
 use rustc::ty::{self, TyCtxt, subst::Substs, Instance, };
@@ -22,7 +23,10 @@ use rustc_data_structures::sync::{Lrc, };
 use rustc_metadata;
 use rustc_incremental;
 use syntax::feature_gate;
-use syntax_pos::symbol::Symbol;
+use syntax_pos::symbol::{Symbol, InternedString, };
+
+use legionella_intrinsics::{DefIdFromKernelId, GetDefIdFromKernelId,
+                            AxisId, DispatchPtr, insert_all_intrinsics, };
 
 use tempdir::TempDir;
 
@@ -195,7 +199,19 @@ impl<'a, 'b, 'c, 'tcx> Deref for TranslatorCtx<'a, 'b, 'c, 'tcx>
   type Target = TyCtxt<'b, 'tcx, 'tcx>;
   fn deref(&self) -> &TyCtxt<'b, 'tcx, 'tcx> { &self.tcx }
 }
-
+impl<'a, 'b, 'c, 'tcx> DefIdFromKernelId for TranslatorCtx<'a, 'b, 'c, 'tcx>
+  where 'a: 'c,
+{
+  fn get_cstore(&self) -> &rustc_metadata::cstore::CStore { self.worker.cstore }
+}
+struct DefIdFromKernelIdGetter;
+impl GetDefIdFromKernelId for DefIdFromKernelIdGetter {
+  fn with_self<F, R>(f: F) -> R
+    where F: FnOnce(&dyn DefIdFromKernelId) -> R,
+  {
+    self::tls::with(|tcx| f(&tcx as &dyn DefIdFromKernelId) )
+  }
+}
 
 pub struct WorkerTranslatorData<'a> {
   pub accel_desc: Arc<AcceleratorTargetDesc>,
@@ -204,6 +220,7 @@ pub struct WorkerTranslatorData<'a> {
   pub cstore: &'a rustc_metadata::cstore::CStore,
   pub passes: Vec<Box<Pass>>,
   replaced_def_ids: RefCell<FxHashMap<DefId, DefId>>,
+  intrinsics: FxHashMap<InternedString, Lrc<dyn CustomIntrinsicMirGen>>,
 }
 impl<'a> WorkerTranslatorData<'a> {
   pub fn new(accel_desc: Arc<AcceleratorTargetDesc>,
@@ -216,7 +233,7 @@ impl<'a> WorkerTranslatorData<'a> {
     use passes::alloc::AllocPass;
     use passes::lang_item::LangItemPass;
     use passes::panic::PanicPass;
-    //use passes::compiler_builtins::CompilerBuiltinsReplacerPass;
+    use passes::compiler_builtins::CompilerBuiltinsReplacerPass;
 
     use rustc::middle::cstore::MetadataLoader;
     use rustc::middle::dependency_format::Dependencies;
@@ -260,16 +277,24 @@ impl<'a> WorkerTranslatorData<'a> {
             accels: vec![accel],
             sess: &sess,
             cstore: &cstore,
-            passes: vec![Box::new(LangItemPass),
-                         Box::new(AllocPass),
-                         Box::new(PanicPass),
+            passes: vec![
+              Box::new(LangItemPass),
+              Box::new(AllocPass),
+              Box::new(PanicPass),
+              Box::new(CompilerBuiltinsReplacerPass),
             ],
             replaced_def_ids: Default::default(),
+            intrinsics: Default::default(),
           };
           {
             let metadata = metadata.lock().unwrap();
             data.initialize_cstore(metadata.as_ref());
           }
+          insert_all_intrinsics(&DefIdFromKernelIdGetter,
+          |k, v| {
+            let k = Symbol::intern(k.as_ref()).as_interned_str();
+            assert!(data.intrinsics.insert(k, v).is_none());
+          });
 
           data.thread(&rx);
         })
@@ -437,6 +462,7 @@ impl<'a> WorkerTranslatorData<'a> {
       maybe_unused_trait_imports: Default::default(),
       maybe_unused_extern_crates: Default::default(),
       export_map: Default::default(),
+      extern_prelude: Default::default(),
     };
 
     let kernel_symbol = rustc::ty::TyCtxt::create_and_enter(self.sess,
@@ -455,7 +481,7 @@ impl<'a> WorkerTranslatorData<'a> {
           let trans_data = codegen.codegen_crate(tcx.tcx, rx);
 
           codegen.join_codegen_and_link(trans_data, self.sess,
-                                      dep_graph, &out)
+                                        dep_graph, &out)
             .map_err(|err| {
               error!("codegen failed: `{:?}`!", err);
               error::Error::Codegen(id)
@@ -561,7 +587,17 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
   opts.debugging_opts.verify_llvm_ir = false;
   opts.debugging_opts.no_landing_pads = true;
   opts.debugging_opts.incremental_queries = false;
-  opts.debugging_opts.print_llvm_passes = false;
+  //opts.debugging_opts.print_llvm_passes = true;
+  opts.debugging_opts.polly = true;
+  opts.cg.llvm_args.push("-polly-run-inliner".into());
+  opts.cg.llvm_args.push("-polly-register-tiling".into());
+  opts.cg.llvm_args.push("-polly-check-vectorizable".into());
+  //opts.cg.llvm_args.push("-enable-polly-aligned".into());
+  //opts.cg.llvm_args.push("-polly-target=gpu".into());
+  opts.cg.llvm_args.push("-polly-vectorizer=polly".into());
+  opts.cg.llvm_args.push("-polly-position=early".into());
+  opts.cg.llvm_args.push("-polly-process-unprofitable".into());
+  opts.cg.llvm_args.push("-polly-enable-polyhedralinfo".into());
   opts
 }
 
@@ -700,6 +736,7 @@ fn providers_remote_and_local(providers: &mut Providers) {
   *providers = Providers {
     fn_sig,
     reachable_non_generics,
+    custom_intrinsic_mirgen,
     upstream_monomorphizations,
     upstream_monomorphizations_for,
     .. *providers
@@ -745,6 +782,18 @@ fn providers_remote_and_local(providers: &mut Providers) {
     -> Option<Lrc<FxHashMap<&'tcx Substs<'tcx>, CrateNum>>>
   {
     None
+  }
+  fn custom_intrinsic_mirgen<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                       def_id: DefId)
+    -> Option<Lrc<dyn CustomIntrinsicMirGen>>
+  {
+    self::tls::with_tcx(tcx, |tcx| {
+      let name = tcx.item_name(def_id);
+      info!("custom intrinsic: {}", name);
+      tcx.worker.intrinsics
+        .get(&name)
+        .cloned()
+    })
   }
 }
 

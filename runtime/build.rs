@@ -18,13 +18,6 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 
 #[inline(never)]
-fn force_rustc_link() -> rustc::session::Session {
-  let opts = rustc::session::config::Options::default();
-  let registry = rustc_driver::diagnostics_registry();
-
-  rustc::session::build_session(opts, None, registry)
-}
-#[inline(never)]
 fn force_rustc_deps_link() -> rustc::ty::query::Providers<'static> {
   // this will pull in the rustc deps:
   let mut providers = rustc::ty::query::Providers::default();
@@ -63,7 +56,6 @@ pub fn main() {
   use std::io::{Write};
   use std::time::{SystemTime, UNIX_EPOCH};
 
-  //let _ = force_rustc_link();
   let _ = force_rustc_deps_link();
 
   let out = Path::new(&var_os("OUT_DIR").unwrap()).join("timestamp.rs");

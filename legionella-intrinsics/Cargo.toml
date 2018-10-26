@@ -1,16 +1,14 @@
 [package]
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
-autobins = true
 edition = "2018"
-name = "legionella-rustc-driver"
+name = "legionella-intrinsics"
 version = "0.1.0"
 
 [dependencies]
 env_logger = "=0.5.12"
 log = "=0.4.4"
 
+[dependencies.rustc-intrinsics]
+path = "../rustc-intrinsics"
 [dependencies.hsa-core]
 path = "../hsa-core"
-
-[dependencies.legionella-intrinsics]
-path = "../legionella-intrinsics"

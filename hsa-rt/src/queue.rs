@@ -20,6 +20,11 @@ pub enum QueueType {
   Multiple,
   Single,
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum FenceScope {
+  Agent,
+  System,
+}
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct SoftQueue<T = Signal>
@@ -80,7 +85,11 @@ impl<T> SoftQueue<T>
 
       let invalid_ty = ffi::hsa_packet_type_t_HSA_PACKET_TYPE_INVALID;
       let rest = packet.type_;
-      packet_store_rel(packet, header(invalid_ty, false), rest);
+      // XXX see about relaxing these scopes.
+      packet_store_rel(packet, header(invalid_ty,
+                                      &Some(FenceScope::System),
+                                      &Some(FenceScope::System),
+                                      false), rest);
 
       read_index += 1;
       self.sys.store_read_index_screlease(read_index);
@@ -111,14 +120,18 @@ impl<T> SoftQueue<T>
     let packet = &mut packets[packet_index];
     let invalid_ty = ffi::hsa_packet_type_t_HSA_PACKET_TYPE_INVALID;
     packet_store_rel(packet,
-                     header(invalid_ty, false),
+                     header(invalid_ty, &None, &None, false),
                      0);
+    let scaquire_fence = dispatch.scaquire_scope.clone();
+    let screlease_fence = dispatch.screlease_scope.clone();
     let ordered = dispatch.ordered;
     let (grid_size, kernel_args, completion_signal) = dispatch
       .initialize_packet(packet)?;
 
     let setup = (grid_size as u16) << ffi::hsa_kernel_dispatch_packet_setup_t_HSA_KERNEL_DISPATCH_PACKET_SETUP_DIMENSIONS;
     let ty = header(ffi::hsa_packet_type_t_HSA_PACKET_TYPE_KERNEL_DISPATCH,
+                    &scaquire_fence,
+                    &screlease_fence,
                     ordered);
     packet_store_rel(packet, ty, setup);
     self.doorbell_ref().as_ref()
@@ -241,14 +254,18 @@ impl Queue {
     let packet = &mut packets[packet_index];
     let invalid_ty = ffi::hsa_packet_type_t_HSA_PACKET_TYPE_INVALID;
     packet_store_rel(packet,
-                     header(invalid_ty, false),
+                     header(invalid_ty, &None, &None, false),
                      0);
+    let scaquire_fence = dispatch.scaquire_scope.clone();
+    let screlease_fence = dispatch.screlease_scope.clone();
     let ordered = dispatch.ordered;
     let (grid_size, kernel_args, completion_signal) = dispatch
       .initialize_packet(packet)?;
 
     let setup = (grid_size as u16) << ffi::hsa_kernel_dispatch_packet_setup_t_HSA_KERNEL_DISPATCH_PACKET_SETUP_DIMENSIONS;
     let ty = header(ffi::hsa_packet_type_t_HSA_PACKET_TYPE_KERNEL_DISPATCH,
+                    &scaquire_fence,
+                    &screlease_fence,
                     ordered);
     packet_store_rel(packet, ty, setup);
     self.doorbell_ref()
@@ -261,13 +278,25 @@ impl Queue {
   }
 }
 
-fn header(ty: ffi::hsa_packet_type_t, ordered: bool) -> u16 {
+fn scope_to_enum(scope: &Option<FenceScope>) -> u16 {
+  match scope {
+    &None => ffi::hsa_fence_scope_t_HSA_FENCE_SCOPE_NONE as u16,
+    &Some(FenceScope::System) => ffi::hsa_fence_scope_t_HSA_FENCE_SCOPE_SYSTEM as u16,
+    &Some(FenceScope::Agent) => ffi::hsa_fence_scope_t_HSA_FENCE_SCOPE_AGENT as u16
+  }
+}
+
+fn header(ty: ffi::hsa_packet_type_t,
+          scaquire: &Option<FenceScope>,
+          screlease: &Option<FenceScope>,
+          ordered: bool) -> u16 {
   let mut header = (ty as u16) << ffi::hsa_packet_header_t_HSA_PACKET_HEADER_TYPE;
 
-  let v = ffi::hsa_fence_scope_t_HSA_FENCE_SCOPE_SYSTEM as u16;
+  let v = scope_to_enum(scaquire);
   let shift = ffi::hsa_packet_header_t_HSA_PACKET_HEADER_SCACQUIRE_FENCE_SCOPE;
   header |= v << shift;
 
+  let v = scope_to_enum(screlease);
   let shift = ffi::hsa_packet_header_t_HSA_PACKET_HEADER_SCRELEASE_FENCE_SCOPE;
   header |= v << shift;
 
@@ -400,6 +429,8 @@ pub struct DispatchPacket<'a, WGDim, GridDim, KernArg>
   pub private_segment_size: u32,
   pub group_segment_size: u32,
   pub ordered: bool,
+  pub scaquire_scope: Option<FenceScope>,
+  pub screlease_scope: Option<FenceScope>,
   pub kernel_object: u64,
   pub kernel_args: &'a mut KernArg,
   pub completion_signal: &'a Signal,
@@ -424,7 +455,8 @@ impl<'a, KernArg> Drop for DispatchCompletion<'a, KernArg> {
     loop {
       let val = self.completion_signal
         .wait_scacquire(ConditionOrdering::Equal,
-                        0, None, WaitState::Blocked);
+                        0, None, WaitState::Active);
+      debug!("completion signal wakeup: {}", val);
       if val == 0 { break; }
     }
   }
@@ -440,22 +472,23 @@ impl<'a, WGDim, GridDim, KernArg> DispatchPacket<'a, WGDim, GridDim, KernArg>
     let workgroup_size = self.workgroup_size.into_dimension();
     let grid_size = self.grid_size.into_dimension();
 
-    if workgroup_size.size() > 3 {
+    let workgroup_size = workgroup_size.slice();
+    let grid = grid_size.slice();
+
+    if workgroup_size.len() > 3 {
       return Err("Workgroup dim must be <= 3".into());
-    } else if workgroup_size.size() == 0 {
+    } else if workgroup_size.len() == 0 {
       return Err("Workgroup dim must not be zero".into());
     }
-    if grid_size.size() > 3 {
+    if grid.len() > 3 {
       return Err("Grid dim must be <= 3".into());
-    } else if grid_size.size() == 0 {
+    } else if grid.len() == 0 {
       return Err("Grid dim must not be zero".into());
     }
 
-    let workgroup_size = workgroup_size.slice();
     p.workgroup_size_x = *workgroup_size.get(0).unwrap_or(&1) as u16;
     p.workgroup_size_y = *workgroup_size.get(1).unwrap_or(&1) as u16;
     p.workgroup_size_z = *workgroup_size.get(2).unwrap_or(&1) as u16;
-    let grid = grid_size.slice();
     p.grid_size_x = *grid.get(0).unwrap_or(&1) as u32;
     p.grid_size_y = *grid.get(1).unwrap_or(&1) as u32;
     p.grid_size_z = *grid.get(2).unwrap_or(&1) as u32;
@@ -468,7 +501,7 @@ impl<'a, WGDim, GridDim, KernArg> DispatchPacket<'a, WGDim, GridDim, KernArg>
 
     p.completion_signal = self.completion_signal.0;
 
-    Ok((grid_size.size(), self.kernel_args, self.completion_signal))
+    Ok((grid.len(), self.kernel_args, self.completion_signal))
   }
 }
 
