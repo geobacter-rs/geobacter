@@ -1,8 +1,12 @@
 
 use std::error::Error;
 use std::ffi::{OsStr, };
-use std::sync::{Arc, RwLock, Mutex};
+use std::sync::{Arc, RwLock, Weak, };
 use std::path::{Component};
+
+use rustc_metadata::cstore::CStore;
+use rustc::middle::cstore::MetadataLoader;
+use syntax;
 
 use indexvec::{Idx, IndexVec};
 
@@ -10,9 +14,11 @@ use hsa_core::kernel::KernelId;
 use hsa_rt::agent::{DeviceType, };
 
 use {Accelerator, AcceleratorId, AcceleratorTargetDesc, };
-use metadata::{Metadata, MetadataLoadingError, CrateSource, CrateNameHash};
+use metadata::{Metadata, MetadataLoadingError, CrateSource, CrateNameHash,
+               CrateMetadata, CrateMetadataLoader, DummyMetadataLoader, };
 use platform::os::{get_mapped_files, dylib_search_paths};
-use codegen::worker::{CodegenComms, CodegenUnsafeSyncComms, CodegenResults, };
+use codegen::worker::{CodegenComms, CodegenUnsafeSyncComms, };
+use codegen::products::CodegenResults;
 use accelerators::{host::HostAccel, amd::AmdGpuAccel, RustBuildRoot,
                    DeviceLibsStaging, };
 use utils::{HashMap, new_hash_set, };
@@ -26,20 +32,32 @@ const FRAMEWORK_DATA_SUBDIR: &'static str = ".legionella";
 pub struct ContextData {
   _hsa_ctx: hsa_rt::ApiContext,
 
-  metadata: Arc<Mutex<Vec<Metadata>>>,
+  syntax_globals: syntax::Globals,
+  cstore: CStore,
+
+  m: RwLock<ContextDataMut>,
+}
+/// Data that will be wrapped in a rw mutex.
+pub struct ContextDataMut {
   local_accels: Vec<Arc<Accelerator>>,
   accelerators: IndexVec<AcceleratorId, Option<Arc<Accelerator>>>,
 
   translators: Translators,
-  host_codegen: CodegenComms,
+  // Only None during initialization.
+  host_codegen: Option<CodegenComms>,
 }
 
 #[derive(Clone)]
-pub struct Context(Arc<RwLock<ContextData>>);
+pub struct Context(Arc<ContextData>);
+
+unsafe impl Send for Context { }
+unsafe impl Sync for Context { }
 
 impl Context {
   pub fn new() -> Result<Context, Box<Error>> {
-    let metadata = ::syntax::with_globals(|| -> Result<_, Box<Error>> {
+    let syntax_globals = syntax::Globals::new();
+
+    let cstore = syntax_globals.with(|| -> Result<_, Box<Error>> {
       let mapped = get_mapped_files()?;
       debug!("mapped files: {:#?}", mapped);
       let mut unique_metadata = new_hash_set();
@@ -78,6 +96,7 @@ impl Context {
           let extension = path.extension();
           if extension.is_none() || extension.unwrap() != "so" { continue; }
           // skip other toolchains
+          // XXX revisit this when deployment code is written.
           if path.components().any(|v| v == Component::Normal(OsStr::new(".rustup"))) {
             continue;
           }
@@ -102,7 +121,25 @@ impl Context {
         }
       }
 
-      Ok(Arc::new(Mutex::new(rust_mapped)))
+      let md_loader = Box::new(DummyMetadataLoader);
+      let md_loader = md_loader as Box<dyn MetadataLoader + Sync>;
+      let cstore = CStore::new(md_loader);
+      {
+        let mut loader = CrateMetadataLoader::default();
+        let CrateMetadata(meta) = loader.build(rust_mapped, &cstore)
+          .unwrap();
+        for meta in meta.into_iter() {
+          let name = CrateNameHash {
+            name: meta.name,
+            hash: meta.root.hash.as_u64(),
+          };
+          let cnum = loader.lookup_cnum(&name)
+            .unwrap();
+          cstore.set_crate_data(cnum, meta);
+        }
+      }
+
+      Ok(cstore)
     })?;
 
     let hsa_ctx = hsa_rt::ApiContext::try_upref()?;
@@ -123,92 +160,113 @@ impl Context {
       .filter(|&(_, ref agent)| agent != &host )
       .collect();
 
+    let mut accelerators = IndexVec::with_capacity(agents.len() + 1);
+    let mut local_accels = Vec::with_capacity(agents.len() + 1);
+    let mut translators: Translators = Default::default();
+
     let host = Arc::new(HostAccel::new(AcceleratorId::new(0), host)?);
     let host_target_desc = host.accel_target_desc()?;
     let host_target_desc = Arc::new(host_target_desc);
 
     let host = host as Arc<Accelerator>;
 
-    let host_codegen = CodegenComms::new(host_target_desc.clone(),
-                                         &host,
-                                         metadata.clone())?;
-    host.set_codegen(host_codegen.clone());
-
-    let mut translators: Translators = Default::default();
-    translators.insert(host_target_desc, unsafe { host_codegen.clone().sync_comms() });
-
-    let mut accelerators = IndexVec::with_capacity(agents.len() + 1);
     accelerators.push(Some(host.clone()));
-
-    let mut local_accels = Vec::with_capacity(agents.len() + 1);
     local_accels.push(host.clone());
 
-    let mut data = ContextData {
-      _hsa_ctx: hsa_ctx,
-      metadata,
+    let data = ContextDataMut {
       accelerators,
       local_accels,
       translators,
-      host_codegen,
+      host_codegen: None,
     };
+    let data = ContextData {
+      _hsa_ctx: hsa_ctx,
+      syntax_globals,
+      cstore,
 
-    // add the rest of the accelerators
-    for (id, agent) in agents.into_iter() {
-      let accel = match agent.device_type() {
-        Err(e) => {
-          error!("agent {}: error getting device type: {:?}; ignoring",
-                 id, e);
-          continue;
-        },
-        Ok(DeviceType::Cpu) => {
-          HostAccel::new(data.get_next_accelerator_id(), agent)
-            .map(|v| Arc::new(v) as Arc<Accelerator> )
-        },
-        Ok(DeviceType::Gpu) => {
-          let vendor = agent.vendor_name();
-          match vendor {
-            Ok(ref vendor) if vendor == "AMD" => {
-              AmdGpuAccel::new(data.get_next_accelerator_id(), Arc::downgrade(&host),
-                               agent)
-                .map(|v| Arc::new(v) as Arc<Accelerator>)
-            },
-            Ok(vendor) => {
-              warn!("agent {}: unsupported non-AMD GPU vendor: {}; ignoring",
-                    id, vendor);
-              continue;
-            },
-            Err(e) => Err(e.into()),
-          }
-        },
-        Ok(DeviceType::Dsp) => {
-          warn!("agent {}: unsupported DSP `{}` (file a bug report?); ignoring",
-                id, agent.name().unwrap_or_else(|_| "<name error>".into() ));
-          continue;
-        },
-      };
+      m: RwLock::new(data),
+    };
+    let data = Arc::new(data);
+    let context = Context(data);
 
-      let accel = match accel {
-        Ok(a) => a,
-        Err(e) => {
-          error!("agent {}: error creating accelerator: {:?}; ignoring",
-                 id, e);
-          continue;
-        },
-      };
+    {
+      let mut data = context.0.m.write().unwrap();
 
-      data.accelerators.push(Some(accel.clone()));
-      data.local_accels.push(accel.clone());
+      let host_codegen = CodegenComms::new(&context,
+                                           host_target_desc.clone(),
+                                           &host)?;
+      host.set_codegen(host_codegen.clone());
+      data.host_codegen = Some(host_codegen.clone());
 
-      data.create_translator_for_accel(&accel)?;
+      data.translators.insert(host_target_desc, unsafe { host_codegen.clone().sync_comms() });
+
+      // add the rest of the accelerators
+      for (id, agent) in agents.into_iter() {
+        let accel = match agent.device_type() {
+          Err(e) => {
+            error!("agent {}: error getting device type: {:?}; ignoring",
+                   id, e);
+            continue;
+          },
+          Ok(DeviceType::Cpu) => {
+            HostAccel::new(data.get_next_accelerator_id(), agent)
+              .map(|v| Arc::new(v) as Arc<Accelerator>)
+          },
+          Ok(DeviceType::Gpu) => {
+            let vendor = agent.vendor_name();
+            match vendor {
+              Ok(ref vendor) if vendor == "AMD" => {
+                AmdGpuAccel::new(data.get_next_accelerator_id(), Arc::downgrade(&host),
+                                 agent)
+                  .map(|v| Arc::new(v) as Arc<Accelerator>)
+              },
+              Ok(vendor) => {
+                warn!("agent {}: unsupported non-AMD GPU vendor: {}; ignoring",
+                      id, vendor);
+                continue;
+              },
+              Err(e) => Err(e.into()),
+            }
+          },
+          Ok(DeviceType::Dsp) => {
+            warn!("agent {}: unsupported DSP `{}` (file a bug report?); ignoring",
+                  id, agent.name().unwrap_or_else(|_| "<name error>".into()));
+            continue;
+          },
+        };
+
+        let accel = match accel {
+          Ok(a) => a,
+          Err(e) => {
+            error!("agent {}: error creating accelerator: {:?}; ignoring",
+                   id, e);
+            continue;
+          },
+        };
+
+        data.accelerators.push(Some(accel.clone()));
+        data.local_accels.push(accel.clone());
+
+        data.create_translator_for_accel(&context, &accel)?;
+      }
     }
 
-    let data = RwLock::new(data);
-    let data = Arc::new(data);
-    Ok(Context(data))
+    Ok(context)
+  }
+
+  pub(crate) fn cstore(&self) -> &CStore {
+    &self.0.cstore
+  }
+  pub(crate) fn syntax_globals(&self) -> &syntax::Globals {
+    &self.0.syntax_globals
+  }
+
+  pub fn downgrade_ref(&self) -> WeakContext {
+    WeakContext(Arc::downgrade(&self.0))
   }
 
   pub fn primary_host_accel(&self) -> Result<Arc<Accelerator>, Box<Error>> {
-    let b = self.0.read()
+    let b = self.0.m.read()
       .map_err(|_| {
         "poisoned lock!"
       })?;
@@ -218,7 +276,7 @@ impl Context {
   pub fn filter_accels<F>(&self, f: F) -> Result<Vec<Arc<Accelerator>>, Box<Error>>
     where F: FnMut(&&Arc<Accelerator>) -> bool,
   {
-    let b = self.0.read()
+    let b = self.0.m.read()
       .map_err(|_| {
         "poisoned lock!"
       })?;
@@ -232,7 +290,7 @@ impl Context {
   pub fn find_accel<F>(&self, f: F) -> Result<Option<Arc<Accelerator>>, Box<Error>>
     where F: FnMut(&&Arc<Accelerator>) -> bool,
   {
-    let b = self.0.read()
+    let b = self.0.m.read()
       .map_err(|_| {
         "poisoned lock!"
       })?;
@@ -368,31 +426,44 @@ impl Context {
   }
 }
 
-impl ContextData {
+impl ContextDataMut {
   fn get_next_accelerator_id(&self) -> AcceleratorId {
     AcceleratorId::new(self.accelerators.len())
   }
-  fn create_translator_for_accel(&mut self, accel: &Arc<Accelerator>)
+  fn create_translator_for_accel(&mut self, context: &Context,
+                                 accel: &Arc<Accelerator>)
     -> Result<(), Box<Error>>
   {
     use std::collections::hash_map::Entry;
 
     let desc = accel.accel_target_desc()?;
-    let desc = Arc::new(desc);
-    match self.translators.entry(desc.clone()) {
+    let accel_desc = Arc::new(desc);
+    match self.translators.entry(accel_desc.clone()) {
       Entry::Occupied(o) => {
         let comms: CodegenComms = o.get().clone_into();
         comms.add_accel(accel);
         accel.set_codegen(comms);
       },
       Entry::Vacant(v) => {
-        let codegen = CodegenComms::new(desc, accel,
-                                        self.metadata.clone())?;
+        let codegen = CodegenComms::new(context, accel_desc, accel)?;
         v.insert(unsafe { codegen.clone().sync_comms() });
         accel.set_codegen(codegen);
       },
     }
 
     Ok(())
+  }
+}
+
+#[derive(Clone)]
+pub struct WeakContext(Weak<ContextData>);
+
+unsafe impl Send for WeakContext { }
+unsafe impl Sync for WeakContext { }
+
+impl WeakContext {
+  pub fn upgrade(&self) -> Option<Context> {
+    self.0.upgrade()
+      .map(|v| Context(v) )
   }
 }

@@ -31,7 +31,7 @@ pub struct PanicPass;
 
 impl Pass for PanicPass {
   fn pass_type(&self) -> PassType {
-    PassType::Replacer(|tcx, def_id| {
+    PassType::Replacer(|tcx, dd, def_id| {
       // check for "panic_fmt". this is used in an extern fashion: libcore calls an
       // extern "panic_fmt", which is actually defined in libstd. rustc uses
       // the linker to resolve the call. BUT, we don't have the linker, plus we
@@ -52,7 +52,7 @@ impl Pass for PanicPass {
         _ => { return None; },
       };
 
-      Some(tcx.as_def_id(info).unwrap())
+      Some(dd.as_def_id(info).unwrap())
     })
   }
 }

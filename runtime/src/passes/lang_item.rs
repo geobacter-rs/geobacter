@@ -5,7 +5,7 @@ pub struct LangItemPass;
 
 impl Pass for LangItemPass {
   fn pass_type(&self) -> PassType {
-    PassType::Replacer(|tcx, def_id| {
+    PassType::Replacer(|tcx, _dd, def_id| {
       use rustc::middle::lang_items::*;
 
       // check for "panic_fmt". this is used in an extern fashion: libcore calls an

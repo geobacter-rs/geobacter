@@ -7,6 +7,8 @@
 
 #![crate_type = "dylib"]
 
+#![recursion_limit="256"]
+
 extern crate hsa_core;
 extern crate hsa_rt;
 #[macro_use] extern crate rustc;

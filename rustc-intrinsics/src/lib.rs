@@ -20,11 +20,12 @@ use self::rustc_driver::{driver, Compilation, CompilerCalls, RustcDefaultCalls, 
 use self::rustc::hir::def_id::{DefId, };
 use self::rustc::mir::{Constant, Operand, Rvalue, Statement,
                  StatementKind, AggregateKind, Local, };
-use self::rustc::mir::interpret::{ConstValue, Scalar, };
-use self::rustc::mir::{self, CustomIntrinsicMirGen, };
+use self::rustc::mir::interpret::{ConstValue, Scalar, Allocation,
+                                  PointerArithmetic};
+use self::rustc::mir::{self, CustomIntrinsicMirGen, RETURN_PLACE, };
 use self::rustc::session::{config, Session, };
 use self::rustc::session::config::{ErrorOutputType, Input, };
-use self::rustc::ty::{self, TyCtxt, Instance, layout::Size, };
+use self::rustc::ty::{self, TyCtxt, Instance, layout::Size, layout::Align, };
 use self::rustc::ty::query::Providers;
 use self::rustc::ty::{Const, Closure, ParamEnv, Ref, FnDef, };
 use self::rustc_codegen_utils::codegen_backend::CodegenBackend;
@@ -90,6 +91,7 @@ pub struct Generators {
   cstore: Cell<Option<&'static rustc_metadata::cstore::CStore>>,
 
   kernel_id_for: Lrc<dyn CustomIntrinsicMirGen>,
+  kernel_context_data_id: Lrc<dyn CustomIntrinsicMirGen>,
   kernel_upvars_for: Lrc<dyn CustomIntrinsicMirGen>,
   /// no `InternedString` here: the required thread local vars won't
   /// be initialized
@@ -107,6 +109,7 @@ impl Default for Generators {
     Generators {
       cstore: Cell::new(None),
       kernel_id_for: Lrc::new(KernelIdFor) as Lrc<_>,
+      kernel_context_data_id: Lrc::new(KernelContextDataId) as Lrc<_>,
       kernel_upvars_for: Lrc::new(KernelUpvars) as Lrc<_>,
       intrinsics: Default::default(),
     }
@@ -208,6 +211,9 @@ fn custom_intrinsic_mirgen<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     "kernel_id_for" => {
       Some(gen.kernel_id_for.clone())
     },
+    "kernel_context_data_id" => {
+      Some(gen.kernel_context_data_id.clone())
+    },
     "kernel_env_for" => {
       Some(gen.kernel_upvars_for.clone())
     },
@@ -233,8 +239,7 @@ impl CustomIntrinsicMirGen for KernelIdFor {
 
     let reveal_all = ParamEnv::reveal_all();
 
-    let ret = Local::new(0);
-    let ret = mir::Place::Local(ret);
+    let ret = mir::Place::Local(RETURN_PLACE);
     let local = Local::new(1);
     let local_ty = mir.local_decls[local].ty;
     let local_ty = tcx
@@ -414,5 +419,89 @@ impl CustomIntrinsicMirGen for KernelUpvars {
     -> ty::Ty<'tcx>
   {
     unimplemented!();
+  }
+}
+/// creates a static variable which can be used (atomically!) to store
+/// an ID for a function.
+struct KernelContextDataId;
+impl CustomIntrinsicMirGen for KernelContextDataId {
+  fn mirgen_simple_intrinsic<'a, 'tcx>(&self,
+                                       tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                       _instance: ty::Instance<'tcx>,
+                                       mir: &mut mir::Mir<'tcx>)
+    where 'tcx: 'a
+  {
+    let ptr_size = tcx.pointer_size();
+    let data = vec![0; ptr_size.bytes() as usize];
+    let align = Align::from_bits(64, 64).unwrap(); // XXX arch dependent.
+    let mut alloc = Allocation::from_bytes(&data[..], align);
+    alloc.mutability = ast::Mutability::Mutable;
+    let alloc = tcx.intern_const_alloc(alloc);
+    let alloc_id = tcx.alloc_map.lock().allocate(alloc);
+
+    let ret = mir::Place::Local(RETURN_PLACE);
+
+    let source_info = mir::SourceInfo {
+      span: DUMMY_SP,
+      scope: mir::OUTERMOST_SOURCE_SCOPE,
+    };
+
+    let mut bb = mir::BasicBlockData {
+      statements: Vec::new(),
+      terminator: Some(mir::Terminator {
+        source_info: source_info.clone(),
+        kind: mir::TerminatorKind::Return,
+      }),
+
+      is_cleanup: false,
+    };
+
+    let const_val = ConstValue::ByRef(alloc_id.into(), alloc, ptr_size);
+    let constant = tcx.mk_const(Const {
+      ty: self.output(tcx),
+      val: const_val,
+    });
+    let constant = Constant {
+      span: source_info.span,
+      ty: self.output(tcx),
+      literal: constant,
+      user_ty: None,
+    };
+    let constant = Box::new(constant);
+    let constant = Operand::Constant(constant);
+
+    let rvalue = Rvalue::Use(constant);
+
+    let stmt_kind = StatementKind::Assign(ret, Box::new(rvalue));
+    let stmt = Statement {
+      source_info: source_info.clone(),
+      kind: stmt_kind,
+    };
+    bb.statements.push(stmt);
+    mir.basic_blocks_mut().push(bb);
+  }
+
+  fn generic_parameter_count<'a, 'tcx>(&self, _tcx: TyCtxt<'a, 'tcx, 'tcx>)
+                                       -> usize
+  {
+    3
+  }
+  /// The types of the input args.
+  fn inputs<'a, 'tcx>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>)
+    -> &'tcx ty::List<ty::Ty<'tcx>>
+  {
+    let n = 0;
+    let p = Symbol::intern(&format!("P{}", n)).as_interned_str();
+    let f = tcx.mk_ty_param(n, p);
+    let region = tcx.mk_region(ty::ReLateBound(ty::INNERMOST,
+                                               ty::BrAnon(0)));
+    let t = tcx.mk_imm_ref(region, f);
+    tcx.intern_type_list(&[t])
+  }
+  /// The return type.
+  fn output<'a, 'tcx>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>)
+    -> ty::Ty<'tcx>
+  {
+    tcx.mk_imm_ref(tcx.types.re_static, tcx.types.usize)
   }
 }

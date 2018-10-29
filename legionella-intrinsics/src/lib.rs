@@ -63,8 +63,9 @@ pub trait DefIdFromKernelId {
   }
 }
 pub trait GetDefIdFromKernelId {
-  fn with_self<F, R>(f: F) -> R
-    where F: FnOnce(&dyn DefIdFromKernelId) -> R;
+  fn with_self<'a, 'tcx, F, R>(tcx: TyCtxt<'a, 'tcx, 'tcx>, f: F) -> R
+    where F: FnOnce(&dyn DefIdFromKernelId) -> R,
+          'tcx: 'a;
 }
 
 pub fn insert_all_intrinsics<F, U>(marker: &U, mut into: F)
@@ -120,7 +121,7 @@ impl<T, U> CustomIntrinsicMirGen for LegionellaMirGen<T, U>
                                        mir: &mut mir::Mir<'tcx>)
     where 'tcx: 'a,
   {
-    U::with_self(|s| {
+    U::with_self(tcx, |s| {
       self.0.mirgen_simple_intrinsic(s, tcx, instance, mir)
     })
   }

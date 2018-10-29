@@ -73,9 +73,8 @@ pub struct AllocPass;
 
 impl Pass for AllocPass {
   fn pass_type(&self) -> PassType {
-    PassType::Replacer(|tcx, def_id| {
+    PassType::Replacer(|tcx, dd, def_id| {
       let path = with_forced_absolute_paths(|| tcx.item_path_str(def_id) );
-      info!("called on {}", path);
       let info = match &path[..] {
         "alloc::heap::::__rust_alloc" |
         "alloc::alloc::::__rust_alloc" => {
@@ -123,7 +122,7 @@ impl Pass for AllocPass {
         _ => { return None; },
       };
 
-      Some(tcx.as_def_id(info).unwrap())
+      Some(dd.as_def_id(info).unwrap())
     })
   }
 }

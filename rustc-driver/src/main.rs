@@ -49,8 +49,9 @@ impl legionella_intrinsics::DefIdFromKernelId for GeneratorDefIdKernelId {
   }
 }
 impl legionella_intrinsics::GetDefIdFromKernelId for GeneratorDefIdKernelId {
-  fn with_self<F, R>(f: F) -> R
+  fn with_self<'a, 'tcx, F, R>(_tcx: TyCtxt<'a, 'tcx, 'tcx>, f: F) -> R
     where F: FnOnce(&dyn DefIdFromKernelId) -> R,
+          'tcx: 'a,
   {
     f(&GeneratorDefIdKernelId)
   }

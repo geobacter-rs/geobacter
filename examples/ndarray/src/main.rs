@@ -16,7 +16,6 @@ extern crate rustc_driver;
 
 use std::mem::size_of;
 use std::time::Instant;
-use std::sync::atomic::Ordering;
 
 use rand::rngs::SmallRng;
 use rand::{Rng, FromEntropy, };
@@ -36,34 +35,24 @@ use legionella_std::{dispatch_packet,
                      workitem::AxisDimX};
 
 pub type Elem = f32;
-const COUNT: usize = 2*256 * 1024 * 1024;
+const COUNT: usize = 4 * WORKGROUP_SIZE * 1024 * 1024;
 const ITERATIONS: usize = 16;
 const WORKGROUP_X_SIZE: usize = 16;
-const WORKGROUP_Y_SIZE: usize = 4;
+const WORKGROUP_Y_SIZE: usize = 1;
 const WORKGROUP_SIZE: usize = WORKGROUP_X_SIZE * WORKGROUP_Y_SIZE;
 
 pub fn vector_foreach(mut into: nd::ArrayViewMut3<Elem>,
                       value: Elem) {
-  #[address_space = "local"]
-  static mut DATA: [Elem; WORKGROUP_Y_SIZE] = [0.0; WORKGROUP_Y_SIZE];
-
   let mut into = into
     .subview_mut(nd::Axis(0), AxisDimX.workgroup_id());
   let mut into = into
     .subview_mut(nd::Axis(0), AxisDimX.workitem_id());
-  unsafe {
-    for (idx, dest_data) in DATA.iter_mut().enumerate() {
-      *dest_data = into.uget(idx);
-    }
-    ::std::sync::atomic::fence(Ordering::SeqCst);
-    for _ in 0..ITERATIONS {
-      for idx in 0..WORKGROUP_Y_SIZE {
-        DATA[idx] += 1.0;
-        DATA[idx] *= value;
+  for idx in 0..WORKGROUP_Y_SIZE {
+    if let Some(dest) = into.get_mut(idx) {
+      for _ in 0..ITERATIONS {
+        *dest += 1.0;
+        *dest *= value;
       }
-    }
-    for (idx, dest_into) in into.indexed_iter_mut() {
-      *dest_into = DATA.get_unchecked(idx);
     }
   }
 }
@@ -199,7 +188,7 @@ pub fn main() {
       workgroup_size: (WORKGROUP_X_SIZE, ),
       grid_size: (COUNT / WORKGROUP_Y_SIZE, ),
       group_segment_size: 4112,
-      private_segment_size: (WORKGROUP_X_SIZE * 392) as u32,
+      private_segment_size: (WORKGROUP_X_SIZE * 112) as u32,
       scaquire_scope: Some(FenceScope::System),
       screlease_scope: Some(FenceScope::System),
       ordered: true,

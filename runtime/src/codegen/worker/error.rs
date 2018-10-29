@@ -9,6 +9,7 @@ pub enum Error {
   Io(KernelId, io::Error),
   NoCrateMetadata(KernelId),
   Codegen(KernelId),
+  ContextDead,
 }
 
 impl fmt::Display for Error {

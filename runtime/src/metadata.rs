@@ -1,5 +1,4 @@
 
-use std::collections::{HashMap, };
 use std::error::Error;
 use std::io;
 use std::path::{PathBuf, Path};
@@ -8,10 +7,11 @@ use std::{fmt};
 use std::ops::{Deref};
 use std::sync::{Arc, };
 
-use rustc_data_structures::sync::{Lock, RwLock, Lrc};
-use rustc_data_structures::owning_ref::{OwningRef, ErasedBoxRef};
+use rustc_data_structures::fx::{FxHashMap, };
+use rustc_data_structures::sync::{Lock, RwLock, Lrc, MetadataRef, };
+use rustc_data_structures::owning_ref::{OwningRef, };
 use rustc::hir::def_id::{CrateNum,};
-use rustc::{self, session};
+use rustc::middle::cstore::MetadataLoader;
 use rustc_metadata::cstore::{self, MetadataBlob, CStore, };
 use rustc_metadata::schema::{self, METADATA_HEADER};
 use rustc::mir::interpret::AllocDecodingState;
@@ -76,11 +76,10 @@ pub struct CrateNameHash {
 }
 
 pub struct CrateMetadataLoader {
-  name_to_blob: HashMap<CrateNameHash, (CrateSource, String,
-                                        SharedMetadataBlob)>,
+  name_to_blob: FxHashMap<CrateNameHash, (CrateSource, String, SharedMetadataBlob)>,
 
-  crate_nums: HashMap<CrateNameHash, CrateNum>,
-  roots: HashMap<CrateNameHash, Option<schema::CrateRoot>>,
+  crate_nums: FxHashMap<CrateNameHash, CrateNum>,
+  roots: FxHashMap<CrateNameHash, Option<schema::CrateRoot>>,
 }
 impl CrateMetadataLoader {
   fn process_crate_metadata(&mut self,
@@ -119,16 +118,15 @@ impl CrateMetadataLoader {
     (cnum, name, true)
   }
 
-  pub fn build(&mut self,
-               allmd: &[Metadata],
-               sess: &session::Session,
+  pub fn build(&mut self, allmd: Vec<Metadata>,
                cstore: &CStore)
     -> Result<CrateMetadata, String>
   {
+    use std::collections::hash_map::Entry;
     let mut out = CrateMetadata::default();
 
     self.name_to_blob.clear();
-    'outer: for object in allmd.iter() {
+    'outer: for mut object in allmd.into_iter() {
       info!("scanning object {:?}", object.src);
       // First we need to find the owning crate for this object and
       // see if it is a rustc plugin. If so, we must skip it!
@@ -139,7 +137,7 @@ impl CrateMetadataLoader {
         continue 'outer;
       }
 
-      for &(ref symbol_name, ref dep_blob) in object.all.iter() {
+      for (symbol_name, dep_blob) in object.all.drain(..) {
         info!("parsing metadata from {}", symbol_name);
         let root = dep_blob.get_root();
         let name = CrateNameHash {
@@ -149,15 +147,13 @@ impl CrateMetadataLoader {
 
         let value = (object.src.clone(),
                      symbol_name.clone(),
-                     dep_blob.clone());
-        if self.name_to_blob.get(&name).is_none() {
-          self.name_to_blob.insert(name, value);
+                     dep_blob);
+        match self.name_to_blob.entry(name) {
+          Entry::Occupied(_) => { },
+          Entry::Vacant(mut v) => {
+            v.insert(value);
+          },
         }
-        /*if let Some(prev) = prev {
-          // this is expected from `compiler_builtins`
-          warn!("duplicate! first from {}, second from {}",
-                prev.0.display(), object.src.display());
-        }*/
       }
     }
 
@@ -172,7 +168,7 @@ impl CrateMetadataLoader {
       .collect();
 
     for name in required_names.into_iter() {
-      self.build_impl(sess, name, &mut out,
+      self.build_impl(name, &mut out,
                       cstore)?;
     }
 
@@ -182,7 +178,6 @@ impl CrateMetadataLoader {
   }
 
   fn build_impl(&mut self,
-                sess: &session::Session,
                 what: CrateNameHash,
                 into: &mut CrateMetadata,
                 cstore: &CStore)
@@ -245,7 +240,7 @@ impl CrateMetadataLoader {
           },
         }
 
-        let cnum = self.build_impl(sess, name,
+        let cnum = self.build_impl(name,
                                    into, cstore)?;
         map.push(cnum);
       }
@@ -257,7 +252,7 @@ impl CrateMetadataLoader {
 
     let def_path_table = root
       .def_path_table
-      .decode((&*shared_krate, sess));
+      .decode(&*shared_krate);
 
     let interpret_alloc_index: Vec<u32> = root
       .interpret_alloc_index
@@ -266,7 +261,7 @@ impl CrateMetadataLoader {
 
     let trait_impls = root
       .impls
-      .decode((&*shared_krate, sess))
+      .decode(&*shared_krate)
       .map(|impls| (impls.trait_id, impls.impls) )
       .collect();
 
@@ -279,7 +274,7 @@ impl CrateMetadataLoader {
       trait_impls,
       proc_macros: None,
       root,
-      blob: shared_krate.unwrap(),
+      blob: shared_krate.clone().unwrap(), // XXX cloned
       cnum_map,
       cnum,
       dependencies: Lock::new(dependencies),
@@ -329,7 +324,7 @@ impl SharedMetadataBlob {
     let inner = OwningRef::new(data.clone());
     let inner = inner.map(|v| &v[..] )
       .map_owner_box()
-      .erase_owner();
+      .erase_send_sync_owner();
     MetadataBlob(inner)
   }
 
@@ -455,7 +450,7 @@ impl Metadata {
   pub fn owner_symbol(&self) -> &str {
     self.all[self.owner_index].0.as_str()
   }
-  pub fn owner_blob(&self) -> &SharedMetadataBlob {
+  pub fn owner_blob(&self) -> &MetadataBlob {
     &self.all[self.owner_index].1
   }
 }
@@ -466,16 +461,16 @@ const METADATA_SECTION_NAME: &'static str = ".rustc";
 const METADATA_SECTION_NAME: &'static str = "__DATA,.rustc";
 
 pub struct DummyMetadataLoader;
-impl rustc::middle::cstore::MetadataLoader for DummyMetadataLoader {
+impl MetadataLoader for DummyMetadataLoader {
   fn get_rlib_metadata(&self,
                        _target: &rustc_target::spec::Target,
-                       _filename: &Path) -> Result<ErasedBoxRef<[u8]>, String>
+                       _filename: &Path) -> Result<MetadataRef, String>
   {
     Err("this should never be called".into())
   }
   fn get_dylib_metadata(&self,
                         _target: &rustc_target::spec::Target,
-                        _filename: &Path) -> Result<ErasedBoxRef<[u8]>, String>
+                        _filename: &Path) -> Result<MetadataRef, String>
   {
     Err("this should never be called".into())
   }

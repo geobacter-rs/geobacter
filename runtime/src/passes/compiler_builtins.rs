@@ -14,7 +14,7 @@ pub struct CompilerBuiltinsReplacerPass;
 
 impl Pass for CompilerBuiltinsReplacerPass {
   fn pass_type(&self) -> PassType {
-    PassType::Replacer(|tcx, def_id| {
+    PassType::Replacer(|tcx, dd, def_id| {
       let path = with_forced_absolute_paths(|| tcx.item_path_str(def_id) );
       let info = match &path[..] {
         "core::slice::::memcmp" => {
@@ -23,7 +23,7 @@ impl Pass for CompilerBuiltinsReplacerPass {
         _ => { return None; },
       };
 
-      Some(tcx.as_def_id(info).unwrap())
+      Some(dd.as_def_id(info).unwrap())
     })
   }
 }
