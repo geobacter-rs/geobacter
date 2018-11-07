@@ -11,6 +11,8 @@ extern "rust-intrinsic" {
   fn __legionella_dispatch_ptr() -> *const u8;
 }
 
+#[derive(Clone, Copy)]
+#[repr(transparent)]
 pub struct DispatchPacket(pub(crate) &'static hsa_rt::ffi::hsa_kernel_dispatch_packet_t);
 
 pub fn dispatch_packet() -> DispatchPacket {

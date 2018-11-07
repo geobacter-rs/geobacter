@@ -5,6 +5,7 @@ use std::fmt;
 use std::intrinsics::atomic_store_rel;
 use std::marker::PhantomData;
 use std::mem::{transmute, transmute_copy, };
+use std::ops::{Deref, DerefMut, };
 use std::slice::from_raw_parts_mut;
 
 use nd::{self, Dimension, };
@@ -144,22 +145,20 @@ impl<T> SoftQueue<T>
   }
 }
 
-pub struct Queue {
-  sys: RawQueue,
+pub struct Queue<T>
+  where T: QueueKind,
+{
+  sys: T,
   _callback_data: Option<Box<Any>>,
   _ctxt: ApiContext,
 }
 impl Agent {
   pub fn new_kernel_queue(&self, size: usize,
-                          queue_type: QueueType,
                           private_segment_size: Option<u32>,
                           group_segment_size: Option<u32>)
-    -> Result<Queue, Box<Error>>
+    -> Result<Queue<SingleQueueType>, Box<Error>>
   {
-    let queue_type = match queue_type {
-      QueueType::Single => ffi::hsa_queue_type_t_HSA_QUEUE_TYPE_SINGLE,
-      QueueType::Multiple => ffi::hsa_queue_type_t_HSA_QUEUE_TYPE_MULTI,
-    };
+    let queue_type = ffi::hsa_queue_type_t_HSA_QUEUE_TYPE_SINGLE;
     let private_segment_size = private_segment_size
       .unwrap_or(u32::max_value());
     let group_segment_size = group_segment_size
@@ -173,17 +172,41 @@ impl Agent {
                                      &mut out as *mut _))?;
 
     Ok(Queue {
-      sys: RawQueue(out),
+      sys: SingleQueueType(RawQueue(out)),
       _callback_data: None,
       _ctxt: ApiContext::upref(),
     })
   }
+  pub fn new_kernel_multi_queue(&self, size: usize,
+                                private_segment_size: Option<u32>,
+                                group_segment_size: Option<u32>)
+    -> Result<Queue<MultiQueueType>, Box<Error>>
+  {
+    let queue_type = ffi::hsa_queue_type_t_HSA_QUEUE_TYPE_MULTI;
+    let private_segment_size = private_segment_size
+      .unwrap_or(u32::max_value());
+    let group_segment_size = group_segment_size
+      .unwrap_or(u32::max_value());
+    let callback_data_ptr = 0 as *mut _;
+
+    let mut out: *mut ffi::hsa_queue_t = unsafe { ::std::mem::uninitialized() };
+    check_err!(ffi::hsa_queue_create(self.0, 1 << size, queue_type,
+                                     None, callback_data_ptr,
+                                     private_segment_size, group_segment_size,
+                                     &mut out as *mut _))?;
+
+    Ok(Queue {
+      sys: MultiQueueType(RawQueue(out)),
+      _callback_data: None,
+      _ctxt: ApiContext::upref(),
+    })
+  }
+
   pub fn new_queue<F>(&self, size: usize,
-                      queue_type: QueueType,
                       callback: Option<F>,
                       private_segment_size: Option<u32>,
                       group_segment_size: Option<u32>)
-                      -> Result<Queue, Box<Error>>
+                      -> Result<Queue<SingleQueueType>, Box<Error>>
     where F: FnMut() + 'static,
   {
     extern "C" fn callback_fn(_status: ffi::hsa_status_t,
@@ -193,10 +216,7 @@ impl Agent {
       // no unimplemented!(): panics across ffi bounds are undefined.
     }
 
-    let queue_type = match queue_type {
-      QueueType::Single => ffi::hsa_queue_type_t_HSA_QUEUE_TYPE_SINGLE,
-      QueueType::Multiple => ffi::hsa_queue_type_t_HSA_QUEUE_TYPE_MULTI,
-    };
+    let queue_type = ffi::hsa_queue_type_t_HSA_QUEUE_TYPE_SINGLE;
     let callback_ffi_fn = callback
       .as_ref()
       .map(|_| callback_fn as _);
@@ -223,14 +243,63 @@ impl Agent {
                                      &mut out as *mut _))?;
 
     Ok(Queue {
-      sys: RawQueue(out),
+      sys: SingleQueueType(RawQueue(out)),
+      _callback_data: callback_data
+        .map(|cb| cb as Box<Any>),
+      _ctxt: ApiContext::upref(),
+    })
+  }
+  pub fn new_multi_queue<F>(&self, size: usize,
+                            callback: Option<F>,
+                            private_segment_size: Option<u32>,
+                            group_segment_size: Option<u32>)
+                            -> Result<Queue<MultiQueueType>, Box<Error>>
+    where F: FnMut() + 'static,
+  {
+    extern "C" fn callback_fn(_status: ffi::hsa_status_t,
+                              _queue: *mut ffi::hsa_queue_t,
+                              _data: *mut c_void) {
+      // TODO
+      // no unimplemented!(): panics across ffi bounds are undefined.
+    }
+
+    let queue_type = ffi::hsa_queue_type_t_HSA_QUEUE_TYPE_SINGLE;
+    let callback_ffi_fn = callback
+      .as_ref()
+      .map(|_| callback_fn as _);
+    let private_segment_size = private_segment_size
+      .unwrap_or(u32::max_value());
+    let group_segment_size = group_segment_size
+      .unwrap_or(u32::max_value());
+    let mut callback_data = callback
+      .map(|cb| Box::new(cb));
+    let callback_data_ptr = callback_data
+      .as_mut()
+      .map(|v| {
+        let v: &mut *mut c_void = unsafe {
+          transmute(v)
+        };
+        *v
+      })
+      .unwrap_or(0 as *mut _);
+
+    let mut out: *mut ffi::hsa_queue_t = unsafe { ::std::mem::uninitialized() };
+    check_err!(ffi::hsa_queue_create(self.0, 1 << size, queue_type,
+                                     callback_ffi_fn, callback_data_ptr,
+                                     private_segment_size, group_segment_size,
+                                     &mut out as *mut _))?;
+
+    Ok(Queue {
+      sys: MultiQueueType(RawQueue(out)),
       _callback_data: callback_data
         .map(|cb| cb as Box<Any>),
       _ctxt: ApiContext::upref(),
     })
   }
 }
-impl Queue {
+impl<T> Queue<T>
+  where T: QueueKind,
+{
   fn doorbell_ref(&self) -> SignalRef {
     SignalRef(unsafe {
       (*self.sys.0).doorbell_signal
@@ -362,8 +431,9 @@ impl ApiContext {
   }
 }
 
+#[doc(hidden)]
 #[derive(Eq, PartialEq, Ord, PartialOrd)]
-struct RawQueue(*mut ffi::hsa_queue_t);
+pub struct RawQueue(*mut ffi::hsa_queue_t);
 impl fmt::Debug for RawQueue {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     write!(f, "{:p}", self.0)
@@ -419,6 +489,36 @@ impl Drop for RawQueue {
   }
 }
 
+pub trait QueueKind: Deref<Target = RawQueue> + DerefMut { }
+#[derive(Eq, PartialEq, Ord, PartialOrd)]
+pub struct SingleQueueType(RawQueue);
+unsafe impl Send for SingleQueueType { }
+impl !Sync for SingleQueueType { }
+impl Deref for SingleQueueType {
+  type Target = RawQueue;
+  fn deref(&self) -> &Self::Target { &self.0 }
+}
+impl DerefMut for SingleQueueType {
+  fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+}
+impl QueueKind for SingleQueueType { }
+
+#[derive(Eq, PartialEq, Ord, PartialOrd)]
+pub struct MultiQueueType(RawQueue);
+unsafe impl Send for MultiQueueType { }
+unsafe impl Sync for MultiQueueType { }
+impl Deref for MultiQueueType {
+  type Target = RawQueue;
+  fn deref(&self) -> &Self::Target { &self.0 }
+}
+impl DerefMut for MultiQueueType {
+  fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+}
+impl QueueKind for MultiQueueType { }
+
+pub type SingleQueue = Queue<SingleQueueType>;
+pub type MultiQueue = Queue<MultiQueueType>;
+
 #[derive(Debug)]
 pub struct DispatchPacket<'a, WGDim, GridDim, KernArg>
   where WGDim: nd::IntoDimension,
@@ -444,14 +544,22 @@ pub struct DispatchCompletion<'a, KernArg> {
 }
 
 impl<'a, KernArg> DispatchCompletion<'a, KernArg> {
-  pub fn wait(self) {
+  pub fn wait(self, wait_state: WaitState) {
     // run our dtor.
+    loop {
+      let val = self.completion_signal
+        .wait_scacquire(ConditionOrdering::Equal,
+                        0, None, wait_state.clone());
+      debug!("completion signal wakeup: {}", val);
+      if val == 0 { break; }
+    }
   }
 }
 // The dispatch must complete before buffers are dropped and
 // deallocated
 impl<'a, KernArg> Drop for DispatchCompletion<'a, KernArg> {
   fn drop(&mut self) {
+    if self.completion_signal.load_scacquire() == 0 { return; }
     loop {
       let val = self.completion_signal
         .wait_scacquire(ConditionOrdering::Equal,
@@ -532,3 +640,10 @@ impl<'a, T> AgentPacket<'a, T>
     }
   }
 }
+
+unsafe impl<T> Send for Queue<T>
+  where T: QueueKind + Send,
+{ }
+unsafe impl<T> Sync for Queue<T>
+  where T: QueueKind + Sync,
+{ }

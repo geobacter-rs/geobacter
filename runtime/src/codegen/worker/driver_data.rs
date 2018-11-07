@@ -1,4 +1,3 @@
-use std::any::Any;
 use std::sync::{Weak, };
 
 use rustc::hir::def_id::{DefId, };

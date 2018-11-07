@@ -1,0 +1,27 @@
+[package]
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+edition = "2018"
+name = "fractal"
+version = "0.1.0"
+
+[dependencies]
+env_logger = "0.5.5"
+log = "=0.4.4"
+ndarray = "0.10.12"
+rand = "0.5.5"
+lodepng = "2.0.0"
+
+[dependencies.hsa-core]
+path = "../../hsa-core"
+
+[dependencies.hsa-rt]
+path = "../../hsa-rt"
+
+[dependencies.hsa-rt-sys]
+path = "../../hsa-rt-sys"
+
+[dependencies.runtime]
+path = "../../runtime"
+
+[dependencies.legionella-std]
+path = "../../legionella-std"

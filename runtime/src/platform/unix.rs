@@ -44,6 +44,7 @@ pub fn dylib_search_paths() -> Result<Vec<PathBuf>, Box<Error>> {
   Ok(split_paths(&paths).collect())
 }
 
+#[allow(dead_code)]
 pub fn locate_dylib<T>(name: T, hash: u64) -> Result<Option<PathBuf>, Box<Error>>
   where T: Display,
 {

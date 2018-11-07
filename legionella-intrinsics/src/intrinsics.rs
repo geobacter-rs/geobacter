@@ -79,15 +79,6 @@ impl AxisId {
 
     out
   }
-  fn rustc_intrinsic(&self, arch: &str) -> Option<String> {
-    match arch {
-      "amdgpu" => {
-        Some(format!("amdgpu_{}_{}_id", self.block, self.dim))
-      },
-      "nvptx" | "nvptx64" => unimplemented!(),
-      _ => None,
-    }
-  }
   fn kernel_id(&self, arch: Option<Arch>) -> Option<KernelId> {
     match arch {
       Some(Arch::AmdGpu) => Some(match self {
@@ -157,7 +148,7 @@ impl LegionellaCustomIntrinsicMirGen for AxisId {
   fn mirgen_simple_intrinsic<'a, 'tcx>(&self,
                                        kid_did: &dyn DefIdFromKernelId,
                                        tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                       instance: ty::Instance<'tcx>,
+                                       _instance: ty::Instance<'tcx>,
                                        mir: &mut mir::Mir<'tcx>)
     where 'tcx: 'a,
   {
@@ -215,7 +206,7 @@ impl LegionellaCustomIntrinsicMirGen for DispatchPtr {
   fn mirgen_simple_intrinsic<'a, 'tcx>(&self,
                                        kid_did: &dyn DefIdFromKernelId,
                                        tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                       instance: ty::Instance<'tcx>,
+                                       _instance: ty::Instance<'tcx>,
                                        mir: &mut mir::Mir<'tcx>)
     where 'tcx: 'a,
   {
@@ -419,7 +410,7 @@ fn redirect_or_panic<'a, 'tcx, F>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     from_hir_call: false,
   };
   mir.basic_blocks_mut().push(bb);
-  let mut bb = mir::BasicBlockData {
+  let bb = mir::BasicBlockData {
     statements: Vec::new(),
     terminator: Some(mir::Terminator {
       source_info: source_info.clone(),

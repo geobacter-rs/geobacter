@@ -1,6 +1,4 @@
 
-use nd;
-
 use DispatchPacket;
 
 extern "rust-intrinsic" {
@@ -62,7 +60,7 @@ impl WorkItemAxis for AxisDimZ {
 
 pub trait WorkGroupAxis {
   fn workgroup_id(&self) -> usize;
-  fn workgroup_size(&self, p: &DispatchPacket) -> usize;
+  fn workgroup_size(&self, p: DispatchPacket) -> usize;
 }
 impl WorkGroupAxis for AxisDim {
   fn workgroup_id(&self) -> usize {
@@ -72,7 +70,7 @@ impl WorkGroupAxis for AxisDim {
       &AxisDim::Z => AxisDimZ.workgroup_id(),
     }
   }
-  fn workgroup_size(&self, p: &DispatchPacket) -> usize {
+  fn workgroup_size(&self, p: DispatchPacket) -> usize {
     match self {
       &AxisDim::X => AxisDimX.workgroup_size(p),
       &AxisDim::Y => AxisDimY.workgroup_size(p),
@@ -84,7 +82,7 @@ impl WorkGroupAxis for AxisDimX {
   fn workgroup_id(&self) -> usize {
     unsafe { __legionella_workgroup_x_id() as usize }
   }
-  fn workgroup_size(&self, p: &DispatchPacket) -> usize {
+  fn workgroup_size(&self, p: DispatchPacket) -> usize {
     p.0.workgroup_size_x as usize
   }
 }
@@ -92,7 +90,7 @@ impl WorkGroupAxis for AxisDimY {
   fn workgroup_id(&self) -> usize {
     unsafe { __legionella_workgroup_y_id() as usize }
   }
-  fn workgroup_size(&self, p: &DispatchPacket) -> usize {
+  fn workgroup_size(&self, p: DispatchPacket) -> usize {
     p.0.workgroup_size_y as usize
   }
 }
@@ -100,15 +98,15 @@ impl WorkGroupAxis for AxisDimZ {
   fn workgroup_id(&self) -> usize {
     unsafe { __legionella_workgroup_z_id() as usize }
   }
-  fn workgroup_size(&self, p: &DispatchPacket) -> usize {
+  fn workgroup_size(&self, p: DispatchPacket) -> usize {
     p.0.workgroup_size_z as usize
   }
 }
 pub trait GridAxis {
-  fn grid_size(&self, p: &DispatchPacket) -> usize;
+  fn grid_size(&self, p: DispatchPacket) -> usize;
 }
 impl GridAxis for AxisDim {
-  fn grid_size(&self, p: &DispatchPacket) -> usize {
+  fn grid_size(&self, p: DispatchPacket) -> usize {
     match self {
       &AxisDim::X => AxisDimX.grid_size(p),
       &AxisDim::Y => AxisDimY.grid_size(p),
@@ -117,17 +115,17 @@ impl GridAxis for AxisDim {
   }
 }
 impl GridAxis for AxisDimX {
-  fn grid_size(&self, p: &DispatchPacket) -> usize {
+  fn grid_size(&self, p: DispatchPacket) -> usize {
     p.0.grid_size_x as usize
   }
 }
 impl GridAxis for AxisDimY {
-  fn grid_size(&self, p: &DispatchPacket) -> usize {
+  fn grid_size(&self, p: DispatchPacket) -> usize {
     p.0.grid_size_y as usize
   }
 }
 impl GridAxis for AxisDimZ {
-  fn grid_size(&self, p: &DispatchPacket) -> usize {
+  fn grid_size(&self, p: DispatchPacket) -> usize {
     p.0.grid_size_z as usize
   }
 }
@@ -200,7 +198,7 @@ impl<T> WorkDims<T>
 }
 
 impl DispatchPacket {
-  pub fn work_dims(&self) -> WorkDims<()> {
+  pub fn work_dims(self) -> WorkDims<()> {
     let dims = self.0.setup as u16;
     unsafe { ::core::intrinsics::assume(dims <= 3 && dims > 0) };
 
@@ -211,21 +209,21 @@ impl DispatchPacket {
       _ => unreachable!("dims is out of range: {:?}", dims),
     }
   }
-  pub fn workgroup_size(&self) -> [usize; 3] {
+  pub fn workgroup_size(self) -> [usize; 3] {
     [
       AxisDimX.workgroup_size(self),
       AxisDimY.workgroup_size(self),
       AxisDimZ.workgroup_size(self),
     ]
   }
-  pub fn grid_size(&self) -> [usize; 3] {
+  pub fn grid_size(self) -> [usize; 3] {
     [
       AxisDimX.grid_size(self),
       AxisDimY.grid_size(self),
       AxisDimZ.grid_size(self),
     ]
   }
-  pub fn global_linear_id(&self) -> usize {
+  pub fn global_linear_id(self) -> usize {
     let [l0, l1, l2] = workitem_id();
     let [g0, g1, g2] = workgroup_id();
     let [s0, s1, s2] = self.workgroup_size();
@@ -236,16 +234,16 @@ impl DispatchPacket {
     let i2 = g2 * s2 + l2;
     (i2 * n1 + i1) * n0 + i0
   }
-  pub fn global_id_x(&self) -> usize {
+  pub fn global_id_x(self) -> usize {
     self.global_id(AxisDimX)
   }
-  pub fn global_id_y(&self) -> usize {
+  pub fn global_id_y(self) -> usize {
     self.global_id(AxisDimY)
   }
-  pub fn global_id_z(&self) -> usize {
+  pub fn global_id_z(self) -> usize {
     self.global_id(AxisDimZ)
   }
-  pub fn global_id<T>(&self, axis: T) -> usize
+  pub fn global_id<T>(self, axis: T) -> usize
     where T: WorkItemAxis + WorkGroupAxis,
   {
     let l = axis.workitem_id();
@@ -253,7 +251,7 @@ impl DispatchPacket {
     let s = axis.workgroup_size(self);
     g * s + l
   }
-  pub fn global_id_dim(&self) -> (usize, usize, usize) {
+  pub fn global_id_dim(self) -> (usize, usize, usize) {
     (self.global_id_x(), self.global_id_y(), self.global_id_z())
   }
 }

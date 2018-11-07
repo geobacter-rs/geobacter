@@ -90,6 +90,7 @@ pub fn checkout_repo(dest: &Path, repo_url: &str,
   Ok(())
 }
 
+#[allow(dead_code)]
 pub fn checkout_or_override(dest_path: &Path,
                             over: Option<&PathBuf>,
                             repo_url: &str,
@@ -111,7 +112,7 @@ pub fn checkout_or_override(dest_path: &Path,
 
   Ok(())
 }
-
+#[allow(dead_code)]
 pub fn checkout_repo_commit(dest: &Path,
                             repo_url: &str, commit: &str)
   -> Result<(), Box<Error>>

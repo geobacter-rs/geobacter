@@ -1,7 +1,9 @@
 
 use std::error::Error;
 use std::ffi::{OsStr, };
-use std::sync::{Arc, RwLock, Weak, };
+use std::marker::PhantomData;
+use std::sync::{Arc, RwLock, Weak, atomic::AtomicUsize,
+                atomic::Ordering, };
 use std::path::{Component};
 
 use rustc_metadata::cstore::CStore;
@@ -11,7 +13,9 @@ use syntax;
 use indexvec::{Idx, IndexVec};
 
 use hsa_core::kernel::KernelId;
-use hsa_rt::agent::{DeviceType, };
+use hsa_rt::agent::{DeviceType, Profiles, DefaultFloatRoundingModes, };
+use hsa_rt::code_object::CodeObjectReaderRef;
+use hsa_rt::executable::{FrozenExecutable, Executable, CommonExecutable, };
 
 use {Accelerator, AcceleratorId, AcceleratorTargetDesc, };
 use metadata::{Metadata, MetadataLoadingError, CrateSource, CrateNameHash,
@@ -26,6 +30,8 @@ use utils::{HashMap, new_hash_set, };
 pub use rustc::session::config::OutputType;
 
 type Translators = HashMap<Arc<AcceleratorTargetDesc>, CodegenUnsafeSyncComms>;
+type CodegenCacheKey = (Arc<AcceleratorTargetDesc>, KernelId);
+type CodegenCache = HashMap<CodegenCacheKey, Arc<CodegenResults>>;
 
 const FRAMEWORK_DATA_SUBDIR: &'static str = ".legionella";
 
@@ -43,6 +49,7 @@ pub struct ContextDataMut {
   accelerators: IndexVec<AcceleratorId, Option<Arc<Accelerator>>>,
 
   translators: Translators,
+  codegen_cache: CodegenCache,
   // Only None during initialization.
   host_codegen: Option<CodegenComms>,
 }
@@ -162,11 +169,10 @@ impl Context {
 
     let mut accelerators = IndexVec::with_capacity(agents.len() + 1);
     let mut local_accels = Vec::with_capacity(agents.len() + 1);
-    let mut translators: Translators = Default::default();
+    let translators: Translators = Default::default();
 
     let host = Arc::new(HostAccel::new(AcceleratorId::new(0), host)?);
     let host_target_desc = host.accel_target_desc()?;
-    let host_target_desc = Arc::new(host_target_desc);
 
     let host = host as Arc<Accelerator>;
 
@@ -177,6 +183,7 @@ impl Context {
       accelerators,
       local_accels,
       translators,
+      codegen_cache: Default::default(),
       host_codegen: None,
     };
     let data = ContextData {
@@ -302,7 +309,7 @@ impl Context {
     Ok(r)
   }
   pub fn manually_compile(&self, accel: &Arc<Accelerator>, id: KernelId)
-    -> Result<CodegenResults, Box<Error>>
+    -> Result<Arc<CodegenResults>, Box<Error>>
   {
     use std::fs::File;
     use std::io::{Read, Write, };
@@ -312,6 +319,18 @@ impl Context {
 
     use tempdir::TempDir;
 
+    let target_desc = accel.accel_target_desc()?;
+    let cache_key = (target_desc.clone(), id);
+    {
+      let read = self.0.m.read()
+        .map_err(|_| {
+          "poisoned lock!"
+        })?;
+      if let Some(entry) = read.codegen_cache.get(&cache_key) {
+        return Ok(entry.clone());
+      }
+    }
+
     let codegen = accel
       .get_codegen()
       .ok_or_else(|| {
@@ -320,8 +339,6 @@ impl Context {
 
     let host = accel.host_accel()
       .and_then(|host| host.get_codegen() );
-
-    let target_desc = accel.accel_target_desc()?;
 
     let objs = if let Some(builder) = accel.device_libs_builder() {
       // create the target specific cache dir:
@@ -346,7 +363,6 @@ impl Context {
 
     let mut codegen = codegen.codegen(id, host)?;
 
-    let obj_len;
     let tdir = TempDir::new("link-compilation")?;
     let obj_filename = tdir.path().join("obj.bc");
     {
@@ -354,7 +370,6 @@ impl Context {
 
       let obj = codegen.outputs.remove(&OutputType::Object)
         .expect("no object output");
-      obj_len = obj.len();
 
       out.write_all(&obj[..])?;
     }
@@ -409,18 +424,25 @@ impl Context {
 
     tdir.into_path();
 
-    let mut elf = Vec::with_capacity(obj_len);
+    let mut elf = Vec::new();
     {
       let mut file = File::open(&elf_filename)?;
       file.read_to_end(&mut elf)?;
     }
 
-    {
-      let mut file = File::create(elf_filename.file_name().unwrap())?;
-      file.write_all(elf.as_ref())?;
-    }
-
     codegen.outputs.insert(OutputType::Exe, elf);
+
+    let codegen = Arc::new(codegen);
+    let mut write = self.0.m.write()
+      .map_err(|_| {
+        "poisoned lock!"
+      })?;
+    // don't check to see if the entry already exists
+    // (we could race in this function, if called, uhm, manually),
+    // just replace the value.
+    // `ModuleData::compile` uses a per-function lock, so this can't
+    // race there.
+    write.codegen_cache.insert(cache_key, codegen.clone());
 
     Ok(codegen)
   }
@@ -436,8 +458,7 @@ impl ContextDataMut {
   {
     use std::collections::hash_map::Entry;
 
-    let desc = accel.accel_target_desc()?;
-    let accel_desc = Arc::new(desc);
+    let accel_desc = accel.accel_target_desc()?;
     match self.translators.entry(accel_desc.clone()) {
       Entry::Occupied(o) => {
         let comms: CodegenComms = o.get().clone_into();
@@ -455,6 +476,17 @@ impl ContextDataMut {
   }
 }
 
+impl PartialEq for Context {
+  fn eq(&self, rhs: &Self) -> bool {
+    Arc::ptr_eq(&self.0, &rhs.0)
+  }
+}
+impl<'a> PartialEq<&'a Context> for Context {
+  fn eq(&self, rhs: &&Self) -> bool {
+    Arc::ptr_eq(&self.0, &rhs.0)
+  }
+}
+
 #[derive(Clone)]
 pub struct WeakContext(Weak<ContextData>);
 
@@ -467,3 +499,233 @@ impl WeakContext {
       .map(|v| Context(v) )
   }
 }
+
+pub(crate) struct Kernel {
+  pub(crate) main_object: u64,
+  pub(crate) group_segment_size: u32,
+  pub(crate) kernarg_segment_size: u32,
+  pub(crate) kernarg_segment_align: u32,
+  pub(crate) private_segment_size: u32,
+  pub(crate) exe: FrozenExecutable,
+}
+
+pub(crate) struct ModuleData(KernelId, WeakContext, RwLock<ModuleData_>);
+impl ModuleData {
+  pub(crate) fn compile(&self, context: &Context,
+                        accel: &Arc<Accelerator>)
+    -> Result<Arc<Kernel>, Box<Error>>
+  {
+    {
+      let read = self.2.read()
+        .map_err(|_| {
+          "poisoned lock!"
+        })?;
+      let entry = read.exes.get(accel.id());
+      if let Some(kernel) = entry.and_then(|v| v.as_ref() ) {
+        return Ok(kernel.clone());
+      }
+    }
+
+    // XXX this is not ideal: compiling the same kernel for different
+    // accels will be serialized.
+    let mut write = self.2.write()
+      .map_err(|_| {
+        "poisoned lock!"
+      })?;
+    // check to see if our work was done by someone else:
+    {
+      let entry = write.exes.get(accel.id());
+      if let Some(kernel) = entry.and_then(|v| v.as_ref() ) {
+        return Ok(kernel.clone());
+      }
+    }
+
+    let codegen = context.manually_compile(accel, self.0)?;
+    // XXX hardcoded.
+    let profiles = Profiles::base();
+    let rounding_mode = DefaultFloatRoundingModes::near();
+    let exe = Executable::new(profiles, rounding_mode, "")?;
+
+    let agent = accel.agent();
+
+    {
+      let exe_bin = codegen.outputs.get(&OutputType::Exe).unwrap();
+      let exe_reader = CodeObjectReaderRef::new(exe_bin.as_ref())
+        .expect("CodeObjectReaderRef::new");
+
+      exe.load_agent_code_object(agent, &exe_reader, "")?;
+    }
+    let exe = exe.freeze("")?;
+
+    let props = {
+      let symbols = exe.agent_symbols(agent)?;
+      let kernel_symbol = symbols.into_iter()
+        .filter(|symbol| symbol.is_kernel())
+        .find(|symbol| {
+          match symbol.name() {
+            Ok(ref n) if n == &codegen.kernel_symbol => true,
+            Ok(n) => {
+              info!("ignoring symbol {}", n);
+              false
+            },
+            Err(_) => {
+              warn!("unnamed symbol; skipping");
+              false
+            },
+          }
+        })
+        .ok_or_else(|| {
+          format!("failed to find {}", codegen.kernel_symbol)
+        })?;
+      (kernel_symbol.kernel_object()?
+        .ok_or_else(|| "unexpected 0 for kernel object id" )?,
+       kernel_symbol.kernel_group_segment_size()? as _,
+       kernel_symbol.kernel_kernarg_segment_size()? as _,
+       kernel_symbol.kernel_kernarg_segment_align()? as _,
+       kernel_symbol.kernel_private_segment_size()? as _)
+    };
+
+    let (main_object, group_size, kernarg_size,
+      kernarg_align, private_size) = props;
+
+    #[derive(Debug)]
+    struct KernelProps {
+      group_size: u32,
+      kernarg_size: u32,
+      kernarg_align: u32,
+      private_size: u32,
+    }
+    let props = KernelProps {
+      group_size,
+      kernarg_size,
+      kernarg_align,
+      private_size,
+    };
+
+    info!("kernel `{}` props: {:#?}", codegen.kernel_symbol,
+          props);
+
+    let kernel = Kernel {
+      main_object,
+      group_segment_size: group_size,
+      kernarg_segment_size: kernarg_size,
+      kernarg_segment_align: kernarg_align,
+      private_segment_size: private_size,
+      exe,
+    };
+    let kernel = Arc::new(kernel);
+    if write.exes.len() < accel.id().index() {
+      write.exes.resize(accel.id().index() + 1, None);
+    }
+    write.exes[accel.id()] = Some(kernel.clone());
+    Ok(kernel)
+  }
+}
+#[derive(Default)]
+pub(crate) struct ModuleData_ {
+  exes: IndexVec<AcceleratorId, Option<Arc<Kernel>>>,
+}
+pub(crate) struct ModuleContextData<Args, Ret>(&'static AtomicUsize,
+                                               PhantomData<(Args, Ret)>);
+
+impl<Args, Ret> ModuleContextData<Args, Ret> {
+  pub fn upgrade(&self, context: &Context) -> Option<Arc<ModuleData>> {
+    let ptr_usize = self.0.load(Ordering::Acquire);
+    if ptr_usize == 0 { return None; }
+    let ptr = ptr_usize as *const ModuleData;
+
+    let arc = unsafe { Arc::from_raw(ptr) };
+    let arc_clone = arc.clone();
+    // don't downref the global arc:
+    Arc::into_raw(arc);
+
+    let arc = arc_clone;
+    let expected_context = arc.1.upgrade();
+    if expected_context.is_none() { return None; }
+    let expected_context = expected_context.unwrap();
+    assert!(expected_context == context,
+            "there are two context's live at the same time");
+
+    Some(arc)
+  }
+
+  pub fn get_cache_data(&self, kernel_id: KernelId, context: &Context)
+    -> Arc<ModuleData>
+  {
+    use std::intrinsics::unlikely;
+
+    let mut cached = self.upgrade(context);
+    if unsafe { unlikely(cached.is_none()) } {
+      let data = RwLock::new(Default::default());
+      let data = ModuleData(kernel_id, context.downgrade_ref(), data);
+      let data = Arc::new(data);
+      let data_ptr = Arc::into_raw(data.clone());
+      let data_usize = data_ptr as usize;
+
+      // conservative orderings b/c this isn't the fast path.
+      let actual_data_usize = self.0
+        .compare_exchange(0, data_usize,
+                          Ordering::SeqCst,
+                          Ordering::SeqCst);
+      match actual_data_usize {
+        Ok(0) => {
+          cached = Some(data);
+        },
+        Ok(_) => unreachable!(),
+        Err(actual_data_usize) => {
+          // either someone beat us, or the data is from an old context.
+          let cached2 = self.upgrade(context);
+          if cached2.is_some() {
+            // someone beat us.
+            unsafe { Arc::from_raw(data_ptr) };
+            cached = cached2;
+          } else {
+            // the data is old. we need to clean up, while allowing for
+            // possible races in this process.
+
+            let r = self.0
+              .compare_exchange(actual_data_usize,
+                                data_usize,
+                                Ordering::SeqCst,
+                                Ordering::SeqCst);
+            match r {
+              Ok(actual_data_usize) => {
+                // do the cleanup:
+                let actual_data = actual_data_usize as *const ModuleData;
+                let _actual_data = unsafe { Arc::from_raw(actual_data) };
+                // let actual_data drop.
+
+                cached = Some(data);
+              },
+              Err(_) => {
+                // someone beat us.
+                unsafe { Arc::from_raw(data_ptr) };
+                let data = self.upgrade(context)
+                  .expect("someone beat us in setting context \
+                           module data, but didn't set it to \
+                           value data");
+                cached = Some(data);
+              },
+            }
+          }
+        },
+      }
+    }
+
+    cached.unwrap()
+  }
+}
+
+impl<'a, F, Args, Ret> From<&'a F> for ModuleContextData<Args, Ret>
+  where F: Fn<Args, Output = Ret>,
+{
+  fn from(f: &'a F) -> Self {
+    use hsa_core::kernel::kernel_context_data_id;
+    let data_ref = kernel_context_data_id(f);
+    ModuleContextData(data_ref, PhantomData)
+  }
+}
+impl<Args, Ret> Clone for ModuleContextData<Args, Ret> {
+  fn clone(&self) -> Self { *self }
+}
+impl<Args, Ret> Copy for ModuleContextData<Args, Ret> { }

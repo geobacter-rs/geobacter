@@ -1,6 +1,9 @@
 #![feature(thread_local)]
 #![feature(optin_builtin_traits)]
 #![feature(core_intrinsics)]
+#![feature(unsize)]
+#![feature(coerce_unsized)]
+#![feature(allocator_api)]
 
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 

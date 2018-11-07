@@ -213,7 +213,7 @@ fn collect_items_rec<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>,
 }
 
 fn record_accesses<'a, 'tcx>(_tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                             dd: &DriverData<'tcx>,
+                             _dd: &DriverData<'tcx>,
                              caller: MonoItem<'tcx>,
                              callees: &[MonoItem<'tcx>],
                              inlining_map: &mut InliningMap<'tcx>) {
@@ -400,7 +400,7 @@ fn create_fn_mono_item<'a, 'tcx>(instance: Instance<'tcx>) -> MonoItem<'tcx> {
 /// to discover them so the host accelerator can setup it's index table with
 /// these functions as entries.
 fn create_mono_items_for_vtable_methods<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>,
-                                              dd: &DriverData<'tcx>,
+                                              _dd: &DriverData<'tcx>,
                                               trait_ty: ty::Ty<'tcx>,
                                               impl_ty: ty::Ty<'tcx>,
                                               output: &mut Vec<MonoItem<'tcx>>) {
@@ -489,7 +489,7 @@ fn collect_miri<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>,
       let instance = Instance::mono(tcx, did);
       trace!("collecting static {:?}", did);
       error!("TODO static is ignored: {:?}", instance);
-      //output.push(MonoItem::Static(did));
+      output.push(MonoItem::Static(did));
     }
     Some(AllocType::Memory(alloc)) => {
       trace!("collecting {:?} with {:#?}", alloc_id, alloc);
@@ -719,7 +719,7 @@ impl<'b, 'tcx> mir::visit::Visitor<'tcx> for MirNeighborCollector<'b, 'tcx>
     let instance = Instance::mono(tcx, static_.def_id);
     error!("TODO: inject the contents of the statics using their value on the host: {:?}",
            instance);
-    //self.output.push(MonoItem::Static(static_.def_id));
+    self.output.push(MonoItem::Static(static_.def_id));
 
     self.super_static(static_, context, location);
   }

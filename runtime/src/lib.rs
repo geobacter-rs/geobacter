@@ -41,13 +41,19 @@ extern crate core;
 extern crate dirs;
 extern crate fs2;
 extern crate legionella_intrinsics;
+extern crate ndarray as nd;
 
 use std::error::Error;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher, };
+use std::ops::{Range, };
 use std::sync::{Arc, };
 
 use indexvec::Idx;
+
+use hsa_rt::agent::{Agent, Isa, };
+use hsa_rt::mem::region::Region;
+use hsa_rt::queue::MultiQueue;
 
 use rustc::session::config::host_triple;
 use rustc_target::spec::{Target, TargetTriple, };
@@ -76,9 +82,16 @@ pub trait Accelerator: Debug + Send + Sync {
   /// Returns `None` if this accel is a host.
   fn host_accel(&self) -> Option<Arc<Accelerator>> { None }
 
-  fn agent(&self) -> &hsa_rt::agent::Agent;
+  fn agent(&self) -> &Agent;
+  fn isa(&self) -> Option<&Isa> { None }
 
-  fn accel_target_desc(&self) -> Result<AcceleratorTargetDesc, Box<Error>>;
+  fn kernargs_region(&self) -> &Region;
+
+  fn queues(&self) -> Arc<Vec<Arc<MultiQueue>>>;
+
+  fn create_queues(&self, count: usize, queue_size: usize) -> Result<Range<usize>, Box<Error>>;
+
+  fn accel_target_desc(&self) -> Result<Arc<AcceleratorTargetDesc>, Box<Error>>;
   fn device_libs_builder(&self) -> Option<Box<DeviceLibsBuilder>> { None }
 
   fn set_codegen(&self, comms: CodegenComms) -> Option<CodegenComms>;

@@ -34,7 +34,7 @@ use {Accelerator, AcceleratorTargetDesc,
      context::Context, context::WeakContext, };
 use utils::UnsafeSyncSender;
 
-use passes::{Pass, PassType};
+use passes::{Pass, };
 
 use self::error::IntoErrorWithKernelId;
 pub use self::driver_data::DriverData;
@@ -132,7 +132,7 @@ impl GetDefIdFromKernelId for DefIdFromKernelIdGetter {
     where F: FnOnce(&dyn DefIdFromKernelId) -> R,
           'tcx: 'a
   {
-    DriverData::with(tcx, move |tcx, dd| {
+    DriverData::with(tcx, move |_tcx, dd| {
       f(dd as &dyn DefIdFromKernelId)
     })
   }
@@ -245,7 +245,7 @@ impl WorkerTranslatorData {
       let internal_msg = 'inner: loop {
         let context = match self.context() {
           Ok(ctxt) => ctxt,
-          Err(err) => {
+          Err(_) => {
             // the context can't be resurrected.
             return;
           },
@@ -282,13 +282,13 @@ impl WorkerTranslatorData {
               break 'inner InternalMessage::AddAccel(accel);
             },
             Message::HostCreateFunc {
-              msg, accel_desc, ret,
+              ..
             } => {
               unimplemented!();
             },
             Message::Codegen {
               id,
-              host_accel,
+              host_accel: _,
               ret,
             } => {
               let result = self.codegen_kernel(id,
@@ -501,12 +501,12 @@ fn output_types() -> rustc::session::config::OutputTypes {
   use rustc::session::config::*;
 
   let output = (OutputType::Object, None);
-  let ir_out = (OutputType::LlvmAssembly, None);
   let asm    = (OutputType::Assembly, None);
+  let ir_out = (OutputType::LlvmAssembly, None);
   let mut out = Vec::new();
   out.push(output);
-  out.push(ir_out);
   out.push(asm);
+  out.push(ir_out);
   OutputTypes::new(&out[..])
 }
 
@@ -540,16 +540,21 @@ pub fn create_rustc_options(_ctx: &Context) -> rustc::session::config::Options {
   opts.debugging_opts.verify_llvm_ir = false;
   opts.debugging_opts.no_landing_pads = true;
   opts.debugging_opts.incremental_queries = false;
-  //opts.debugging_opts.print_llvm_passes = true;
+  opts.cg.no_prepopulate_passes = false;
+  if opts.cg.no_prepopulate_passes {
+    opts.cg.passes.push("name-anon-globals".into());
+  }
+  opts.debugging_opts.print_llvm_passes = false;
   opts.debugging_opts.polly = true;
   opts.cg.llvm_args.push("-polly-run-inliner".into());
   opts.cg.llvm_args.push("-polly-register-tiling".into());
   opts.cg.llvm_args.push("-polly-check-vectorizable".into());
   opts.cg.llvm_args.push("-enable-polly-aligned".into());
+  // TODO: -polly-target=gpu produces host side code which
+  // then triggers the gpu side code.
   //opts.cg.llvm_args.push("-polly-target=gpu".into());
   opts.cg.llvm_args.push("-polly-vectorizer=polly".into());
   opts.cg.llvm_args.push("-polly-position=early".into());
-  opts.cg.llvm_args.push("-polly-process-unprofitable".into());
   opts.cg.llvm_args.push("-polly-enable-polyhedralinfo".into());
   opts
 }
@@ -693,7 +698,7 @@ fn providers_remote_and_local(providers: &mut Providers) {
 
     let sig = (providers.fn_sig)(tcx, def_id);
 
-    DriverData::with(tcx, |tcx, dd| {
+    DriverData::with(tcx, |_tcx, dd| {
       if dd.is_root(def_id) {
         // modify the abi:
         let sig = FnSig {

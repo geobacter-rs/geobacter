@@ -23,9 +23,7 @@ use hsa_core::kernel::{KernelId, };
 use self::rustc::hir::def_id::{DefId, DefIndex, CrateNum, };
 use self::rustc::mir::{self, CustomIntrinsicMirGen, };
 use self::rustc::ty::{self, TyCtxt, };
-use self::rustc_data_structures::fx::{FxHashMap, };
 use self::rustc_data_structures::sync::{Lrc, };
-use self::syntax_pos::symbol::{Symbol, InternedString, };
 
 pub use rustc_intrinsics::*;
 pub use self::intrinsics::*;

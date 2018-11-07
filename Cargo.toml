@@ -9,7 +9,8 @@ members = ["hsa-core-gen", "hsa-core", "legionella-std",
            "tools/hsa-agent-info",
 
            "examples/trivial", "examples/ndarray",
-           "examples/mat-mat-mul", "examples/fwd-conv", ]
+           "examples/mat-mat-mul", "examples/fwd-conv",
+           "examples/fractal", ]
 
 [profile.release]
 debug = true

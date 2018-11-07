@@ -245,7 +245,7 @@ impl Isa {
     Ok(dim)
   }
   pub fn workgroup_max_size(&self) -> Result<u32, Box<Error>> {
-    let size = isa_info!(self, ffi::hsa_isa_info_t_HSA_ISA_INFO_WORKGROUP_MAX_DIM,
+    let size = isa_info!(self, ffi::hsa_isa_info_t_HSA_ISA_INFO_WORKGROUP_MAX_SIZE,
                          [0u32; 1])?;
     Ok(size[0])
   }

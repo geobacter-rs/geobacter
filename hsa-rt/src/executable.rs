@@ -206,6 +206,13 @@ impl Drop for Executable {
 }
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
+pub enum SymbolKind {
+  IndirectFunction,
+  Kernel,
+  Variable,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq, Debug)]
 pub struct Symbol<'a>(&'a Executable, ffi::hsa_executable_symbol_t);
 
 macro_rules! sym_info {
@@ -225,6 +232,30 @@ impl<'a> Symbol<'a> {
                           vec![0u8; len])?;
     Ok(String::from_utf8(bytes)?)
   }
+  pub fn kind(&self) -> Result<SymbolKind, Box<Error>> {
+    let attr = ffi::hsa_executable_symbol_info_t_HSA_EXECUTABLE_SYMBOL_INFO_TYPE;
+    let mut out: ffi::hsa_symbol_kind_t = 0;
+    let out_ptr = &mut out as *mut ffi::hsa_symbol_kind_t as *mut _;
+    check_err!(ffi::hsa_executable_symbol_get_info(self.1, attr, out_ptr))?;
+    let kind = match out {
+      ffi::hsa_symbol_kind_t_HSA_SYMBOL_KIND_INDIRECT_FUNCTION => SymbolKind::IndirectFunction,
+      ffi::hsa_symbol_kind_t_HSA_SYMBOL_KIND_KERNEL => SymbolKind::Kernel,
+      ffi::hsa_symbol_kind_t_HSA_SYMBOL_KIND_VARIABLE => SymbolKind::Variable,
+      kind => {
+        return Err(format!("unknown symbol kind id {}", kind).into());
+      }
+    };
+
+    Ok(kind)
+  }
+  pub fn is_kernel(&self) -> bool {
+    self.kind()
+      .map(|kind| match kind {
+        SymbolKind::Kernel => true,
+        _ => false,
+      } )
+      .unwrap_or_default()
+  }
   pub fn kernel_object(&self) -> Result<Option<u64>, Box<Error>> {
     let attr = ffi::hsa_executable_symbol_info_t_HSA_EXECUTABLE_SYMBOL_INFO_KERNEL_OBJECT;
     let mut out: u64 = 0;
@@ -235,5 +266,60 @@ impl<'a> Symbol<'a> {
     } else {
       None
     })
+  }
+  /// Size of static group segment memory required by the kernel
+  /// (per work-group), in bytes. The value of this attribute is
+  /// undefined if the symbol is not a kernel. The type of this
+  /// attribute is uint32_t.
+  ///
+  /// The reported amount does not include any dynamically allocated
+  /// group segment memory that may be requested by the application
+  /// when a kernel is dispatched.
+  pub fn kernel_group_segment_size(&self) -> Result<u32, Box<Error>> {
+    let attr = ffi::hsa_code_symbol_info_t_HSA_CODE_SYMBOL_INFO_KERNEL_GROUP_SEGMENT_SIZE;
+    let mut out: u32 = 0;
+    check_err!(ffi::hsa_executable_symbol_get_info(self.1, attr,
+                                                   &mut out as *mut u32 as *mut _))?;
+    Ok(out)
+  }
+  /// Size of kernarg segment memory that is required to hold the
+  /// values of the kernel arguments, in bytes. Must be a multiple
+  /// of 16. The value of this attribute is undefined if the symbol
+  /// is not a kernel. The type of this attribute is uint32_t.
+  pub fn kernel_kernarg_segment_size(&self) -> Result<u32, Box<Error>> {
+    let attr = ffi::hsa_code_symbol_info_t_HSA_CODE_SYMBOL_INFO_KERNEL_KERNARG_SEGMENT_SIZE;
+    let mut out: u32 = 0;
+    check_err!(ffi::hsa_executable_symbol_get_info(self.1, attr,
+                                                   &mut out as *mut u32 as *mut _))?;
+    Ok(out)
+  }
+  /// Alignment (in bytes) of the buffer used to pass arguments to
+  /// the kernel, which is the maximum of 16 and the maximum
+  /// alignment of any of the kernel arguments. The value of this
+  /// attribute is undefined if the symbol is not a kernel. The type
+  /// of this attribute is uint32_t.
+  pub fn kernel_kernarg_segment_align(&self) -> Result<u32, Box<Error>> {
+    let attr = ffi::hsa_executable_symbol_info_t_HSA_EXECUTABLE_SYMBOL_INFO_KERNEL_KERNARG_SEGMENT_ALIGNMENT;
+    let mut out: u32 = 0;
+    check_err!(ffi::hsa_executable_symbol_get_info(self.1, attr,
+                                                   &mut out as *mut u32 as *mut _))?;
+    Ok(out)
+  }
+  /// Size of static private, spill, and arg segment memory required
+  /// by this kernel (per work-item), in bytes. The value of this
+  /// attribute is undefined if the symbol is not a kernel. The type
+  /// of this attribute is uint32_t.
+  ///
+  /// If the value of ::HSA_CODE_SYMBOL_INFO_KERNEL_DYNAMIC_CALLSTACK
+  /// is true, the kernel may use more private memory than the
+  /// reported value, and the application must add the dynamic call
+  /// stack usage to @a private_segment_size when populating a kernel
+  /// dispatch packet.
+  pub fn kernel_private_segment_size(&self) -> Result<u32, Box<Error>> {
+    let attr = ffi::hsa_code_symbol_info_t_HSA_CODE_SYMBOL_INFO_KERNEL_PRIVATE_SEGMENT_SIZE;
+    let mut out: u32 = 0;
+    check_err!(ffi::hsa_executable_symbol_get_info(self.1, attr,
+                                                   &mut out as *mut u32 as *mut _))?;
+    Ok(out)
   }
 }

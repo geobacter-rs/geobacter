@@ -88,7 +88,7 @@ impl ScalarTy {
     };
 
     let ty = Ident::new(ty);
-    let bits = Ident::new(format!("N{}", bits));
+    let bits = Ident::new(format!("N{}<()>", bits));
 
     quote! {
       ::unit::#ty<::unit::#bits>

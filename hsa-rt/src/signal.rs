@@ -11,7 +11,7 @@ pub use std::sync::atomic::Ordering;
 pub struct Signal(pub(crate) ffi::hsa_signal_t);
 pub type Value = ffi::hsa_signal_value_t;
 
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ConditionOrdering {
   Equal,
   NotEqual,
@@ -32,7 +32,7 @@ impl Into<ffi::hsa_signal_condition_t> for ConditionOrdering {
     }
   }
 }
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum WaitState {
   Blocked,
   Active,

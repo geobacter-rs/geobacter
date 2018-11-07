@@ -198,7 +198,7 @@ impl CrateMetadataLoader {
       (src.clone(), symbol_name.clone(), krate.clone())
     };
 
-    let (cnum, name, is_new) = self
+    let (cnum, _, is_new) = self
       .process_crate_metadata(&src,
                               symbol_name.as_str(),
                               &*shared_krate,
@@ -447,9 +447,6 @@ impl Metadata {
     })
   }
 
-  pub fn owner_symbol(&self) -> &str {
-    self.all[self.owner_index].0.as_str()
-  }
   pub fn owner_blob(&self) -> &MetadataBlob {
     &self.all[self.owner_index].1
   }

@@ -17,10 +17,10 @@ pub trait RuntimePlatformPrimitiveVisitor {
   fn visit_i32(&mut self, v: i32) -> EmptyResult;
   fn visit_i64(&mut self, v: i64) -> EmptyResult;
 
-  fn visit_f16(&mut self, v: Real<N16>) -> EmptyResult;
-  fn visit_f24(&mut self, v: Real<N24>) -> EmptyResult;
-  fn visit_f32(&mut self, v: Real<N32>) -> EmptyResult;
-  fn visit_f64(&mut self, v: Real<N64>) -> EmptyResult;
+  fn visit_f16(&mut self, v: Real<N16<()>>) -> EmptyResult;
+  fn visit_f24(&mut self, v: Real<N24<()>>) -> EmptyResult;
+  fn visit_f32(&mut self, v: Real<N32<()>>) -> EmptyResult;
+  fn visit_f64(&mut self, v: Real<N64<()>>) -> EmptyResult;
 }
 
 pub trait RuntimePlatformDataVisitor: RuntimePlatformPrimitiveVisitor {

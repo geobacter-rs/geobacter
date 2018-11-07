@@ -1,11 +1,16 @@
 
+use std::borrow::{BorrowMut, Borrow, };
 use std::error::Error;
 use std::fmt;
+use std::marker::Unsize;
 use std::mem::{transmute, size_of, };
+use std::ops::{Deref, DerefMut, CoerceUnsized, };
 use std::os::raw::c_void;
+use std::ptr::NonNull;
 
-use ffi;
+use ApiContext;
 use agent::{Agent};
+use ffi;
 
 macro_rules! region_info {
   ($self:expr, $id:expr, $out:expr) => {
@@ -67,7 +72,7 @@ impl fmt::Debug for GlobalFlags {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct Region(pub(crate) ffi::hsa_region_t);
+pub struct Region(pub(crate) ffi::hsa_region_t, ApiContext);
 
 impl Region {
   pub fn id(&self) -> u64 { self.0.handle }
@@ -131,14 +136,14 @@ impl Region {
   /// All allocations will have alignment `runtime_alloc_alignment`.
   /// This is generally the page size.
   #[allow(unused_unsafe)]
-  pub unsafe fn allocate<T>(&self, count: usize) -> Result<*mut T, Box<Error>> {
+  pub unsafe fn allocate<T>(&self, count: usize) -> Result<NonNull<T>, Box<Error>> {
     assert_ne!(size_of::<T>(), 0, "can't allocate with a zero size");
     let bytes = size_of::<T>() * count;
     let mut ptr: *mut T = 0 as _;
     check_err!(ffi::hsa_memory_allocate(self.0, bytes,
                                         transmute(&mut ptr)))?;
 
-    Ok(ptr)
+    Ok(NonNull::new_unchecked(ptr))
   }
   #[allow(unused_unsafe)]
   pub unsafe fn deallocate<T>(&self, ptr: *mut T) -> Result<(), Box<Error>>  {
@@ -155,7 +160,7 @@ impl Agent {
       let items: &mut Vec<Region> = unsafe {
         transmute(items)
       };
-      items.push(Region(out));
+      items.push(Region(out, ApiContext::upref()));
       ffi::hsa_status_t_HSA_STATUS_SUCCESS
     }
 
@@ -164,3 +169,77 @@ impl Agent {
                                                  transmute(&mut out)) => out)?)
   }
 }
+
+pub struct RegionBox<T>
+  where T: ?Sized,
+{
+  b: NonNull<T>,
+}
+
+impl<T> RegionBox<T> {
+  pub fn new(region: &Region, v: T) -> Result<Self, Box<Error>> {
+    let mut ptr = unsafe { region.allocate(1)? };
+    unsafe { *ptr.as_mut() = v; }
+    Ok(RegionBox {
+      b: ptr,
+    })
+  }
+  pub fn new_default(region: &Region) -> Result<Self, Box<Error>>
+    where T: Default,
+  {
+    Self::new(region, Default::default())
+  }
+
+  pub fn clone_into(&self, region: &Region) -> Result<Self, Box<Error>>
+    where T: Clone,
+  {
+    let v = unsafe { self.b.as_ref().clone() };
+    Self::new(region, v)
+  }
+}
+impl<T> Deref for RegionBox<T>
+  where T: ?Sized,
+{
+  type Target = T;
+  fn deref(&self) -> &T { unsafe { self.b.as_ref() } }
+}
+impl<T> DerefMut for RegionBox<T>
+  where T: ?Sized,
+{
+  fn deref_mut(&mut self) -> &mut T { unsafe { self.b.as_mut() } }
+}
+impl<T> Drop for RegionBox<T>
+  where T: ?Sized,
+{
+  fn drop(&mut self) {
+    unsafe {
+      let ptr = self.b.as_ptr();
+      ::std::ptr::drop_in_place(ptr);
+      ffi::hsa_memory_free(ptr as *mut _); // ignore result code.
+    }
+  }
+}
+impl<T> Borrow<T> for RegionBox<T>
+  where T: ?Sized,
+{
+  fn borrow(&self) -> &T { unsafe { self.b.as_ref() } }
+}
+impl<T> BorrowMut<T> for RegionBox<T>
+  where T: ?Sized,
+{
+  fn borrow_mut(&mut self) -> &mut T { unsafe { self.b.as_mut() } }
+}
+impl<T> AsRef<T> for RegionBox<T>
+  where T: ?Sized,
+{
+  fn as_ref(&self) -> &T { unsafe { self.b.as_ref() } }
+}
+impl<T> AsMut<T> for RegionBox<T>
+  where T: ?Sized,
+{
+  fn as_mut(&mut self) -> &mut T { unsafe { self.b.as_mut() } }
+}
+impl<T, U> CoerceUnsized<RegionBox<U>> for RegionBox<T>
+  where T: ?Sized + Unsize<U>,
+        U: ?Sized
+{ }

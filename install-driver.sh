@@ -9,7 +9,7 @@ FRAMEWORK_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
 # If our wrapper is already installed, use it instead.
 if [ -e ${UNMODIFIED_RUSTC} ]
 then
-  export RUSTC_WRAPPER="${UNMODIFIED_RUSTC}"
+  mv ${UNMODIFIED_RUSTC} ${ORIGINAL_RUSTC}
 fi
 export RUSTFLAGS="${RUSTFLAGS} -Z always-encode-mir -Z always-emit-metadata"
 cargo build --release --manifest-path ${FRAMEWORK_DIR}/bootstrap-rustc-driver/Cargo.toml || exit $?

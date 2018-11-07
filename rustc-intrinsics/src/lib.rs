@@ -21,7 +21,7 @@ use self::rustc::hir::def_id::{DefId, };
 use self::rustc::mir::{Constant, Operand, Rvalue, Statement,
                  StatementKind, AggregateKind, Local, };
 use self::rustc::mir::interpret::{ConstValue, Scalar, Allocation,
-                                  PointerArithmetic};
+                                  PointerArithmetic, Pointer, };
 use self::rustc::mir::{self, CustomIntrinsicMirGen, RETURN_PLACE, };
 use self::rustc::session::{config, Session, };
 use self::rustc::session::config::{ErrorOutputType, Input, };
@@ -301,10 +301,25 @@ impl CustomIntrinsicMirGen for KernelIdFor {
     let def_id = instance.def_id();
     let ty = instance.ty(tcx);
     let sig = ty.fn_sig(tcx);
+    let sig = tcx.normalize_erasing_late_bound_regions(reveal_all, &sig);
     let inputs = sig.inputs();
-    for input in inputs.skip_binder().iter() {
+    for input in inputs.iter() {
       let msg = format!("input ty: {:?}", input);
       tcx.sess.note_without_error(&msg);
+      match input.sty {
+        ty::Adt(def, subs) => {
+          let msg = format!("adt did: {:?}, repr {:?}",
+                            def.did, def.repr);
+          tcx.sess.note_without_error(&msg);
+          for (idx, variant) in def.variants.iter().enumerate() {
+            let msg = format!("index {} variant def: {:#?}",
+                              idx, variant);
+            tcx.sess.note_without_error(&msg);
+          }
+          continue;
+        },
+        _ => { },
+      }
     }
 
     let crate_name = tcx.crate_name(def_id.krate);
@@ -456,7 +471,9 @@ impl CustomIntrinsicMirGen for KernelContextDataId {
       is_cleanup: false,
     };
 
-    let const_val = ConstValue::ByRef(alloc_id.into(), alloc, ptr_size);
+    let ptr = Pointer::from(alloc_id);
+    let scalar = Scalar::Ptr(ptr);
+    let const_val = ConstValue::Scalar(scalar);
     let constant = tcx.mk_const(Const {
       ty: self.output(tcx),
       val: const_val,
