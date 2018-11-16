@@ -16,6 +16,7 @@ pub fn main() {
     .derive_hash(true)
     .derive_eq(true)
     .derive_ord(true)
+    .no_copy("hsa_amd_image_descriptor_s") // actually unsized.
     // XXX linux only
     //.link("hsa-runtime64")
     .generate()

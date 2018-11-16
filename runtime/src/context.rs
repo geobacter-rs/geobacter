@@ -500,13 +500,17 @@ impl WeakContext {
   }
 }
 
-pub(crate) struct Kernel {
+pub struct Kernel {
   pub(crate) main_object: u64,
   pub(crate) group_segment_size: u32,
   pub(crate) kernarg_segment_size: u32,
   pub(crate) kernarg_segment_align: u32,
   pub(crate) private_segment_size: u32,
   pub(crate) exe: FrozenExecutable,
+}
+impl Kernel {
+  pub fn group_segment_size(&self) -> u32 { self.group_segment_size }
+  pub fn private_segment_size(&self) -> u32 { self.private_segment_size }
 }
 
 pub(crate) struct ModuleData(KernelId, WeakContext, RwLock<ModuleData_>);
@@ -626,7 +630,7 @@ pub(crate) struct ModuleData_ {
   exes: IndexVec<AcceleratorId, Option<Arc<Kernel>>>,
 }
 pub(crate) struct ModuleContextData<Args, Ret>(&'static AtomicUsize,
-                                               PhantomData<(Args, Ret)>);
+                                               PhantomData<*mut (Args, Ret)>);
 
 impl<Args, Ret> ModuleContextData<Args, Ret> {
   pub fn upgrade(&self, context: &Context) -> Option<Arc<ModuleData>> {

@@ -29,7 +29,6 @@ pub struct AmdGpuAccel {
   kernarg_region: Region,
 
   codegen: RwLock<Option<CodegenUnsafeSyncComms>>,
-  queues: RwLock<Arc<Vec<Arc<MultiQueue>>>>,
 
   target_desc: Arc<AcceleratorTargetDesc>,
 }
@@ -74,8 +73,6 @@ impl AmdGpuAccel {
       hsa_isa: isa,
       kernarg_region,
 
-      queues: RwLock::new(Arc::new(vec![])),
-
       codegen: Default::default(),
 
       target_desc: Arc::default(),
@@ -96,37 +93,6 @@ impl Accelerator for AmdGpuAccel {
   }
   fn isa(&self) -> Option<&Isa> { Some(&self.hsa_isa) }
   fn kernargs_region(&self) -> &Region { &self.kernarg_region }
-
-  fn queues(&self) -> Arc<Vec<Arc<MultiQueue>>> {
-    self.queues.read()
-      .expect("AmdGpuAccel::queues lock poisoned")
-      .clone()
-  }
-  fn create_queues(&self, count: usize, queue_size: usize) -> Result<Range<usize>, Box<Error>> {
-    let agent = self.agent();
-    let queue_range = agent.queue_size()?;
-    let queue_size = max(queue_range.start as usize, queue_size);
-    let queue_size = min(queue_range.end as usize, queue_size);
-
-    let mut queues = self.queues.write()
-      .map_err(|_| {
-        "poisoned lock!"
-      })?;
-    let new_queues = Arc::make_mut(&mut queues);
-    let new_range = Range {
-      start: new_queues.len(),
-      end: new_queues.len() + count,
-    };
-    new_queues.reserve(count);
-    for _ in 0..count {
-      let q = agent.new_kernel_multi_queue(queue_size as _,
-                                           None,
-                                           None)?;
-      new_queues.push(Arc::new(q));
-    }
-
-    Ok(new_range)
-  }
 
   fn accel_target_desc(&self) -> Result<Arc<AcceleratorTargetDesc>, Box<Error>> {
     Ok(self.target_desc.clone())

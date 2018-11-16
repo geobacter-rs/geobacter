@@ -69,15 +69,6 @@ impl Accelerator for HostAccel {
   fn agent(&self) -> &Agent { &self.hsa_agent }
   fn kernargs_region(&self) -> &Region { &self.kernarg_region }
 
-  fn queues(&self) -> Arc<Vec<Arc<MultiQueue>>> {
-    self.queues.read()
-      .expect("AmdGpuAccel::queues lock poisoned")
-      .clone()
-  }
-  fn create_queues(&self, _count: usize, _queue_size: usize) -> Result<Range<usize>, Box<Error>> {
-    Err("unimplemented".into())
-  }
-
   fn accel_target_desc(&self) -> Result<Arc<AcceleratorTargetDesc>, Box<Error>> {
     Ok(self.target_desc.clone())
   }

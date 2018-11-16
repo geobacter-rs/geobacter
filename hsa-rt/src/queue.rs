@@ -1,5 +1,5 @@
 use std::any::Any;
-use std::error::Error;
+use std::error::Error as StdError;
 use std::ffi::c_void;
 use std::fmt;
 use std::intrinsics::atomic_store_rel;
@@ -26,6 +26,19 @@ pub enum FenceScope {
   Agent,
   System,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum Error {
+  Full,
+  WorkgroupDimSize,
+  GridDimSize,
+}
+impl fmt::Display for Error {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "{:?}", self) // TODO
+  }
+}
+impl StdError for Error { }
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct SoftQueue<T = Signal>
@@ -103,46 +116,13 @@ impl<T> SoftQueue<T>
       }
     }
   }
+}
 
-  pub fn write_dispatch_packet<'a, WGDim, GridDim, Args>(&self, dispatch: DispatchPacket<'a, WGDim, GridDim, Args>)
-    -> Result<DispatchCompletion<'a, Args>, Box<Error>>
-    where WGDim: nd::IntoDimension,
-          GridDim: nd::IntoDimension,
-  {
-    let (base_addr, packet_count) = unsafe {
-      ((*self.sys.0).base_address as *mut ffi::hsa_kernel_dispatch_packet_t,
-       (*self.sys.0).size as usize)
-    };
-    let packets = unsafe {
-      from_raw_parts_mut(base_addr, packet_count)
-    };
-    let write_index = self.sys.add_write_index_relaxed(1);
-    let packet_index = write_index as usize & (packet_count - 1);
-    let packet = &mut packets[packet_index];
-    let invalid_ty = ffi::hsa_packet_type_t_HSA_PACKET_TYPE_INVALID;
-    packet_store_rel(packet,
-                     header(invalid_ty, &None, &None, false),
-                     0);
-    let scaquire_fence = dispatch.scaquire_scope.clone();
-    let screlease_fence = dispatch.screlease_scope.clone();
-    let ordered = dispatch.ordered;
-    let (grid_size, kernel_args, completion_signal) = dispatch
-      .initialize_packet(packet)?;
-
-    let setup = (grid_size as u16) << ffi::hsa_kernel_dispatch_packet_setup_t_HSA_KERNEL_DISPATCH_PACKET_SETUP_DIMENSIONS;
-    let ty = header(ffi::hsa_packet_type_t_HSA_PACKET_TYPE_KERNEL_DISPATCH,
-                    &scaquire_fence,
-                    &screlease_fence,
-                    ordered);
-    packet_store_rel(packet, ty, setup);
-    self.doorbell_ref().as_ref()
-      .store_screlease(write_index as i64);
-
-    Ok(DispatchCompletion {
-      _args: kernel_args,
-      completion_signal,
-    })
-  }
+pub struct KernelQueue<T>
+  where T: QueueKind,
+{
+  sys: T,
+  _ctxt: ApiContext,
 }
 
 pub struct Queue<T>
@@ -152,11 +132,12 @@ pub struct Queue<T>
   _callback_data: Option<Box<Any>>,
   _ctxt: ApiContext,
 }
+
 impl Agent {
   pub fn new_kernel_queue(&self, size: usize,
                           private_segment_size: Option<u32>,
                           group_segment_size: Option<u32>)
-    -> Result<Queue<SingleQueueType>, Box<Error>>
+    -> Result<KernelSingleQueue, Box<StdError>>
   {
     let queue_type = ffi::hsa_queue_type_t_HSA_QUEUE_TYPE_SINGLE;
     let private_segment_size = private_segment_size
@@ -171,16 +152,15 @@ impl Agent {
                                      private_segment_size, group_segment_size,
                                      &mut out as *mut _))?;
 
-    Ok(Queue {
+    Ok(KernelQueue {
       sys: SingleQueueType(RawQueue(out)),
-      _callback_data: None,
       _ctxt: ApiContext::upref(),
     })
   }
   pub fn new_kernel_multi_queue(&self, size: usize,
                                 private_segment_size: Option<u32>,
                                 group_segment_size: Option<u32>)
-    -> Result<Queue<MultiQueueType>, Box<Error>>
+    -> Result<KernelMultiQueue, Box<StdError>>
   {
     let queue_type = ffi::hsa_queue_type_t_HSA_QUEUE_TYPE_MULTI;
     let private_segment_size = private_segment_size
@@ -194,10 +174,8 @@ impl Agent {
                                      None, callback_data_ptr,
                                      private_segment_size, group_segment_size,
                                      &mut out as *mut _))?;
-
-    Ok(Queue {
+    Ok(KernelQueue {
       sys: MultiQueueType(RawQueue(out)),
-      _callback_data: None,
       _ctxt: ApiContext::upref(),
     })
   }
@@ -206,7 +184,7 @@ impl Agent {
                       callback: Option<F>,
                       private_segment_size: Option<u32>,
                       group_segment_size: Option<u32>)
-                      -> Result<Queue<SingleQueueType>, Box<Error>>
+    -> Result<Queue<SingleQueueType>, Box<StdError>>
     where F: FnMut() + 'static,
   {
     extern "C" fn callback_fn(_status: ffi::hsa_status_t,
@@ -253,7 +231,7 @@ impl Agent {
                             callback: Option<F>,
                             private_segment_size: Option<u32>,
                             group_segment_size: Option<u32>)
-                            -> Result<Queue<MultiQueueType>, Box<Error>>
+    -> Result<Queue<MultiQueueType>, Box<StdError>>
     where F: FnMut() + 'static,
   {
     extern "C" fn callback_fn(_status: ffi::hsa_status_t,
@@ -297,52 +275,161 @@ impl Agent {
     })
   }
 }
-impl<T> Queue<T>
+
+pub trait IQueue<T>
   where T: QueueKind,
 {
+  #[doc(hidden)]
+  fn raw_queue(&self) -> &T;
+
+  fn doorbell_ref(&self) -> SignalRef;
+
+  fn try_enqueue_packet<F, P>(&self, f: F)
+    -> Result<(), Error>
+    where P: Copy + Sized,
+          F: FnOnce(&mut P),
+  {
+    let sys = self.raw_queue();
+
+    let packet_count = unsafe { (*(*sys).0).size as usize };
+    let write_index = sys.add_write_index_screlease(1);
+    let read_index = sys.load_read_index_scacquire();
+    if write_index - read_index >= packet_count as u64 {
+      return Err(Error::Full);
+    }
+
+    let base_addr = unsafe {
+      (*(*sys).0).base_address as *mut P
+    };
+    let packets = unsafe {
+      from_raw_parts_mut(base_addr, packet_count)
+    };
+
+    let packet_index = write_index as usize & (packet_count - 1);
+    let packet = &mut packets[packet_index];
+
+    f(packet);
+
+    self.doorbell_ref()
+      .store_screlease(write_index as i64);
+
+    Ok(())
+  }
+
+  fn try_enqueue_barrier_and<'a>(&self, deps: &'a [&'a Signal],
+                                 completion: Option<&Signal>)
+    -> Result<&'a [&'a Signal], Error>
+  {
+    const MAX_DEPS: usize = 5;
+
+    let deps_count = ::std::cmp::min(MAX_DEPS, deps.len());
+
+    self.try_enqueue_packet(|packet: &mut ffi::hsa_barrier_and_packet_t| {
+      let invalid_ty = ffi::hsa_packet_type_t_HSA_PACKET_TYPE_INVALID;
+      packet_store_rel(packet,
+                       header(invalid_ty, &None, &None, false),
+                       0);
+
+
+      for (dst_dep, src_dep) in packet.dep_signal.iter_mut().zip(deps.iter()) {
+        *dst_dep = src_dep.0;
+      }
+      // make sure we don't have garbage data:
+      for dst_dep in packet.dep_signal.iter_mut().skip(deps_count) {
+        dst_dep.handle = 0;
+      }
+
+      let ty = header(ffi::hsa_packet_type_t_HSA_PACKET_TYPE_BARRIER_AND,
+                      &None, &None, false);
+
+      packet_store_rel(packet, ty, 0);
+    })?;
+
+    Ok(&deps[deps_count..])
+  }
+  fn try_enqueue_barrier_or<'a>(&self, deps: &'a [&'a Signal],
+                                completion: Option<&Signal>)
+    -> Result<&'a [&'a Signal], Error>
+  {
+    const MAX_DEPS: usize = 5;
+
+    let deps_count = ::std::cmp::min(MAX_DEPS, deps.len());
+
+    self.try_enqueue_packet(|packet: &mut ffi::hsa_barrier_or_packet_t| {
+      assert_eq!(MAX_DEPS, packet.dep_signal.len());
+
+      let invalid_ty = ffi::hsa_packet_type_t_HSA_PACKET_TYPE_INVALID;
+      packet_store_rel(packet,
+                       header(invalid_ty, &None, &None, false),
+                       0);
+
+
+      for (dst_dep, src_dep) in packet.dep_signal.iter_mut().zip(deps.iter()) {
+        *dst_dep = src_dep.0;
+      }
+      // make sure we don't have garbage data:
+      for dst_dep in packet.dep_signal.iter_mut().skip(deps_count) {
+        dst_dep.handle = 0;
+      }
+
+      let ty = header(ffi::hsa_packet_type_t_HSA_PACKET_TYPE_BARRIER_AND,
+                      &None, &None, false);
+
+      packet_store_rel(packet, ty, 0);
+    })?;
+
+    Ok(&deps[deps_count..])
+  }
+  fn try_enqueue_kernel_dispatch<'a, WGDim, GridDim, Args>(&self, dispatch: DispatchPacket<'a, WGDim, GridDim, Args>)
+    -> Result<DispatchCompletion<'a, Args>, Error>
+    where WGDim: nd::IntoDimension + Clone,
+          GridDim: nd::IntoDimension + Clone,
+  {
+    // check the packet params before we get a write index.
+    dispatch.check()?;
+
+    let r = self.try_enqueue_packet(|packet: &mut ffi::hsa_kernel_dispatch_packet_t| {
+      let invalid_ty = ffi::hsa_packet_type_t_HSA_PACKET_TYPE_INVALID;
+      packet_store_rel(packet,
+                       header(invalid_ty, &None, &None, false),
+                       0);
+      let scaquire_fence = &dispatch.scaquire_scope;
+      let screlease_fence = &dispatch.screlease_scope;
+      let ordered = dispatch.ordered;
+      let grid_size = dispatch.initialize_packet(packet);
+
+      let setup = (grid_size as u16) << ffi::hsa_kernel_dispatch_packet_setup_t_HSA_KERNEL_DISPATCH_PACKET_SETUP_DIMENSIONS;
+      let ty = header(ffi::hsa_packet_type_t_HSA_PACKET_TYPE_KERNEL_DISPATCH,
+                      scaquire_fence,
+                      screlease_fence,
+                      ordered);
+      packet_store_rel(packet, ty, setup);
+    })?;
+
+    Ok(DispatchCompletion {
+      _args: dispatch.kernel_args,
+      completion_signal: dispatch.completion_signal,
+    })
+  }
+}
+
+impl<T> IQueue<T> for Queue<T>
+  where T: QueueKind,
+{
+  fn raw_queue(&self) -> &T { &self.sys }
   fn doorbell_ref(&self) -> SignalRef {
     SignalRef(unsafe {
       (*self.sys.0).doorbell_signal
     })
   }
-  pub fn write_dispatch_packet<'a, WGDim, GridDim, Args>(&self, dispatch: DispatchPacket<'a, WGDim, GridDim, Args>)
-                                                         -> Result<DispatchCompletion<'a, Args>, Box<Error>>
-    where WGDim: nd::IntoDimension,
-          GridDim: nd::IntoDimension,
-  {
-    let (base_addr, packet_count) = unsafe {
-      ((*self.sys.0).base_address as *mut ffi::hsa_kernel_dispatch_packet_t,
-       (*self.sys.0).size as usize)
-    };
-    let packets = unsafe {
-      from_raw_parts_mut(base_addr, packet_count)
-    };
-    let write_index = self.sys.add_write_index_relaxed(1);
-    while write_index - self.sys.load_read_index_scacquire() >= packet_count as u64 { }
-    let packet_index = write_index as usize & (packet_count - 1);
-    let packet = &mut packets[packet_index];
-    let invalid_ty = ffi::hsa_packet_type_t_HSA_PACKET_TYPE_INVALID;
-    packet_store_rel(packet,
-                     header(invalid_ty, &None, &None, false),
-                     0);
-    let scaquire_fence = dispatch.scaquire_scope.clone();
-    let screlease_fence = dispatch.screlease_scope.clone();
-    let ordered = dispatch.ordered;
-    let (grid_size, kernel_args, completion_signal) = dispatch
-      .initialize_packet(packet)?;
-
-    let setup = (grid_size as u16) << ffi::hsa_kernel_dispatch_packet_setup_t_HSA_KERNEL_DISPATCH_PACKET_SETUP_DIMENSIONS;
-    let ty = header(ffi::hsa_packet_type_t_HSA_PACKET_TYPE_KERNEL_DISPATCH,
-                    &scaquire_fence,
-                    &screlease_fence,
-                    ordered);
-    packet_store_rel(packet, ty, setup);
-    self.doorbell_ref()
-      .store_screlease(write_index as i64);
-
-    Ok(DispatchCompletion {
-      _args: kernel_args,
-      completion_signal,
+}
+impl<T> IQueue<T> for KernelQueue<T>
+  where T: QueueKind,
+{
+  fn raw_queue(&self) -> &T { &self.sys }
+  fn doorbell_ref(&self) -> SignalRef {
+    SignalRef(unsafe {
+      (*self.sys.0).doorbell_signal
     })
   }
 }
@@ -400,7 +487,7 @@ impl ApiContext {
                      kernel_dispatch: bool,
                      agent_dispatch: bool,
                      doorbell_signal: T)
-    -> Result<SoftQueue<T>, Box<Error>>
+    -> Result<SoftQueue<T>, Box<StdError>>
     where T: AsRef<Signal> + Send + Sync,
   {
     let queue_type = match queue_type {
@@ -489,7 +576,7 @@ impl Drop for RawQueue {
   }
 }
 
-pub trait QueueKind: Deref<Target = RawQueue> + DerefMut { }
+pub trait QueueKind: Deref<Target = RawQueue> { }
 #[derive(Eq, PartialEq, Ord, PartialOrd)]
 pub struct SingleQueueType(RawQueue);
 unsafe impl Send for SingleQueueType { }
@@ -518,6 +605,8 @@ impl QueueKind for MultiQueueType { }
 
 pub type SingleQueue = Queue<SingleQueueType>;
 pub type MultiQueue = Queue<MultiQueueType>;
+pub type KernelSingleQueue = KernelQueue<SingleQueueType>;
+pub type KernelMultiQueue = KernelQueue<MultiQueueType>;
 
 #[derive(Debug)]
 pub struct DispatchPacket<'a, WGDim, GridDim, KernArg>
@@ -544,6 +633,11 @@ pub struct DispatchCompletion<'a, KernArg> {
 }
 
 impl<'a, KernArg> DispatchCompletion<'a, KernArg> {
+  /// massively unsafe. Lots of opportunities for races.
+  /// You must wait on the completion signal yourself.
+  pub unsafe fn into_async(self) {
+    ::std::mem::forget(self);
+  }
   pub fn wait(self, wait_state: WaitState) {
     // run our dtor.
     loop {
@@ -571,28 +665,39 @@ impl<'a, KernArg> Drop for DispatchCompletion<'a, KernArg> {
 }
 
 impl<'a, WGDim, GridDim, KernArg> DispatchPacket<'a, WGDim, GridDim, KernArg>
-  where WGDim: nd::IntoDimension,
-        GridDim: nd::IntoDimension,
+  where WGDim: nd::IntoDimension + Clone,
+        GridDim: nd::IntoDimension + Clone,
 {
-  fn initialize_packet(self, p: &mut ffi::hsa_kernel_dispatch_packet_t)
-    -> Result<(usize, &'a mut KernArg, &'a Signal), Box<Error>>
-  {
-    let workgroup_size = self.workgroup_size.into_dimension();
-    let grid_size = self.grid_size.into_dimension();
+  fn check(&self) -> Result<(), Error> {
+    let workgroup_size =
+      self.workgroup_size.clone().into_dimension();
+    let grid_size =
+      self.grid_size.clone().into_dimension();
 
     let workgroup_size = workgroup_size.slice();
     let grid = grid_size.slice();
 
-    if workgroup_size.len() > 3 {
-      return Err("Workgroup dim must be <= 3".into());
-    } else if workgroup_size.len() == 0 {
-      return Err("Workgroup dim must not be zero".into());
+    if workgroup_size.len() > 3 || workgroup_size.len() == 0 {
+      return Err(Error::WorkgroupDimSize);
     }
-    if grid.len() > 3 {
-      return Err("Grid dim must be <= 3".into());
-    } else if grid.len() == 0 {
-      return Err("Grid dim must not be zero".into());
+    if grid.len() > 3 || grid.len() == 0 {
+      return Err(Error::GridDimSize);
     }
+
+    Ok(())
+  }
+  fn initialize_packet(&self, p: &mut ffi::hsa_kernel_dispatch_packet_t)
+    -> usize
+  {
+    let workgroup_size =
+      self.workgroup_size.clone()
+        .into_dimension();
+    let grid_size =
+      self.grid_size.clone()
+        .into_dimension();
+
+    let workgroup_size = workgroup_size.slice();
+    let grid = grid_size.slice();
 
     p.workgroup_size_x = *workgroup_size.get(0).unwrap_or(&1) as u16;
     p.workgroup_size_y = *workgroup_size.get(1).unwrap_or(&1) as u16;
@@ -609,7 +714,7 @@ impl<'a, WGDim, GridDim, KernArg> DispatchPacket<'a, WGDim, GridDim, KernArg>
 
     p.completion_signal = self.completion_signal.0;
 
-    Ok((grid.len(), self.kernel_args, self.completion_signal))
+    grid.len()
   }
 }
 

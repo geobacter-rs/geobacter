@@ -1229,6 +1229,25 @@ impl<T> Vec2<T>
     }
   }
 }
+impl<T> Vec3<T>
+  where T: ScalarT + Copy,
+{
+  pub fn x(&self) -> T {
+    unsafe {
+      self::simd_extract(self.0, 0)
+    }
+  }
+  pub fn y(&self) -> T {
+    unsafe {
+      self::simd_extract(self.0, 1)
+    }
+  }
+  pub fn z(&self) -> T {
+    unsafe {
+      self::simd_extract(self.0, 2)
+    }
+  }
+}
 impl<T> Vec4<T>
   where T: ScalarT + Copy,
 {

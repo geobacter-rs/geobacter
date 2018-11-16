@@ -5,6 +5,7 @@
 #![feature(coerce_unsized)]
 #![feature(allocator_api)]
 
+use std::cmp::{self, PartialEq, PartialOrd, Ord, };
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 
 pub extern crate hsa_rt_sys as ffi;
@@ -33,6 +34,8 @@ macro_rules! check_err {
   }
 }
 
+pub mod utils;
+
 pub mod error;
 pub mod agent;
 pub mod code_object;
@@ -46,7 +49,7 @@ pub mod ext;
 /// runtime singleton. For speed, we maintain a separate ref counter.
 static GLOBAL_REFCOUNT: AtomicUsize = ATOMIC_USIZE_INIT;
 
-#[derive(Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Eq, Hash)]
 pub struct ApiContext;
 impl ApiContext {
   pub fn try_upref() -> Result<Self, error::Error> {
@@ -59,6 +62,16 @@ impl ApiContext {
   pub fn upref() -> Self {
     ApiContext::try_upref()
       .expect("HSA api initialization failed")
+  }
+  pub fn is_live() -> bool {
+    GLOBAL_REFCOUNT.load(Ordering::Relaxed) > 0
+  }
+  pub fn check_live() -> Result<(), &'static str> {
+    if !ApiContext::is_live() {
+      Err("all HSA context refs were dropped")
+    } else {
+      Ok(())
+    }
   }
 }
 impl Default for ApiContext {
@@ -78,6 +91,22 @@ impl Clone for ApiContext {
   fn clone(&self) -> Self {
     GLOBAL_REFCOUNT.fetch_add(1, Ordering::AcqRel);
     ApiContext
+  }
+}
+impl PartialEq for ApiContext {
+  #[inline(always)]
+  fn eq(&self, _rhs: &ApiContext) -> bool { true }
+}
+impl Ord for ApiContext {
+  #[inline(always)]
+  fn cmp(&self, _rhs: &ApiContext) -> cmp::Ordering {
+    cmp::Ordering::Equal
+  }
+}
+impl PartialOrd for ApiContext {
+  #[inline(always)]
+  fn partial_cmp(&self, rhs: &ApiContext) -> Option<cmp::Ordering> {
+    Some(self.cmp(rhs))
   }
 }
 unsafe impl Sync for ApiContext { }

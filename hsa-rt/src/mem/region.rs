@@ -196,6 +196,16 @@ impl<T> RegionBox<T> {
     let v = unsafe { self.b.as_ref().clone() };
     Self::new(region, v)
   }
+  pub unsafe fn into_raw(self) -> NonNull<T> {
+    let ptr = self.b;
+    ::std::mem::forget(self);
+    ptr
+  }
+  pub unsafe fn from_raw(ptr: NonNull<T>) -> Self {
+    RegionBox {
+      b: ptr,
+    }
+  }
 }
 impl<T> Deref for RegionBox<T>
   where T: ?Sized,

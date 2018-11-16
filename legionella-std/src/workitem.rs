@@ -146,7 +146,6 @@ pub fn workgroup_id() -> [usize; 3] {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
-#[repr(u16)]
 pub enum WorkDims<T> {
   One([T; 1]),
   Two([T; 2]),

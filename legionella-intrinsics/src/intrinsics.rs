@@ -422,6 +422,87 @@ fn redirect_or_panic<'a, 'tcx, F>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
   mir.basic_blocks_mut().push(bb);
 }
 
+pub struct IsHost(pub bool);
+impl LegionellaCustomIntrinsicMirGen for IsHost {
+  fn mirgen_simple_intrinsic<'a, 'tcx>(&self,
+                                       _kid_did: &dyn DefIdFromKernelId,
+                                       tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                       _instance: ty::Instance<'tcx>,
+                                       mir: &mut mir::Mir<'tcx>)
+    where 'tcx: 'a,
+  {
+    info!("mirgen intrinsic {}", self);
+
+    let source_info = mir::SourceInfo {
+      span: DUMMY_SP,
+      scope: mir::OUTERMOST_SOURCE_SCOPE,
+    };
+
+    let mk_bool = |v: bool| {
+      let v = Scalar::from_bool(v);
+      let v = ConstValue::Scalar(v);
+      let v = tcx.mk_const(Const {
+        ty: tcx.types.bool,
+        val: v,
+      });
+      let v = Constant {
+        span: source_info.span,
+        ty: tcx.types.bool,
+        literal: v,
+        user_ty: None,
+      };
+      let v = Box::new(v);
+      Operand::Constant(v)
+    };
+
+    let ret = mir::Place::Local(mir::RETURN_PLACE);
+    let rvalue = Rvalue::Use(mk_bool(self.0));
+
+    let stmt_kind = StatementKind::Assign(ret, Box::new(rvalue));
+    let stmt = Statement {
+      source_info: source_info.clone(),
+      kind: stmt_kind,
+    };
+
+    let bb = mir::BasicBlockData {
+      statements: vec![stmt],
+      terminator: Some(mir::Terminator {
+        source_info,
+        kind: mir::TerminatorKind::Return,
+      }),
+
+      is_cleanup: false,
+    };
+    mir.basic_blocks_mut().push(bb);
+  }
+
+  fn generic_parameter_count<'a, 'tcx>(&self, _tcx: TyCtxt<'a, 'tcx, 'tcx>)
+    -> usize
+  {
+    0
+  }
+  /// The types of the input args.
+  fn inputs<'a, 'tcx>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>)
+    -> &'tcx ty::List<ty::Ty<'tcx>>
+  {
+    tcx.intern_type_list(&[])
+  }
+  /// The return type.
+  fn output<'a, 'tcx>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> ty::Ty<'tcx> {
+    tcx.types.bool
+  }
+}
+
+impl Default for IsHost {
+  fn default() -> Self { IsHost(true) }
+}
+
+impl fmt::Display for IsHost {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "__legionella_is_host")
+  }
+}
+
 mod amdgcn_intrinsics {
   // unsafe functions don't implement `std::opts::Fn`.
   macro_rules! def_id_intrinsic {

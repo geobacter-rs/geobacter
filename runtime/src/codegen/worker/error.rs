@@ -6,7 +6,7 @@ use hsa_core::kernel::KernelId;
 
 #[derive(Debug)]
 pub enum Error {
-  Io(KernelId, io::Error),
+  Io(Option<KernelId>, io::Error),
   NoCrateMetadata(KernelId),
   Codegen(KernelId),
   ContextDead,
@@ -20,6 +20,12 @@ impl fmt::Display for Error {
 
 impl StdError for Error { }
 
+impl From<io::Error> for Error {
+  fn from(v: io::Error) -> Error {
+    Error::Io(None, v)
+  }
+}
+
 pub trait IntoErrorWithKernelId {
   type Output;
   fn with_kernel_id(self, id: KernelId) -> Self::Output;
@@ -27,6 +33,6 @@ pub trait IntoErrorWithKernelId {
 impl<T> IntoErrorWithKernelId for Result<T, io::Error> {
   type Output = Result<T, Error>;
   fn with_kernel_id(self, id: KernelId) -> Self::Output {
-    self.map_err(move |e| Error::Io(id, e) )
+    self.map_err(move |e| Error::Io(Some(id), e) )
   }
 }

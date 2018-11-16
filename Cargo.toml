@@ -10,7 +10,7 @@ members = ["hsa-core-gen", "hsa-core", "legionella-std",
 
            "examples/trivial", "examples/ndarray",
            "examples/mat-mat-mul", "examples/fwd-conv",
-           "examples/fractal", ]
+           "examples/fractal", "examples/mut-slice-ub", ]
 
 [profile.release]
 debug = true

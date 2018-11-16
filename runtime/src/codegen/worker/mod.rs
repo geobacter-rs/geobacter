@@ -14,6 +14,7 @@ use rustc::mir::{CustomIntrinsicMirGen, };
 use rustc::session::config::{CrateType, };
 use rustc::ty::query::Providers;
 use rustc::ty::{self, TyCtxt, subst::Substs, Instance, };
+use rustc::ty::{Const, Closure, ParamEnv, Ref, FnDef, };
 use rustc::util::nodemap::DefIdMap;
 use rustc_driver::{self, driver::compute_crate_disambiguator, };
 use rustc_data_structures::fx::{FxHashMap};
@@ -21,10 +22,13 @@ use rustc_data_structures::sync::{self, Lrc, RwLock, };
 use rustc_metadata;
 use rustc_metadata::cstore::CStore;
 use rustc_incremental;
+use rustc_target::abi::{Size, };
 use syntax::feature_gate;
 use syntax_pos::symbol::{Symbol, InternedString, };
 
-use legionella_intrinsics::{DefIdFromKernelId, GetDefIdFromKernelId, insert_all_intrinsics, };
+use legionella_intrinsics::{DefIdFromKernelId, GetDefIdFromKernelId,
+                            insert_all_intrinsics, LegionellaMirGen,
+                            IsHost, };
 
 use tempdir::TempDir;
 
@@ -45,6 +49,12 @@ mod driver_data;
 
 use super::products::*;
 
+#[doc(hidden)]
+pub enum HostTuplePadding {
+  Arg(usize, Size),
+  Pad(Size),
+}
+
 /// Since we can't send MIR directly, or even serialized (we'd have to
 /// serialize the whole crate too), the host codegenner will be responsible
 /// for creating wrapping code to extract host kernel args.
@@ -60,6 +70,10 @@ pub enum HostCreateFuncMessage {
 pub enum Message {
   /// So we can know when to exit.
   AddAccel(Weak<Accelerator>),
+  HostGetKernArgPadding {
+    kernel: DefId,
+    ret: Sender<Result<Vec<HostTuplePadding>, error::Error>>,
+  },
   HostCreateFunc {
     msg: HostCreateFuncMessage,
     accel_desc: Arc<AcceleratorTargetDesc>,
@@ -214,6 +228,10 @@ impl WorkerTranslatorData {
             let k = Symbol::intern(k.as_ref()).as_interned_str();
             assert!(data.intrinsics.insert(k, v).is_none());
           });
+          let (k, v) = LegionellaMirGen::new(IsHost(false),
+                                             &DefIdFromKernelIdGetter);
+          let k = Symbol::intern(k.as_ref()).as_interned_str();
+          assert!(data.intrinsics.insert(k, v).is_none());
 
           data.thread(&rx);
         })
@@ -281,6 +299,20 @@ impl WorkerTranslatorData {
             Message::AddAccel(accel) => {
               break 'inner InternalMessage::AddAccel(accel);
             },
+            Message::HostGetKernArgPadding {
+              kernel, ret,
+            } => {
+              let _ = self.compute_host_tuple_padding(kernel, context.clone(),
+                                              context.cstore(),
+                                              &arena,
+                                              unsafe {
+                                                ::std::mem::transmute(&mut forest)
+                                              },
+                                              unsafe {
+                                                ::std::mem::transmute(&defs)
+                                              },
+                                              &dep_graph);
+            },
             Message::HostCreateFunc {
               ..
             } => {
@@ -335,6 +367,155 @@ impl WorkerTranslatorData {
   fn context(&self) -> Result<Context, error::Error> {
     self.context.upgrade()
       .ok_or(error::Error::ContextDead)
+  }
+
+  fn compute_host_tuple_padding<'a, 'b>(&'a self, def_id: DefId, context: Context,
+                                        cstore: &'b CStore,
+                                        arena: &'b rustc::ty::AllArenas<'b>,
+                                        forest: &'b mut rustc::hir::map::Forest,
+                                        defs: &'b rustc::hir::map::definitions::Definitions,
+                                        dep_graph: &rustc::dep_graph::DepGraph)
+    -> Result<Vec<HostTuplePadding>, error::Error>
+    where 'a: 'b,
+  {
+    self.with_tcx(def_id, context, cstore, arena, forest, defs, dep_graph, |tcx| {
+      let parent_substs = tcx.empty_substs_for_def_id(def_id);
+      let reveal_all = ParamEnv::reveal_all();
+      let instance = match tcx.type_of(def_id).sty {
+        Ref(_, &ty::TyS {
+          sty: FnDef(def_id, subs),
+          ..
+        }, ..) |
+        FnDef(def_id, subs) => {
+          let subs = tcx
+            .subst_and_normalize_erasing_regions(parent_substs,
+                                                 reveal_all,
+                                                 &subs);
+
+          rustc::ty::Instance::resolve(tcx, reveal_all, def_id, subs)
+            .expect("must be resolvable")
+        },
+
+        Ref(_, &ty::TyS {
+          sty: Closure(def_id, subs),
+          ..
+        }, ..) |
+        Closure(def_id, subs) => {
+          let subs = tcx
+            .subst_and_normalize_erasing_regions(parent_substs,
+                                                 reveal_all,
+                                                 &subs);
+
+          let env = subs.closure_kind(def_id, tcx);
+          Instance::resolve_closure(tcx, def_id, subs, env)
+        },
+
+        _ => {
+          // TODO send an error back
+          unreachable!("can't expand the type of this item: {}",
+                       tcx.item_path_str(def_id));
+        },
+      };
+
+      let ty = instance.ty(tcx);
+      let sig = ty.fn_sig(tcx);
+      let sig = tcx.normalize_erasing_late_bound_regions(reveal_all, &sig);
+
+      let mut tuple_elems = vec![tcx.mk_mut_ref(tcx.types.re_erased, sig.output())];
+      tuple_elems.extend(sig.inputs());
+      let tuple_ty = tcx.mk_tup(tuple_elems.iter());
+      unimplemented!();
+    })
+  }
+
+  fn with_tcx<'a, 'b, F, R>(&'a self, def_id: DefId, context: Context,
+                            cstore: &'b CStore,
+                            arena: &'b rustc::ty::AllArenas<'b>,
+                            forest: &'b mut rustc::hir::map::Forest,
+                            defs: &'b rustc::hir::map::definitions::Definitions,
+                            dep_graph: &rustc::dep_graph::DepGraph,
+                            f: F)
+    -> Result<R, error::Error>
+    where F: for<'z> Fn(TyCtxt<'z, 'b, 'b>) -> Result<R, error::Error>,
+          'a: 'b,
+  {
+    use rustc::hir::def_id::{DefId, DefIndex};
+    use rustc_driver::get_codegen_backend;
+
+    assert!(!def_id.is_local());
+
+    let codegen = get_codegen_backend(&self.sess);
+
+    // extern only providers:
+    let mut local_providers = rustc::ty::query::Providers::default();
+    rustc_driver::driver::default_provide(&mut local_providers);
+    codegen.provide(&mut local_providers);
+    providers_local(&mut local_providers);
+
+    let mut extern_providers = local_providers.clone();
+    rustc_driver::driver::default_provide_extern(&mut extern_providers);
+    codegen.provide_extern(&mut extern_providers);
+    provide_extern_overrides(&mut extern_providers);
+
+    let disk_cache = rustc_incremental::load_query_result_cache(&self.sess);
+
+    let (tx, rx) = channel();
+
+    let tmpdir = TempDir::new("hsa-runtime-codegen")?;
+
+    let out = rustc::session::config::OutputFilenames {
+      out_directory: tmpdir.path().into(),
+      out_filestem: "codegen.elf".into(),
+      single_output_file: None,
+      extra: "".into(),
+      outputs: output_types(),
+    };
+
+    let map_crate = rustc::hir::map::map_crate(&self.sess, cstore,
+                                               forest, defs);
+    let resolutions = rustc::ty::Resolutions {
+      freevars: Default::default(),
+      trait_map: Default::default(),
+      maybe_unused_trait_imports: Default::default(),
+      maybe_unused_extern_crates: Default::default(),
+      export_map: Default::default(),
+      extern_prelude: Default::default(),
+    };
+
+    let driver_data = DriverData {
+      context: self.context().unwrap(),
+      accels: self.accels.as_ref(),
+
+      root: def_id,
+
+      passes: self.passes.as_ref(),
+
+      replaced_def_ids: RwLock::new(Default::default()),
+      type_of: RwLock::new(Default::default()),
+      intrinsics: &self.intrinsics,
+    };
+    let driver_data: DriverData<'static> = unsafe {
+      ::std::mem::transmute(driver_data)
+    };
+    let driver_data = Box::new(driver_data) as Box<dyn Any + Send + Sync>;
+
+    let out = TyCtxt::create_and_enter(&self.sess, cstore,
+                                       local_providers,
+                                       extern_providers,
+                                       &arena,
+                                       resolutions,
+                                       map_crate,
+                                       disk_cache,
+                                       "", tx, &out,
+                                       Some(driver_data), move |tcx: TyCtxt| -> Result<R, error::Error> {
+        // Do some initialization of the DepGraph that can only be done with the
+        // tcx available.
+        rustc_incremental::dep_graph_tcx_init(tcx);
+
+        Ok(f(tcx)?)
+      })?;
+
+    Ok(out)
   }
 
   fn codegen_kernel<'a, 'b>(&'a self, id: KernelId, context: Context,
@@ -427,7 +608,7 @@ impl WorkerTranslatorData {
                                                  map_crate,
                                                  disk_cache,
                                                  "", tx, &out,
-                                                 Some(driver_data), |tcx: TyCtxt| -> Result<String, _> {
+                                                 Some(driver_data), |tcx: TyCtxt| -> Result<String, error::Error> {
         info!("output dir for {:?}: {}", def_id, out.out_directory.display());
 
         // Do some initialization of the DepGraph that can only be done with the

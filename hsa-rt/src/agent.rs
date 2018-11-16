@@ -337,7 +337,8 @@ pub struct IsaInfo {
 }
 
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct Agent(pub(crate) ffi::hsa_agent_t, ApiContext);
+pub struct Agent(pub(crate) ffi::hsa_agent_t,
+                 pub(crate) ApiContext);
 impl Agent {
   pub fn name(&self) -> Result<String, Box<Error>> {
     let bytes = agent_info!(self, ffi::hsa_agent_info_t_HSA_AGENT_INFO_NAME, [0u8; 64])?;
@@ -472,6 +473,9 @@ impl Agent {
       },
     })
   }
+
+  #[doc(hidden)]
+  pub unsafe fn raw_handle(&self) -> ffi::hsa_agent_t { self.0 }
 }
 impl ::ContextRef for Agent {
   fn context(&self) -> &ApiContext { &self.1 }

@@ -53,7 +53,6 @@ use indexvec::Idx;
 
 use hsa_rt::agent::{Agent, Isa, };
 use hsa_rt::mem::region::Region;
-use hsa_rt::queue::MultiQueue;
 
 use rustc::session::config::host_triple;
 use rustc_target::spec::{Target, TargetTriple, };
@@ -86,10 +85,6 @@ pub trait Accelerator: Debug + Send + Sync {
   fn isa(&self) -> Option<&Isa> { None }
 
   fn kernargs_region(&self) -> &Region;
-
-  fn queues(&self) -> Arc<Vec<Arc<MultiQueue>>>;
-
-  fn create_queues(&self, count: usize, queue_size: usize) -> Result<Range<usize>, Box<Error>>;
 
   fn accel_target_desc(&self) -> Result<Arc<AcceleratorTargetDesc>, Box<Error>>;
   fn device_libs_builder(&self) -> Option<Box<DeviceLibsBuilder>> { None }
