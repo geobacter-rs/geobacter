@@ -1,12 +1,15 @@
 
 [workspace]
 members = ["hsa-core-gen", "hsa-core", "legionella-std",
+           "runtime-core", "runtime-amd", "runtime-nv",
            "runtime",
            "rustc-intrinsics", "legionella-intrinsics",
            "bootstrap-rustc-driver", "rustc-driver",
 
            "hsa-rt-sys", "hsa-rt",
            "tools/hsa-agent-info",
+
+           "rav1e",
 
            "examples/trivial", "examples/ndarray",
            "examples/mat-mat-mul", "examples/fwd-conv",

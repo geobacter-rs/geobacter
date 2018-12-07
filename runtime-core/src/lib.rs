@@ -74,17 +74,10 @@ mod utils;
 newtype_index!(AcceleratorId);
 
 pub trait Accelerator: Debug + Send + Sync {
-  // A type with all arch specific data present, for use as a key
-  // in the object cache.
   fn id(&self) -> AcceleratorId;
 
   /// Returns `None` if this accel is a host.
   fn host_accel(&self) -> Option<Arc<Accelerator>> { None }
-
-  fn agent(&self) -> &Agent;
-  fn isa(&self) -> Option<&Isa> { None }
-
-  fn kernargs_region(&self) -> &Region;
 
   fn accel_target_desc(&self) -> Result<Arc<AcceleratorTargetDesc>, Box<Error>>;
   fn device_libs_builder(&self) -> Option<Box<DeviceLibsBuilder>> { None }
