@@ -467,7 +467,7 @@ impl<T> VecN<T> for N16<T>
 
 #[hsa_lang_type = "vec"]
 #[repr(transparent)]
-pub struct Vec<T, N>(pub(crate) <N as VecN<T>>::InnerT)
+pub struct Vec<T, N>(pub <N as VecN<T>>::InnerT)
   where N: VecN<T>,
         T: ScalarT;
 
@@ -883,7 +883,7 @@ pub struct Int<Bits>(pub(crate) Bits::IntStorageTy)
 
 pub trait ScalarT { }
 impl ScalarT for Real<N16<()>> { }
-impl ScalarT for Real<N24<()>> { }
+//impl ScalarT for Real<N24<()>> { }
 impl ScalarT for Real<N32<()>> { }
 impl ScalarT for Real<N64<()>> { }
 impl ScalarT for UInt<N8<()>>  { }
@@ -1204,6 +1204,15 @@ impl_from_for!( Int<N16<()>>, i16);
 impl_from_for!( Int<N32<()>>, i32);
 impl_from_for!( Int<N64<()>>, i64);
 
+#[cfg(target_pointer_width = "64")]
+impl_from_for!(UInt<N64<()>>, usize);
+#[cfg(target_pointer_width = "32")]
+impl_from_for!(UInt<N32<()>>, usize);
+#[cfg(target_pointer_width = "64")]
+impl_from_for!( Int<N64<()>>, isize);
+#[cfg(target_pointer_width = "32")]
+impl_from_for!( Int<N32<()>>, isize);
+
 pub type R32 = Real<N32<()>>;
 pub type R64 = Real<N64<()>>;
 pub type U8  = UInt<N8<()>>;
@@ -1214,6 +1223,15 @@ pub type I8  =  Int<N8<()>>;
 pub type I16 =  Int<N16<()>>;
 pub type I32 =  Int<N32<()>>;
 pub type I64 =  Int<N64<()>>;
+
+#[cfg(target_pointer_width = "64")]
+pub type USize = UInt<N64<()>>;
+#[cfg(target_pointer_width = "32")]
+pub type USize = UInt<N32<()>>;
+#[cfg(target_pointer_width = "64")]
+pub type ISize =  Int<N64<()>>;
+#[cfg(target_pointer_width = "32")]
+pub type ISize =  Int<N32<()>>;
 
 impl<T> Vec2<T>
   where T: ScalarT + Copy,
@@ -1271,4 +1289,26 @@ impl<T> Vec4<T>
       self::simd_extract(self.0, 3)
     }
   }
+}
+// XXX Rust places big restrictions on generic parameters bounds when used
+// in const functions. For now, we basically have to do this manually for
+// each type.
+impl Vec4<f32> {
+  pub const fn new_c(v: [f32; 4]) -> Self {
+    Vec(InnerVecN4(v[0], v[1], v[2], v[3]))
+  }
+}
+impl Vec3<u32> {
+  pub const fn new_c(v: [u32; 3]) -> Self {
+    Vec(InnerVecN3(v[0], v[1], v[2]))
+  }
+  /// Kludge: multiple in-scope `new_c`
+  pub const fn new_u32_c(v: [u32; 3]) -> Self { Self::new_c(v) }
+}
+impl Vec3<usize> {
+  pub const fn new_c(v: [usize; 3]) -> Self {
+    Vec(InnerVecN3(v[0], v[1], v[2]))
+  }
+  /// Kludge: multiple in-scope `new_c`
+  pub const fn new_usize_c(v: [usize; 3]) -> Self { Self::new_c(v) }
 }

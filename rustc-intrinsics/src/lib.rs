@@ -1,5 +1,6 @@
 #![feature(rustc_private)]
 
+#[macro_use]
 extern crate rustc;
 extern crate rustc_driver;
 extern crate rustc_errors;
@@ -7,6 +8,7 @@ extern crate rustc_metadata;
 extern crate rustc_mir;
 extern crate rustc_codegen_utils;
 extern crate rustc_data_structures;
+extern crate rustc_target;
 extern crate syntax;
 extern crate syntax_pos;
 #[macro_use]
@@ -19,24 +21,29 @@ use std::path::PathBuf;
 use self::rustc_driver::{driver, Compilation, CompilerCalls, RustcDefaultCalls, };
 use self::rustc::hir::def_id::{DefId, };
 use self::rustc::mir::{Constant, Operand, Rvalue, Statement,
-                 StatementKind, AggregateKind, Local, };
+                 StatementKind, Local, };
 use self::rustc::mir::interpret::{ConstValue, Scalar, Allocation,
                                   PointerArithmetic, Pointer, };
 use self::rustc::mir::{self, CustomIntrinsicMirGen, RETURN_PLACE, };
 use self::rustc::session::{config, Session, };
 use self::rustc::session::config::{ErrorOutputType, Input, };
-use self::rustc::ty::{self, TyCtxt, Instance, layout::Size, layout::Align, };
+use self::rustc::ty::{self, TyCtxt, layout::Align, };
 use self::rustc::ty::query::Providers;
-use self::rustc::ty::{Const, Closure, ParamEnv, Ref, FnDef, };
+use self::rustc::ty::{Const, ParamEnv, };
 use self::rustc_codegen_utils::codegen_backend::CodegenBackend;
 use self::rustc_data_structures::fx::{FxHashMap, };
 use self::rustc_data_structures::sync::{Lrc, };
 use self::rustc_data_structures::indexed_vec::*;
 use self::syntax::ast;
+use crate::syntax::feature_gate::{AttributeType, };
 use self::syntax_pos::DUMMY_SP;
 use self::syntax_pos::symbol::{Symbol, };
 
 use self::rustc_driver::getopts;
+
+use crate::help::*;
+
+pub mod help;
 
 pub fn main<F>(f: F)
   where F: FnOnce(&mut Generators),
@@ -167,6 +174,9 @@ impl<'a> CompilerCalls<'a> for HsaRustcDriver {
     odir: &Option<PathBuf>,
     ofile: &Option<PathBuf>,
   ) -> Compilation {
+
+    whitelist_legionella_attr(sess);
+
     let gen = generators();
     assert!(gen.cstore.get().is_none());
     gen.cstore.set(Some(unsafe {
@@ -197,6 +207,19 @@ impl<'a> CompilerCalls<'a> for HsaRustcDriver {
   }
 }
 
+fn whitelist_legionella_attr(sess: &Session) {
+  let mut plugin_attributes = sess.plugin_attributes
+    .borrow_mut();
+
+  plugin_attributes
+    .push(("legionella".into(),
+           AttributeType::Whitelisted));
+  plugin_attributes
+    .push(("legionella_attr".into(),
+           AttributeType::Whitelisted));
+}
+
+
 fn custom_intrinsic_mirgen<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                      def_id: DefId)
   -> Option<Lrc<dyn CustomIntrinsicMirGen>>
@@ -226,6 +249,18 @@ fn custom_intrinsic_mirgen<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 }
 
 struct KernelIdFor;
+
+impl KernelIdFor {
+  fn inner_ret_ty<'a, 'tcx>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> ty::Ty<'tcx> {
+    tcx.mk_tup([
+      tcx.mk_static_str(),
+      tcx.types.u64,
+      tcx.types.u64,
+      tcx.types.u64,
+    ].into_iter())
+  }
+}
+
 struct KernelUpvars;
 
 impl CustomIntrinsicMirGen for KernelIdFor {
@@ -235,53 +270,9 @@ impl CustomIntrinsicMirGen for KernelIdFor {
                                        mir: &mut mir::Mir<'tcx>)
     where 'tcx: 'a
   {
-    let parent_param_substs = instance.substs;
+    let _parent_param_substs = instance.substs;
 
     let reveal_all = ParamEnv::reveal_all();
-
-    let ret = mir::Place::Local(RETURN_PLACE);
-    let local = Local::new(1);
-    let local_ty = mir.local_decls[local].ty;
-    let local_ty = tcx
-      .subst_and_normalize_erasing_regions(parent_param_substs,
-                                           reveal_all,
-                                           &local_ty);
-
-    let instance = match local_ty.sty {
-      Ref(_, &ty::TyS {
-          sty: FnDef(def_id, subs),
-          ..
-        }, ..) |
-      FnDef(def_id, subs) => {
-        let subs = tcx
-          .subst_and_normalize_erasing_regions(parent_param_substs,
-                                               reveal_all,
-                                               &subs);
-
-        rustc::ty::Instance::resolve(tcx, reveal_all, def_id, subs)
-          .expect("must be resolvable")
-      },
-
-      Ref(_, &ty::TyS {
-          sty: Closure(def_id, subs),
-          ..
-        }, ..) |
-      Closure(def_id, subs) => {
-        let subs = tcx
-          .subst_and_normalize_erasing_regions(parent_param_substs,
-                                               reveal_all,
-                                               &subs);
-
-        let env = subs.closure_kind(def_id, tcx);
-        Instance::resolve_closure(tcx, def_id, subs, env)
-      },
-
-      _ => {
-        let msg = format!("can't expand the type of this item: {}",
-                          tcx.item_path_str(instance.def_id()));
-        tcx.sess.span_fatal(DUMMY_SP, &msg[..]);
-      },
-    };
 
     let source_info = mir::SourceInfo {
       span: DUMMY_SP,
@@ -298,75 +289,52 @@ impl CustomIntrinsicMirGen for KernelIdFor {
       is_cleanup: false,
     };
 
-    let def_id = instance.def_id();
-    let ty = instance.ty(tcx);
-    let sig = ty.fn_sig(tcx);
-    let sig = tcx.normalize_erasing_late_bound_regions(reveal_all, &sig);
-    let inputs = sig.inputs();
-    for input in inputs.iter() {
-      let msg = format!("input ty: {:?}", input);
-      tcx.sess.note_without_error(&msg);
-      match input.sty {
-        ty::Adt(def, subs) => {
-          let msg = format!("adt did: {:?}, repr {:?}",
-                            def.did, def.repr);
-          tcx.sess.note_without_error(&msg);
-          for (idx, variant) in def.variants.iter().enumerate() {
-            let msg = format!("index {} variant def: {:#?}",
-                              idx, variant);
+    let ret = mir::Place::Local(RETURN_PLACE);
+    let local = Local::new(1);
+    let local_ty = mir.local_decls[local].ty;
+
+    let instance = extract_opt_fn_instance(tcx, instance, local_ty);
+
+    let slice = build_compiler_opt(tcx, instance, |tcx, instance| {
+      let def_id = instance.def_id();
+      let ty = instance.ty(tcx);
+      let sig = ty.fn_sig(tcx);
+      let sig = tcx.normalize_erasing_late_bound_regions(reveal_all, &sig);
+      let inputs = sig.inputs();
+      for input in inputs.iter() {
+        let msg = format!("input ty: {:?}", input);
+        tcx.sess.note_without_error(&msg);
+        match input.sty {
+          ty::Adt(def, _subs) => {
+            let msg = format!("adt did: {:?}, repr {:?}",
+                              def.did, def.repr);
             tcx.sess.note_without_error(&msg);
-          }
-          continue;
-        },
-        _ => { },
+            for (idx, variant) in def.variants.iter().enumerate() {
+              let msg = format!("index {} variant def: {:#?}",
+                                idx, variant);
+              tcx.sess.note_without_error(&msg);
+            }
+            continue;
+          },
+          _ => { },
+        }
       }
-    }
 
-    let crate_name = tcx.crate_name(def_id.krate);
-    let crate_name = format!("{}", crate_name);
-    let id = tcx.allocate_bytes(crate_name.as_bytes());
-    let crate_name = ConstValue::new_slice(Scalar::Ptr(id.into()),
-                                           crate_name.len() as u64,
-                                           tcx);
-    let crate_name = tcx.mk_const(Const {
-      ty: tcx.mk_static_str(),
-      val: crate_name,
+      let crate_name = tcx.crate_name(def_id.krate);
+      let disambiguator = tcx.crate_disambiguator(def_id.krate);
+      let (d_hi, d_lo) = disambiguator.to_fingerprint().as_value();
+
+      let crate_name = static_str_const_value(tcx, &*crate_name.as_str());
+      let d_hi = tcx.mk_u64_cv(d_hi);
+      let d_lo = tcx.mk_u64_cv(d_lo);
+      let id = tcx.mk_u64_cv(def_id.index.as_raw_u32() as u64);
+
+      static_tuple_const_value(tcx, "kernel_id_for",
+                               vec![crate_name, d_hi, d_lo, id].into_iter(),
+                               self.inner_ret_ty(tcx))
     });
-    let crate_name = Constant {
-      span: source_info.span,
-      ty: tcx.mk_static_str(),
-      literal: crate_name,
-      user_ty: None,
-    };
-    let crate_name = Box::new(crate_name);
-    let crate_name = Operand::Constant(crate_name);
+    let rvalue = const_value_rvalue(tcx, slice, self.output(tcx));
 
-    let mk_u64 = |v: u64| {
-      let v = Scalar::from_uint(v, Size::from_bytes(8));
-      let v = ConstValue::Scalar(v);
-      let v = tcx.mk_const(Const {
-        ty: tcx.types.u64,
-        val: v,
-      });
-      let v = Constant {
-        span: source_info.span,
-        ty: tcx.types.u64,
-        literal: v,
-        user_ty: None,
-      };
-      let v = Box::new(v);
-      Operand::Constant(v)
-    };
-
-    let disambiguator = tcx.crate_disambiguator(def_id.krate);
-    let (d_hi, d_lo) = disambiguator.to_fingerprint().as_value();
-    let d_hi = mk_u64(d_hi);
-    let d_lo = mk_u64(d_lo);
-
-    let id = mk_u64(def_id.index.as_raw_u32() as u64);
-
-    let rvalue = Rvalue::Aggregate(Box::new(AggregateKind::Tuple),
-                                   vec![crate_name, d_hi, d_lo, id]);
     let stmt_kind = StatementKind::Assign(ret, Box::new(rvalue));
     let stmt = Statement {
       source_info: source_info.clone(),
@@ -395,11 +363,7 @@ impl CustomIntrinsicMirGen for KernelIdFor {
   }
   /// The return type.
   fn output<'a, 'tcx>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> ty::Ty<'tcx> {
-    let inner = tcx.mk_tup([tcx.mk_static_str(),
-                            tcx.types.u64,
-                            tcx.types.u64,
-                            tcx.types.u64,].into_iter());
-    return inner;
+    return mk_static_slice(tcx, self.inner_ret_ty(tcx));
   }
 }
 impl CustomIntrinsicMirGen for KernelUpvars {
@@ -448,8 +412,8 @@ impl CustomIntrinsicMirGen for KernelContextDataId {
   {
     let ptr_size = tcx.pointer_size();
     let data = vec![0; ptr_size.bytes() as usize];
-    let align = Align::from_bits(64, 64).unwrap(); // XXX arch dependent.
-    let mut alloc = Allocation::from_bytes(&data[..], align);
+    let align = Align::from_bits(64).unwrap(); // XXX arch dependent.
+    let mut alloc = Allocation::from_bytes(&data[..], align, ());
     alloc.mutability = ast::Mutability::Mutable;
     let alloc = tcx.intern_const_alloc(alloc);
     let alloc_id = tcx.alloc_map.lock().allocate(alloc);

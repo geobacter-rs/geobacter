@@ -23,8 +23,6 @@ use flate2::read::DeflateDecoder;
 pub enum MetadataLoadingError {
   Generic(Box<Error>),
   Io(io::Error),
-  Read,
-  ObjectFile,
   SectionMissing,
   SymbolUtf(Utf8Error),
   Deflate(PathBuf, String, io::Error),
@@ -35,8 +33,6 @@ impl Error for MetadataLoadingError {
     match self {
       &MetadataLoadingError::Generic(ref e) => e.description(),
       &MetadataLoadingError::Io(ref e) => e.description(),
-      &MetadataLoadingError::Read => "error reading file into memory",
-      &MetadataLoadingError::ObjectFile => "object file format error",
       &MetadataLoadingError::SectionMissing => "metadata section missing from file",
       &MetadataLoadingError::SymbolUtf(ref e) => e.description(),
       &MetadataLoadingError::Deflate(_, _, ref e) => e.description(),
@@ -132,7 +128,7 @@ impl CrateMetadataLoader {
       // see if it is a rustc plugin. If so, we must skip it!
       let root = object.owner_blob().get_root();
       if root.plugin_registrar_fn.is_some() ||
-        root.macro_derive_registrar.is_some() {
+        root.proc_macro_decls_static.is_some() {
         info!("looks like a rustc plugin, skipping");
         continue 'outer;
       }

@@ -4,13 +4,13 @@
 #![feature(custom_attribute)]
 #![feature(std_internals)]
 #![feature(compiler_builtins_lib)]
+#![feature(arbitrary_self_types)]
 
 #![crate_type = "dylib"]
 
 #![recursion_limit="256"]
 
 extern crate hsa_core;
-extern crate hsa_rt;
 #[macro_use] extern crate rustc;
 extern crate rustc_metadata;
 extern crate rustc_data_structures;
@@ -40,22 +40,23 @@ extern crate seahash;
 extern crate core;
 extern crate dirs;
 extern crate fs2;
-extern crate legionella_intrinsics;
-extern crate ndarray as nd;
+extern crate legionella_core as lcore;
+extern crate legionella_std as lstd;
+extern crate legionella_intrinsics as lintrinsics;
+extern crate vulkano as vk;
+extern crate owning_ref;
+extern crate crossbeam;
 
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher, };
-use std::ops::{Range, };
 use std::sync::{Arc, };
 
 use indexvec::Idx;
 
-use hsa_rt::agent::{Agent, Isa, };
-use hsa_rt::mem::region::Region;
-
 use rustc::session::config::host_triple;
-use rustc_target::spec::{Target, TargetTriple, };
+use rustc_target::spec::{Target, TargetTriple, abi::Abi, };
 
 use accelerators::DeviceLibsBuild;
 use codegen::worker::CodegenComms;
@@ -73,13 +74,15 @@ mod utils;
 
 newtype_index!(AcceleratorId);
 
-pub trait Accelerator: Debug + Send + Sync {
+pub trait Accelerator: Debug + Send + Sync + 'static {
   fn id(&self) -> AcceleratorId;
 
-  /// Returns `None` if this accel is a host.
-  fn host_accel(&self) -> Option<Arc<Accelerator>> { None }
+  /// Get a comm interface for the codegen for the host of the accel.
+  fn host_codegen(&self) -> CodegenComms;
 
-  fn accel_target_desc(&self) -> Result<Arc<AcceleratorTargetDesc>, Box<Error>>;
+  fn device(&self) -> &Arc<vk::device::Device>;
+
+  fn accel_target_desc(&self) -> &Arc<AcceleratorTargetDesc>;
   fn device_libs_builder(&self) -> Option<Box<DeviceLibsBuilder>> { None }
 
   fn set_codegen(&self, comms: CodegenComms) -> Option<CodegenComms>;
@@ -90,9 +93,15 @@ pub trait DeviceLibsBuilder: Debug + Send + Sync {
   fn run_build(&self, device_libs: &mut DeviceLibsBuild) -> Result<(), Box<Error>>;
 }
 
+/// A hashable structure describing what is best supported by a device.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct AcceleratorTargetDesc {
   pub allow_indirect_function_calls: bool,
+  #[serde(with = "serde_utils::abi")]
+  pub kernel_abi: Abi,
+  #[serde(flatten, with = "serde_utils::VkFeatures")]
+  pub features: vk::device::Features,
+  pub extensions: BTreeSet<String>,
   #[serde(flatten, with = "serde_utils::Target")]
   pub target: Target,
 }
@@ -103,6 +112,11 @@ impl AcceleratorTargetDesc {
 
   pub fn rustc_target_options(&self, target: &mut Target) {
     *target = self.target.clone();
+  }
+
+  pub fn is_host(&self) -> bool { !self.is_spirv() }
+  fn is_spirv(&self) -> bool {
+    self.target.llvm_target == "spir64-unknown-unknown"
   }
 
   pub fn get_stable_hash(&self) -> u64 {
@@ -121,6 +135,9 @@ impl Default for AcceleratorTargetDesc {
       .expect("no host target?");
     AcceleratorTargetDesc {
       allow_indirect_function_calls: true,
+      kernel_abi: Abi::C,
+      features: vk::device::Features::none(),
+      extensions: Default::default(),
       target,
     }
   }
@@ -130,6 +147,7 @@ impl Hash for AcceleratorTargetDesc {
     where H: Hasher,
   {
     self.allow_indirect_function_calls.hash(hasher);
+    self.features.hash(hasher);
 
     macro_rules! impl_for {
       ({
@@ -193,6 +211,7 @@ impl Hash for AcceleratorTargetDesc {
       pub is_like_msvc: bool,
       pub is_like_android: bool,
       pub is_like_emscripten: bool,
+      pub is_like_fuchsia: bool,
       pub linker_is_gnu: bool,
       pub allows_weak_linkage: bool,
       pub has_rpath: bool,
@@ -202,7 +221,6 @@ impl Hash for AcceleratorTargetDesc {
       pub archive_format: String,
       pub allow_asm: bool,
       pub custom_unwind_resume: bool,
-      pub exe_allocation_crate: Option<String>,
       pub has_elf_tls: bool,
       pub obj_is_bitcode: bool,
       pub no_integrated_as: bool,
@@ -227,6 +245,8 @@ impl Hash for AcceleratorTargetDesc {
       pub embed_bitcode: bool,
       pub emit_debug_gdb_scripts: bool,
       pub requires_uwtable: bool,
+      pub override_export_symbols: Option<Vec<String>>,
+      pub addr_spaces: AddrSpaces,
     }, self.target.options);
   }
 }

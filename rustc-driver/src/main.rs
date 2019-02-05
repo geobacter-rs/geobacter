@@ -37,9 +37,11 @@ pub fn main() {
   legionella_intrinsics::main(|gen| {
     insert_all_intrinsics(&GeneratorDefIdKernelId,
                           |k, v| {
-                            assert!(gen.intrinsics.insert(k, v).is_none());
+                            let inserted = gen.intrinsics.insert(k.clone(), v);
+                            assert!(inserted.is_none(), "key: {}", k);
                           });
-    let (k, v) = LegionellaMirGen::new(IsHost(true),&GeneratorDefIdKernelId);
+    let (k, v) = LegionellaMirGen::new(ExeModel(None),
+                                       &GeneratorDefIdKernelId);
     assert!(gen.intrinsics.insert(k, v).is_none());
   });
 }

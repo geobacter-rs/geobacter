@@ -2,9 +2,10 @@
 [workspace]
 members = ["hsa-core-gen", "hsa-core", "legionella-std",
            "runtime-core", "runtime-amd", "runtime-nv",
-           "runtime",
            "rustc-intrinsics", "legionella-intrinsics",
            "bootstrap-rustc-driver", "rustc-driver",
+
+           "legionella-core",
 
            "hsa-rt-sys", "hsa-rt",
            "tools/hsa-agent-info",
@@ -26,3 +27,6 @@ rpath = true
 rpath = true
 [profile.bench]
 rpath = true
+
+[replace]
+"vulkano:0.11.1" = { path = "vulkano/vulkano" }

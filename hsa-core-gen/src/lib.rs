@@ -270,7 +270,7 @@ impl RefTy {
 
 const SCALAR_TYPES: &'static [ScalarTy] = &[
   ScalarTy::Float(16),
-  ScalarTy::Float(24),
+  //ScalarTy::Float(24),
   ScalarTy::Float(32),
   ScalarTy::Float(64),
 

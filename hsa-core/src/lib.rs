@@ -4,6 +4,7 @@
 #![feature(repr_simd)]
 #![feature(associated_type_defaults)]
 #![feature(platform_intrinsics)]
+#![feature(fn_traits)]
 
 #[macro_use] extern crate serde_derive;
 extern crate serde;

@@ -1,5 +1,6 @@
 use std::collections::{HashMap as StdHashMap, HashSet as StdHashSet, };
 use std::error::Error;
+use std::fmt;
 use std::fs::{create_dir_all, File, };
 use std::hash::{BuildHasherDefault, Hash, };
 use std::io;
@@ -55,7 +56,9 @@ pub fn run_cmd(mut cmd: Command) -> Result<(), Box<Error>> {
 /// that no attempts to send on the sender are made on the shared copy.
 pub struct UnsafeSyncSender<T>(pub(crate) Sender<T>);
 impl<T> UnsafeSyncSender<T> {
-  pub fn clone_into<U>(&self) -> U
+  /// Can't name this `clone_into`: the compiler will think we're using a
+  /// new feature when we really aren't.
+  pub fn clone_unsync<U>(&self) -> U
     where U: From<Self>,
   {
     U::from(self.clone())
@@ -67,6 +70,11 @@ impl<T> Clone for UnsafeSyncSender<T> {
   }
 }
 unsafe impl<T> Sync for UnsafeSyncSender<T> { }
+impl<T> fmt::Debug for UnsafeSyncSender<T> {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "<..>")
+  }
+}
 
 pub struct FileLockGuard(File);
 impl FileLockGuard {

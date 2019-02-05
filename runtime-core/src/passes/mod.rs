@@ -4,8 +4,8 @@ use rustc::ty::{TyCtxt, };
 use codegen::worker::{DriverData, };
 
 pub mod lang_item;
-pub mod alloc;
-pub mod panic;
+//pub mod alloc;
+//pub mod panic;
 pub mod compiler_builtins;
 
 pub enum PassType {

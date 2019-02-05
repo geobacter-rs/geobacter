@@ -1,5 +1,6 @@
 use std::any::Any;
 use std::collections::{BTreeMap, };
+use std::error::{Error, };
 use std::fs::File;
 use std::io::{self, Read, };
 use std::sync::mpsc::{channel, Sender, Receiver, RecvTimeoutError, };
@@ -8,31 +9,40 @@ use std::time::Duration;
 use std::path::{Path, };
 
 use rustc;
+use rustc::hir::{SpirVTypeSpec, SpirVAttrNode, };
 use rustc::hir::def_id::{CrateNum, DefId};
 use rustc::middle::exported_symbols::{SymbolExportLevel, };
 use rustc::mir::{CustomIntrinsicMirGen, };
 use rustc::session::config::{CrateType, };
 use rustc::ty::query::Providers;
 use rustc::ty::{self, TyCtxt, subst::Substs, Instance, };
-use rustc::ty::{Const, Closure, ParamEnv, Ref, FnDef, };
+use rustc::ty::{ParamEnv, FnDef, AdtDef, };
 use rustc::util::nodemap::DefIdMap;
 use rustc_driver::{self, driver::compute_crate_disambiguator, };
 use rustc_data_structures::fx::{FxHashMap};
-use rustc_data_structures::sync::{self, Lrc, RwLock, };
+use rustc_data_structures::indexed_vec::Idx;
+use rustc_data_structures::sync::{self, Lrc, };
 use rustc_metadata;
 use rustc_metadata::cstore::CStore;
 use rustc_incremental;
-use rustc_target::abi::{Size, };
+use rustc_target::abi::{LayoutDetails, Variants, FieldPlacement,
+                        VariantIdx, };
+use syntax::ast;
 use syntax::feature_gate;
 use syntax_pos::symbol::{Symbol, InternedString, };
 
-use legionella_intrinsics::{DefIdFromKernelId, GetDefIdFromKernelId,
-                            insert_all_intrinsics, LegionellaMirGen,
-                            IsHost, };
+use crossbeam::sync::WaitGroup;
+
+use lintrinsics::{DefIdFromKernelId, GetDefIdFromKernelId,
+                  insert_all_intrinsics, LegionellaMirGen,
+                  ExeModel, };
+use lintrinsics::attrs::*;
 
 use tempdir::TempDir;
 
 use hsa_core::kernel::KernelId;
+use lcore::*;
+use lstd::vk_help::{StaticPipelineLayoutDesc, StaticShaderInterfaceDef, };
 
 use {Accelerator, AcceleratorTargetDesc,
      context::Context, context::WeakContext, };
@@ -49,10 +59,21 @@ mod driver_data;
 
 use super::products::*;
 
-#[doc(hidden)]
-pub enum HostTuplePadding {
-  Arg(usize, Size),
-  Pad(Size),
+pub type CodegenShaderInterface = (StaticShaderInterfaceDef, StaticShaderInterfaceDef);
+
+// TODO we need to create a talk to a "host codegen" so that we can ensure
+// that adt's have the same layout in the shader/kernel as on the host.
+// TODO XXX only one codegen query is allowed at a time.
+// TODO codegen worker workers (ie codegen multiple functions concurrently)
+
+#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
+pub struct CodegenDesc {
+  pub id: KernelId,
+  pub exe_model: ExecutionModel,
+  pub pipeline: StaticPipelineLayoutDesc,
+  pub interface: Option<CodegenShaderInterface>,
+  pub capabilities: Capabilities<'static, [Capability]>,
+  pub extensions: &'static [&'static str],
 }
 
 /// Since we can't send MIR directly, or even serialized (we'd have to
@@ -67,22 +88,29 @@ pub enum HostCreateFuncMessage {
 
 }
 
-pub enum Message {
+/// DefId is used here because they *should* be identical over every
+/// codegen, due to the shared CStore.
+/// Additionally, we require all these queries to block, so that we can send
+/// references of things. Normally, we would have no assertion that accel tcx
+/// outlives the refs sent. It is still unsafe here!
+pub(crate) enum HostQueryMessage {
+  TyLayout {
+    ty: &'static ty::Ty<'static>,
+    wait: WaitGroup,
+    ret: Sender<Result<LayoutDetails, Box<Error + Sync + Send>>>,
+  },
+}
+
+pub(crate) enum Message {
   /// So we can know when to exit.
   AddAccel(Weak<Accelerator>),
-  HostGetKernArgPadding {
-    kernel: DefId,
-    ret: Sender<Result<Vec<HostTuplePadding>, error::Error>>,
-  },
-  HostCreateFunc {
-    msg: HostCreateFuncMessage,
-    accel_desc: Arc<AcceleratorTargetDesc>,
-    ret: Sender<Result<usize, error::Error>>,
+  StartHostQuery {
+    rx: Receiver<HostQueryMessage>,
   },
   Codegen {
-    id: KernelId,
+    desc: CodegenDesc,
 
-    host_accel: Option<Sender<Message>>,
+    //host_codegen: Sender<HostQueryMessage>,
 
     ret: Sender<Result<CodegenResults, error::Error>>,
   },
@@ -97,20 +125,41 @@ impl CodegenComms {
     -> io::Result<CodegenComms>
   {
     WorkerTranslatorData::new(context, accel_desc,
-                              accel)
+                              Some(accel))
   }
-  pub fn codegen(&self, id: KernelId,
-                 host: Option<CodegenComms>)
+  pub fn new_host(context: &Context,
+                  desc: Arc<AcceleratorTargetDesc>)
+    -> io::Result<CodegenComms>
+  {
+
+    WorkerTranslatorData::new(context, desc, None)
+  }
+
+  fn start_host_query_session(&self) -> Sender<HostQueryMessage> {
+    let (accel_tx, host_rx) = channel();
+
+    let msg = Message::StartHostQuery {
+      rx: host_rx,
+    };
+
+    self.0.send(msg)
+      .expect("the codegen thread crashed/exited");
+
+    accel_tx
+  }
+
+  pub fn codegen(&self,
+                 desc: CodegenDesc,
+                 host: CodegenComms)
     -> Result<CodegenResults, error::Error>
   {
     let (tx, rx) = channel();
+
+    //let host_codegen = host.start_host_query_session();
+
     let msg = Message::Codegen {
-      id,
-      host_accel: host
-        .map(|host| {
-          let CodegenComms(host) = host;
-          host
-        }),
+      desc,
+      //host_codegen,
       ret: tx,
     };
 
@@ -128,12 +177,12 @@ impl CodegenComms {
       .expect("the codegen thread crashed/exited");
   }
 
-  pub unsafe fn sync_comms(self) -> CodegenUnsafeSyncComms {
+  pub(crate) unsafe fn sync_comms(self) -> CodegenUnsafeSyncComms {
     let CodegenComms(this) = self;
     UnsafeSyncSender(this)
   }
 }
-pub type CodegenUnsafeSyncComms = UnsafeSyncSender<Message>;
+pub(crate) type CodegenUnsafeSyncComms = UnsafeSyncSender<Message>;
 impl From<CodegenUnsafeSyncComms> for CodegenComms {
   fn from(UnsafeSyncSender(v): CodegenUnsafeSyncComms) -> Self {
     CodegenComms(v)
@@ -163,20 +212,18 @@ pub struct WorkerTranslatorData {
 impl WorkerTranslatorData {
   pub fn new(ctx: &Context,
              accel_desc: Arc<AcceleratorTargetDesc>,
-             accel: &Arc<Accelerator>)
+             accel: Option<&Arc<Accelerator>>)
     -> io::Result<CodegenComms>
   {
     use std::thread::Builder;
 
-    use passes::alloc::AllocPass;
     use passes::lang_item::LangItemPass;
-    use passes::panic::PanicPass;
     use passes::compiler_builtins::CompilerBuiltinsReplacerPass;
 
     use rustc::middle::dependency_format::Dependencies;
 
     let (tx, rx) = channel();
-    let accel = Arc::downgrade(&accel);
+    let accel = accel.map(Arc::downgrade);
     let context = ctx.clone();
 
     let name = format!("codegen thread for {}",
@@ -192,9 +239,6 @@ impl WorkerTranslatorData {
       ctxt.syntax_globals().with(move || {
         let ctxt = context.clone();
         with_rustc_session(&ctxt, move |mut sess| {
-          sess.entry_fn.set(None);
-          sess.plugin_registrar_fn.set(None);
-          sess.derive_registrar_fn.set(None);
           let ctype = CrateType::Executable;
           sess.crate_types.set(vec![ctype.clone()]);
           sess.recursion_limit.set(512);
@@ -213,12 +257,10 @@ impl WorkerTranslatorData {
           let mut data = WorkerTranslatorData {
             context: weak_context,
             accel_desc,
-            accels: vec![accel],
+            accels: accel.into_iter().collect(),
             sess,
             passes: vec![
               Box::new(LangItemPass),
-              Box::new(AllocPass),
-              Box::new(PanicPass),
               Box::new(CompilerBuiltinsReplacerPass),
             ],
             intrinsics: Default::default(),
@@ -228,10 +270,6 @@ impl WorkerTranslatorData {
             let k = Symbol::intern(k.as_ref()).as_interned_str();
             assert!(data.intrinsics.insert(k, v).is_none());
           });
-          let (k, v) = LegionellaMirGen::new(IsHost(false),
-                                             &DefIdFromKernelIdGetter);
-          let k = Symbol::intern(k.as_ref()).as_interned_str();
-          assert!(data.intrinsics.insert(k, v).is_none());
 
           data.thread(&rx);
         })
@@ -247,7 +285,7 @@ impl WorkerTranslatorData {
 
   fn thread(&mut self, rx: &Receiver<Message>) {
 
-    /// Our code here run amok of Rust's borrow checker. Which is why
+    /// Our code here runs amok of Rust's borrow checker. Which is why
     /// this code has become pretty ugly. Sorry 'bout that.
 
     enum InternalMessage {
@@ -268,7 +306,6 @@ impl WorkerTranslatorData {
             return;
           },
         };
-        let arena = rustc::ty::AllArenas::new();
         let krate = create_empty_hir_crate();
         let dep_graph = rustc::dep_graph::DepGraph::new_disabled();
         let mut forest = rustc::hir::map::Forest::new(krate, &dep_graph);
@@ -279,7 +316,7 @@ impl WorkerTranslatorData {
         defs.create_root_def("jit-methods", disambiguator);
         let defs = defs;
 
-        loop {
+        'msg: loop {
           let msg = recv_msg
             .take()
             .unwrap_or_else(|| {
@@ -295,50 +332,60 @@ impl WorkerTranslatorData {
             },
           };
 
+          // Recreate this every loop. You'll have to transmute to get around
+          // lifetime error false positives.
+          let mut arena = rustc::ty::AllArenas::new();
+
           match msg {
             Message::AddAccel(accel) => {
               break 'inner InternalMessage::AddAccel(accel);
             },
-            Message::HostGetKernArgPadding {
-              kernel, ret,
-            } => {
-              let _ = self.compute_host_tuple_padding(kernel, context.clone(),
-                                              context.cstore(),
-                                              &arena,
-                                              unsafe {
-                                                ::std::mem::transmute(&mut forest)
-                                              },
-                                              unsafe {
-                                                ::std::mem::transmute(&defs)
-                                              },
-                                              &dep_graph);
-            },
-            Message::HostCreateFunc {
-              ..
-            } => {
-              unimplemented!();
+            Message::StartHostQuery { rx, } => {
+              // ignore any errors
+              let _ = {
+                self.host_queries(context.clone(),
+                                  context.cstore(),
+                                  unsafe {
+                                    ::std::mem::transmute(&mut arena)
+                                  },
+                                  unsafe {
+                                    ::std::mem::transmute(&mut forest)
+                                  },
+                                  unsafe {
+                                    ::std::mem::transmute(&defs)
+                                  },
+                                  &dep_graph,
+                                  rx)
+              };
             },
             Message::Codegen {
-              id,
-              host_accel: _,
+              desc,
+              //host_codegen,
               ret,
             } => {
-              let result = self.codegen_kernel(id,
-                                               context.clone(),
-                                               context.cstore(),
-                                               &arena,
-                                               unsafe {
-                                                 ::std::mem::transmute(&mut forest)
-                                               },
-                                               unsafe {
-                                                 ::std::mem::transmute(&defs)
-                                               },
-                                               &dep_graph);
+              let (host_codegen, _) = channel();
+              let result = {
+                self.codegen_kernel(desc,
+                                    context.clone(),
+                                    context.cstore(),
+                                    unsafe {
+                                      ::std::mem::transmute(&mut arena)
+                                    },
+                                    unsafe {
+                                      ::std::mem::transmute(&mut forest)
+                                    },
+                                    unsafe {
+                                      ::std::mem::transmute(&defs)
+                                    },
+                                    &dep_graph,
+                                    host_codegen)
+              };
+
               let _ = ret.send(result);
             },
           }
 
-          continue 'inner;
+          continue 'msg;
         }
       };
 
@@ -369,80 +416,18 @@ impl WorkerTranslatorData {
       .ok_or(error::Error::ContextDead)
   }
 
-  fn compute_host_tuple_padding<'a, 'b>(&'a self, def_id: DefId, context: Context,
-                                        cstore: &'b CStore,
-                                        arena: &'b rustc::ty::AllArenas<'b>,
-                                        forest: &'b mut rustc::hir::map::Forest,
-                                        defs: &'b rustc::hir::map::definitions::Definitions,
-                                        dep_graph: &rustc::dep_graph::DepGraph)
-    -> Result<Vec<HostTuplePadding>, error::Error>
+  fn host_queries<'a, 'b>(&'a self,
+                          _context: Context,
+                          cstore: &'b CStore,
+                          arena: &'b mut ty::AllArenas<'b>,
+                          forest: &'b mut rustc::hir::map::Forest,
+                          defs: &'b rustc::hir::map::definitions::Definitions,
+                          _dep_graph: &rustc::dep_graph::DepGraph,
+                          query_rx: Receiver<HostQueryMessage>)
+    -> Result<(), error::Error>
     where 'a: 'b,
   {
-    self.with_tcx(def_id, context, cstore, arena, forest, defs, dep_graph, |tcx| {
-      let parent_substs = tcx.empty_substs_for_def_id(def_id);
-      let reveal_all = ParamEnv::reveal_all();
-      let instance = match tcx.type_of(def_id).sty {
-        Ref(_, &ty::TyS {
-          sty: FnDef(def_id, subs),
-          ..
-        }, ..) |
-        FnDef(def_id, subs) => {
-          let subs = tcx
-            .subst_and_normalize_erasing_regions(parent_substs,
-                                                 reveal_all,
-                                                 &subs);
-
-          rustc::ty::Instance::resolve(tcx, reveal_all, def_id, subs)
-            .expect("must be resolvable")
-        },
-
-        Ref(_, &ty::TyS {
-          sty: Closure(def_id, subs),
-          ..
-        }, ..) |
-        Closure(def_id, subs) => {
-          let subs = tcx
-            .subst_and_normalize_erasing_regions(parent_substs,
-                                                 reveal_all,
-                                                 &subs);
-
-          let env = subs.closure_kind(def_id, tcx);
-          Instance::resolve_closure(tcx, def_id, subs, env)
-        },
-
-        _ => {
-          // TODO send an error back
-          unreachable!("can't expand the type of this item: {}",
-                       tcx.item_path_str(def_id));
-        },
-      };
-
-      let ty = instance.ty(tcx);
-      let sig = ty.fn_sig(tcx);
-      let sig = tcx.normalize_erasing_late_bound_regions(reveal_all, &sig);
-
-      let mut tuple_elems = vec![tcx.mk_mut_ref(tcx.types.re_erased, sig.output())];
-      tuple_elems.extend(sig.inputs());
-      let tuple_ty = tcx.mk_tup(tuple_elems.iter());
-      unimplemented!();
-    })
-  }
-
-  fn with_tcx<'a, 'b, F, R>(&'a self, def_id: DefId, context: Context,
-                            cstore: &'b CStore,
-                            arena: &'b rustc::ty::AllArenas<'b>,
-                            forest: &'b mut rustc::hir::map::Forest,
-                            defs: &'b rustc::hir::map::definitions::Definitions,
-                            dep_graph: &rustc::dep_graph::DepGraph,
-                            f: F)
-    -> Result<R, error::Error>
-    where F: for<'z> Fn(TyCtxt<'z, 'b, 'b>) -> Result<R, error::Error>,
-          'a: 'b,
-  {
-    use rustc::hir::def_id::{DefId, DefIndex};
     use rustc_driver::get_codegen_backend;
-
-    assert!(!def_id.is_local());
 
     let codegen = get_codegen_backend(&self.sess);
 
@@ -459,9 +444,9 @@ impl WorkerTranslatorData {
 
     let disk_cache = rustc_incremental::load_query_result_cache(&self.sess);
 
-    let (tx, rx) = channel();
+    let (tx, _) = channel();
 
-    let tmpdir = TempDir::new("hsa-runtime-codegen")?;
+    let tmpdir = TempDir::new("host-query-codegen")?;
 
     let out = rustc::session::config::OutputFilenames {
       out_directory: tmpdir.path().into(),
@@ -480,55 +465,82 @@ impl WorkerTranslatorData {
       maybe_unused_extern_crates: Default::default(),
       export_map: Default::default(),
       extern_prelude: Default::default(),
+      glob_map: Default::default(),
     };
 
-    let driver_data = DriverData {
-      context: self.context().unwrap(),
-      accels: self.accels.as_ref(),
+    let mut intrinsics = self.intrinsics.clone();
+    let (k, v) = LegionellaMirGen::new(ExeModel(None),
+                                       &DefIdFromKernelIdGetter);
+    let k = Symbol::intern(k.as_ref()).as_interned_str();
+    assert!(intrinsics.insert(k, v).is_none());
 
-      root: def_id,
-
-      passes: self.passes.as_ref(),
-
-      replaced_def_ids: RwLock::new(Default::default()),
-      type_of: RwLock::new(Default::default()),
-      intrinsics: &self.intrinsics,
-    };
+    let driver_data = DriverData::new(self.context().unwrap(),
+                                      self.accels.as_ref(),
+                                      None,
+                                      &self.accel_desc,
+                                      vec![],
+                                      self.passes.as_ref(),
+                                      &intrinsics);
     let driver_data: DriverData<'static> = unsafe {
       ::std::mem::transmute(driver_data)
     };
     let driver_data = Box::new(driver_data) as Box<dyn Any + Send + Sync>;
 
-    let out = TyCtxt::create_and_enter(&self.sess, cstore,
-                                       local_providers,
-                                       extern_providers,
-                                       &arena,
-                                       resolutions,
-                                       map_crate,
-                                       disk_cache,
-                                       "", tx, &out,
-                                       Some(driver_data), move |tcx: TyCtxt| -> Result<R, error::Error> {
+    TyCtxt::create_and_enter(&self.sess, cstore,
+                             local_providers,
+                             extern_providers,
+                             arena,
+                             resolutions,
+                             map_crate,
+                             disk_cache,
+                             "", tx, &out,
+                             Some(driver_data), move |tcx: TyCtxt| {
         // Do some initialization of the DepGraph that can only be done with the
         // tcx available.
         rustc_incremental::dep_graph_tcx_init(tcx);
 
-        Ok(f(tcx)?)
-      })?;
+        for msg in query_rx.iter() {
+          match msg {
+            HostQueryMessage::TyLayout {
+              ty,
+              wait,
+              ret,
+            } => {
+              error!("host query msg: TyLayout {{ ty: {:?}, }}", ty);
+              let layout = tcx
+                .layout_of(ParamEnv::reveal_all().and(ty))
+                .map(|layout| layout.details )
+                .map(clone_layout_details)
+                .map_err(|err| {
+                  format!("{}", err).into()
+                });
 
-    Ok(out)
+              let _ = ret.send(layout);
+              wait.wait();
+            },
+          }
+        }
+      });
+
+    Ok(())
   }
 
-  fn codegen_kernel<'a, 'b>(&'a self, id: KernelId, context: Context,
+  fn codegen_kernel<'a, 'b>(&'a self,
+                            desc: CodegenDesc,
+                            context: Context,
                             cstore: &'b CStore,
-                            arena: &'b rustc::ty::AllArenas<'b>,
+                            arena: &'b mut ty::AllArenas<'b>,
                             forest: &'b mut rustc::hir::map::Forest,
                             defs: &'b rustc::hir::map::definitions::Definitions,
-                            dep_graph: &rustc::dep_graph::DepGraph)
+                            dep_graph: &rustc::dep_graph::DepGraph,
+                            host_codegen: Sender<HostQueryMessage>)
     -> Result<CodegenResults, error::Error>
     where 'a: 'b,
   {
     use rustc::hir::def_id::{DefId, DefIndex};
     use rustc_driver::get_codegen_backend;
+
+    let id = desc.id;
 
     let crate_num = self
       .lookup_crate_num(id, context.cstore())
@@ -581,20 +593,25 @@ impl WorkerTranslatorData {
       maybe_unused_extern_crates: Default::default(),
       export_map: Default::default(),
       extern_prelude: Default::default(),
+      glob_map: Default::default(),
     };
 
-    let driver_data = DriverData {
-      context: self.context().unwrap(),
-      accels: self.accels.as_ref(),
+    let mut intrinsics = self.intrinsics.clone();
+    let (k, v) = LegionellaMirGen::new(ExeModel(Some(desc.exe_model)),
+                                       &DefIdFromKernelIdGetter);
+    let k = Symbol::intern(k.as_ref()).as_interned_str();
+    assert!(intrinsics.insert(k, v).is_none());
 
-      root: def_id,
 
-      passes: self.passes.as_ref(),
+    let conditions = vec![Condition::ExeModel(desc.exe_model.into())];
 
-      replaced_def_ids: RwLock::new(Default::default()),
-      type_of: RwLock::new(Default::default()),
-      intrinsics: &self.intrinsics,
-    };
+    let driver_data = DriverData::new(self.context().unwrap(),
+                                      self.accels.as_ref(),
+                                      Some(host_codegen),
+                                      &self.accel_desc,
+                                      conditions,
+                                      self.passes.as_ref(),
+                                      &intrinsics);
     let driver_data: DriverData<'static> = unsafe {
       ::std::mem::transmute(driver_data)
     };
@@ -603,7 +620,7 @@ impl WorkerTranslatorData {
     let kernel_symbol = TyCtxt::create_and_enter(&self.sess, cstore,
                                                  local_providers,
                                                  extern_providers,
-                                                 &arena,
+                                                 arena,
                                                  resolutions,
                                                  map_crate,
                                                  disk_cache,
@@ -614,6 +631,14 @@ impl WorkerTranslatorData {
         // Do some initialization of the DepGraph that can only be done with the
         // tcx available.
         rustc_incremental::dep_graph_tcx_init(tcx);
+
+        let root = legionella_root_attrs(tcx,
+                                         def_id,
+                                         desc.exe_model,
+                                         false);
+        DriverData::with(tcx, move |_tcx, dd| {
+          dd.init_root(root);
+        });
 
         let trans_data = codegen.codegen_crate(tcx, rx);
 
@@ -651,7 +676,8 @@ impl WorkerTranslatorData {
     }
 
     Ok(CodegenResults {
-      kernel_symbol,
+      symbol: kernel_symbol,
+      desc,
       outputs
     })
   }
@@ -678,15 +704,66 @@ impl WorkerTranslatorData {
   }
 }
 
+fn clone_layout_details(details: &LayoutDetails) -> LayoutDetails {
+  LayoutDetails {
+    variants: match details.variants {
+      Variants::Single {
+        index,
+      } => Variants::Single {
+        index,
+      },
+      Variants::Tagged {
+        ref tag, ref variants,
+      } => Variants::Tagged {
+        tag: tag.clone(),
+        variants: variants.iter()
+          .map(clone_layout_details)
+          .collect(),
+      },
+      Variants::NicheFilling {
+        ref dataful_variant,
+        ref niche_variants,
+        ref niche,
+        niche_start,
+        ref variants,
+      } => Variants::NicheFilling {
+        dataful_variant: dataful_variant.clone(),
+        niche_variants: niche_variants.clone(),
+        niche: niche.clone(),
+        niche_start,
+        variants: variants.iter()
+          .map(clone_layout_details)
+          .collect(),
+      },
+    },
+    fields: match details.fields {
+      FieldPlacement::Union(u) => FieldPlacement::Union(u),
+      FieldPlacement::Array {
+        stride, count,
+      } => FieldPlacement::Array {
+        stride, count,
+      },
+      FieldPlacement::Arbitrary {
+        ref offsets,
+        ref memory_index,
+      } => FieldPlacement::Arbitrary {
+        offsets: offsets.clone(),
+        memory_index: memory_index.clone(),
+      },
+    },
+    abi: details.abi.clone(),
+    align: details.align.clone(),
+    size: details.size,
+  }
+}
+
 fn output_types() -> rustc::session::config::OutputTypes {
   use rustc::session::config::*;
 
-  let output = (OutputType::Object, None);
-  let asm    = (OutputType::Assembly, None);
+  let output = (OutputType::Bitcode, None);
   let ir_out = (OutputType::LlvmAssembly, None);
   let mut out = Vec::new();
   out.push(output);
-  out.push(asm);
   out.push(ir_out);
   OutputTypes::new(&out[..])
 }
@@ -709,8 +786,9 @@ pub fn create_rustc_options(_ctx: &Context) -> rustc::session::config::Options {
   use rustc_target::spec::*;
 
   let mut opts = Options::default();
-  opts.crate_types.push(CrateType::Executable);
+  opts.crate_types.push(CrateType::Cdylib);
   opts.output_types = output_types();
+  opts.optimize = OptLevel::No;
   opts.optimize = OptLevel::Aggressive;
   opts.cg.lto = LtoCli::No;
   opts.cg.panic = Some(PanicStrategy::Abort);
@@ -726,7 +804,7 @@ pub fn create_rustc_options(_ctx: &Context) -> rustc::session::config::Options {
     opts.cg.passes.push("name-anon-globals".into());
   }
   opts.debugging_opts.print_llvm_passes = false;
-  opts.debugging_opts.polly = true;
+  opts.debugging_opts.polly = (opts.optimize == OptLevel::Aggressive);
   opts.cg.llvm_args.push("-polly-run-inliner".into());
   opts.cg.llvm_args.push("-polly-register-tiling".into());
   opts.cg.llvm_args.push("-polly-check-vectorizable".into());
@@ -758,6 +836,7 @@ pub fn create_empty_hir_crate() -> rustc::hir::Crate {
   let bodies = BTreeMap::new();
   let trait_impls = BTreeMap::new();
   let trait_auto_impl = BTreeMap::new();
+  let modules = BTreeMap::new();
 
   let body_ids = Vec::new();
 
@@ -773,6 +852,7 @@ pub fn create_empty_hir_crate() -> rustc::hir::Crate {
     trait_impls,
     trait_auto_impl,
     body_ids,
+    modules,
   }
 }
 
@@ -809,15 +889,6 @@ pub fn provide_extern_overrides(providers: &mut Providers) {
   provide_mir_overrides(providers);
   collector::provide(providers);
   providers_remote_and_local(providers);
-}
-
-pub fn stub_providers(providers: &mut Providers) {
-  *providers = Providers {
-    coherent_trait: |_tcx, _def_id| {
-      // No-op.
-    },
-    .. *providers
-  };
 }
 
 pub fn providers_local(providers: &mut Providers) {
@@ -859,18 +930,26 @@ pub fn providers_local(providers: &mut Providers) {
 }
 
 fn providers_remote_and_local(providers: &mut Providers) {
+  use rustc::hir::CodegenFnAttrs;
+  use rustc::session::config::EntryFnType;
+
   *providers = Providers {
     fn_sig,
     reachable_non_generics,
     custom_intrinsic_mirgen,
     upstream_monomorphizations,
     upstream_monomorphizations_for,
+    codegen_fn_attrs,
+    item_attrs,
+    entry_fn,
     .. *providers
   };
 
+  fn entry_fn<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, _cnum: CrateNum) -> Option<(DefId, EntryFnType)> {
+    None
+  }
   fn fn_sig<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> ty::PolyFnSig<'tcx> {
     use rustc::ty::{Binder, FnSig, };
-    use rustc_target::spec::abi::Abi;
 
     let mut providers = Providers::default();
     rustc_metadata::cstore::provide_extern(&mut providers);
@@ -883,7 +962,7 @@ fn providers_remote_and_local(providers: &mut Providers) {
       if dd.is_root(def_id) {
         // modify the abi:
         let sig = FnSig {
-          abi: Abi::AmdGpuKernel,
+          abi: dd.target_desc.kernel_abi.clone(),
           .. *sig.skip_binder()
         };
         Binder::bind(sig)
@@ -897,7 +976,7 @@ fn providers_remote_and_local(providers: &mut Providers) {
     -> Lrc<DefIdMap<SymbolExportLevel>>
   {
     // we need to recodegen everything
-    Lrc::new(DefIdMap())
+    Lrc::new(Default::default())
   }
   fn upstream_monomorphizations<'a, 'tcx>(_tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                           _cnum: CrateNum)
@@ -924,6 +1003,303 @@ fn providers_remote_and_local(providers: &mut Providers) {
         .cloned()
     })
   }
+
+  fn codegen_fn_attrs<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, id: DefId)
+    -> CodegenFnAttrs
+  {
+    use rustc::hir::{SpirVAttrs, };
+    let mut providers = Providers::default();
+    rustc_typeck::provide(&mut providers);
+
+    let id = replace(tcx, id);
+
+    let mut attrs = (providers.codegen_fn_attrs)(tcx, id);
+
+    DriverData::with(tcx, move |tcx, dd| {
+      if dd.is_root(id) {
+        let modes = dd.root()
+          .execution_modes
+          .iter()
+          .map(|&mode| {
+            match mode {
+              ExecutionMode::LocalSize {
+                x, y, z,
+              } => {
+                ("LocalSize".into(), vec![x as u64, y as _, z as _, ])
+              },
+              ExecutionMode::Xfb => {
+                ("Xfb".into(), vec![])
+              },
+            }
+          })
+          .collect();
+
+        attrs.spirv = Some(SpirVAttrs {
+          storage_class: None,
+          metadata: None,
+          exe_model: Some(format!("{:?}", dd.root().exe_model())),
+          exe_mode: Some(modes),
+        });
+      } else if tcx.is_static(id).is_some() {
+        let inst = Instance::mono(tcx, id);
+        let ty = inst.ty(tcx);
+        // check for function types. We don't attach any spirv
+        // metadata to functions.
+        match ty.sty {
+          FnDef(..) => {
+            attrs.spirv = None;
+          },
+          _ => {
+            let global_attrs = legionella_global_attrs(tcx,
+                                                       dd.root().exe_model(),
+                                                       inst,
+                                                       false);
+
+            if let Some(_) = global_attrs.spirv_builtin {
+              // remove the linkage attr. This is used on the host to
+              // prevent linker errors.
+              attrs.linkage = None;
+            }
+
+            warn!("building metadata for {:?}", id);
+            warn!("{:?} attrs: {:#?}", id, global_attrs);
+
+            let metadata = build_spirv_metadata(tcx, dd, inst,
+                                                &global_attrs);
+
+            let sc = global_attrs.storage_class(&dd.root_conditions);
+
+            attrs.spirv = Some(SpirVAttrs {
+              storage_class: sc.map(|sc| format!("{:?}", sc) ),
+              metadata,
+              exe_model: None,
+              exe_mode: None,
+            });
+          },
+        }
+      }
+
+      warn!("spirv metadata for {:?}: {:#?}", id, attrs.spirv);
+
+      attrs
+    })
+  }
+  /// Technically, this is never called for local DefIds (local DefIds use the
+  /// HIR map to compute item attrs).
+  fn item_attrs<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                          id: DefId)
+    -> Lrc<[ast::Attribute]>
+  {
+    let mut providers = Providers::default();
+    rustc_metadata::cstore::provide_extern(&mut providers);
+
+    // Note: no replace here. For one, we'll introduce a cycle. And
+    // we don't want to use the attributes of a different item anyway.
+
+    let attrs = (providers.item_attrs)(tcx, id);
+
+    DriverData::with(tcx, move |tcx, dd| {
+      let out = legionella_cfg_attrs(tcx, &attrs,
+                                     &dd.root_conditions);
+      out
+    })
+  }
+}
+
+fn default_node() -> SpirVAttrNode {
+  SpirVAttrNode {
+    type_spec: default_ty_spec(),
+    builtin: None,
+    decorations: vec![],
+  }
+}
+fn default_ty_spec() -> SpirVTypeSpec {
+  SpirVTypeSpec::Struct(vec![])
+}
+
+fn build_spirv_adt_metadata<'a, 'b, 'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>,
+                                          dd: &'b DriverData<'tcx>,
+                                          inst: Instance<'tcx>,
+
+                                          ty: ty::Ty<'tcx>,
+                                          adt_def: &'tcx AdtDef,
+                                          substs: &'tcx Substs<'tcx>)
+  -> SpirVAttrNode
+{
+  //let layout = dd.host_layout_of(ty);
+  let layout = tcx.layout_of(ParamEnv::reveal_all().and(ty))
+    .unwrap();
+
+  warn!("{:?} layout: {:#?}", ty, layout);
+
+  let cx = ty::layout::LayoutCx {
+    tcx,
+    param_env: ParamEnv::reveal_all(),
+  };
+
+  // TODO won't be true for enums. Not sure what the layout would
+  // look like.
+  assert_eq!(adt_def.variants.len(), 1, "TODO: {:?}, layout: {:?}",
+             adt_def, layout);
+
+  let mut nodes = vec![];
+
+  for i in layout.fields.index_by_increasing_offset() {
+    let offset = layout.details.fields.offset(i as usize);
+    let field = layout.field(&cx, i).unwrap();
+    let ty = field.ty;
+    let ty = tcx
+      .subst_and_normalize_erasing_regions(substs,
+                                           ParamEnv::reveal_all(),
+                                           &ty);
+    let mut node = build_spirv_ty_metadata(tcx, dd, inst, ty);
+
+    node.decorations.push(("Offset".into(), vec![offset.bytes() as _]));
+
+    nodes.push(node);
+  }
+
+  let decorations = vec![];
+
+  SpirVAttrNode {
+    type_spec: SpirVTypeSpec::Struct(nodes),
+    builtin: None,
+    decorations,
+  }
+}
+
+fn build_spirv_ty_metadata<'a, 'b, 'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>,
+                                         dd: &'b DriverData<'tcx>,
+                                         inst: Instance<'tcx>,
+
+                                         ty: ty::Ty<'tcx>)
+  -> SpirVAttrNode
+{
+  use rustc::ty::*;
+
+  // we have to be careful of recursion here
+  // we don't maintain a set of visited types but in this case we can skip
+  // some types: we require `T: Sized + Copy + 'static` (TODO pointers?).
+
+  // TODO: should we allow builtins as struct members? I want to say no.
+
+  info!("build_spirv_ty_metadata: ty.sty = {:?}", ty.sty);
+
+  let ty = tcx
+    .subst_and_normalize_erasing_regions(inst.substs,
+                                         ParamEnv::reveal_all(),
+                                         &ty);
+
+  match ty.sty {
+    Bool | Char | Int(_) | Uint(_) | Float(_) => {
+      default_node()
+    },
+    Adt(adt_def, _substs) if adt_def.repr.simd() => {
+      let layout = tcx.layout_of(ParamEnv::reveal_all().and(ty))
+        .unwrap();
+
+      warn!("{:?} layout: {:#?}", ty, layout);
+      // TODO someday we'll want to allow `RowMajor` and `ColMajor` etc
+      default_node()
+    },
+    Adt(adt_def, substs) if adt_def.repr.transparent() => {
+      // extract the inner type which this type wraps. This can be important
+      // for wrappers which wrap SIMD types, for example SPIRV Vector and Matrix
+      // types.
+      let idx = VariantIdx::new(0);
+      let field = adt_def.variants[idx].fields[0].did;
+      let field_ty = tcx.type_of(field);
+
+      let field_ty = tcx
+        .subst_and_normalize_erasing_regions(substs,
+                                             ParamEnv::reveal_all(),
+                                             &field_ty);
+      trace!("repr(transparent): extracted {:?}", field_ty);
+      build_spirv_ty_metadata(tcx, dd, inst, field_ty)
+    },
+    Tuple(elements) => {
+      //let layout = dd.host_layout_of(ty);
+      let layout = tcx
+        .layout_of(ParamEnv::reveal_all().and(ty))
+        .unwrap()
+        .details;
+
+      let mut nodes = vec![];
+
+      for (idx, element) in elements.iter().enumerate() {
+        let offset = layout.fields.offset(idx);
+        let mut node = build_spirv_ty_metadata(tcx, dd, inst, element);
+        node.decorations.push(("Offset".into(), vec![offset.bytes() as _]));
+
+        nodes.push(node);
+      }
+
+      SpirVAttrNode {
+        type_spec: SpirVTypeSpec::Struct(nodes),
+        builtin: None,
+        decorations: vec![],
+      }
+    },
+    Adt(adt_def, substs) => {
+      build_spirv_adt_metadata(tcx, dd, inst, ty, adt_def, substs)
+    },
+    Array(inner, _count) => {
+      let type_spec = SpirVTypeSpec::Array(Box::new(build_spirv_ty_metadata(tcx, dd, inst,
+                                                                            inner)));
+
+      let layout = tcx.layout_of(ParamEnv::reveal_all().and(inner))
+        .unwrap();
+
+      let node = SpirVAttrNode {
+        type_spec,
+        builtin: None,
+        decorations: vec![("ArrayStride".into(),
+                           vec![layout.details.size.bytes() as _])],
+        //decorations: vec![],
+      };
+      node
+    },
+
+    _ => {
+      panic!("shouldn't be allowed or unimplemented TODO: {:?}", ty);
+    },
+  }
+}
+
+fn build_spirv_metadata<'a, 'b, 'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>,
+                                      dd: &'b DriverData<'tcx>,
+                                      inst: Instance<'tcx>,
+                                      attrs: &GlobalAttrs)
+  -> Option<SpirVAttrNode>
+{
+  let ty = inst.ty(tcx);
+
+  // extract the pointer
+  let ty = if let ty::RawPtr(tm) = ty.sty {
+    tm.ty
+  } else {
+    // this probably isn't correct...
+    ty
+  };
+
+  let mut node = build_spirv_ty_metadata(tcx, dd, inst, ty);
+
+  // descriptor set/binding is only allowed on top level global statics.
+  // so this is only processed in this non-recursive function.
+  let (opt_set, opt_binding) =
+    optional_descriptor_set_binding_nums(tcx, inst.def_id());
+
+  if let Some(builtin) = attrs.spirv_builtin {
+    node.decorations.push(("BuiltIn".into(), vec![builtin as _]));
+  }
+  if let Some(set_num) = opt_set {
+    node.decorations.push(("DescriptorSet".into(), vec![set_num as _]));
+  }
+  if let Some(binding_num) = opt_binding {
+    node.decorations.push(("Binding".into(), vec![binding_num as _]));
+  }
+
+  Some(node)
 }
 
 pub struct TyCtxtLessKernelId {

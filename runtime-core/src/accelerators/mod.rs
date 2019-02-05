@@ -7,10 +7,9 @@ use utils::{CreateIfNotExists, FileLockGuard, };
 
 use rustc::session::config::host_triple;
 
-pub use self::amd::*;
+pub use self::vk::*;
 
-pub mod host;
-pub mod amd;
+pub mod vk;
 
 pub struct DeviceLibsStaging<'a> {
   staging_path: &'a Path,

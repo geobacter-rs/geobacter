@@ -5,8 +5,11 @@ name = "legionella-intrinsics"
 version = "0.1.0"
 
 [dependencies]
-env_logger = "=0.5.12"
+env_logger = "0.6"
 log = "=0.4.4"
+num-traits = "0.2.6"
+legionella-core = { path = "../legionella-core" }
+vulkano = "0.11.1"
 
 [dependencies.rustc-intrinsics]
 path = "../rustc-intrinsics"

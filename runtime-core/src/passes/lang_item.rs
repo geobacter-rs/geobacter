@@ -5,7 +5,7 @@ pub struct LangItemPass;
 
 impl Pass for LangItemPass {
   fn pass_type(&self) -> PassType {
-    PassType::Replacer(|tcx, _dd, def_id| {
+    PassType::Replacer(|tcx, dd, def_id| {
       use rustc::middle::lang_items::*;
 
       // check for "panic_fmt". this is used in an extern fashion: libcore calls an
@@ -13,6 +13,13 @@ impl Pass for LangItemPass {
       // the linker to resolve the call. BUT, we don't have the linker, plus we
       // currently require all functions have MIR available, so for the
       // "panic_fmt" case we manually rewrite the def_id to the libstd one.
+
+      let eh_personality_did = tcx.lang_items()
+        .require(LangItem::EhPersonalityLangItem)
+        .ok();
+      if Some(def_id) == eh_personality_did {
+        return Some(dd.def_id_for(&rust_eh_personality));
+      }
 
       let attrs = tcx.get_attrs(def_id);
       for attr in attrs.iter() {
@@ -33,3 +40,6 @@ impl Pass for LangItemPass {
     })
   }
 }
+
+// Never called.
+pub fn rust_eh_personality() {}

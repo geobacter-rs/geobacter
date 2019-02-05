@@ -8,24 +8,8 @@ use hsa_core::kernel::kernel_id_for;
 
 use std::fmt;
 
-use std::intrinsics::abort;
-use core::panic::{PanicInfo, BoxMeUp, };
 
 
-
-fn rust_panic_with_hook(_payload: &mut dyn BoxMeUp,
-                        _message: Option<&fmt::Arguments>,
-                        _file_line_col: &(&str, u32, u32)) -> ! {
-  unsafe { abort() }
-}
-pub fn rust_begin_panic(_: &PanicInfo) -> ! {
-  unsafe { abort() }
-}
-fn rust_panic_bounds_check(_file_line_col: &(&'static str, u32, u32),
-                           _index: usize, _len: usize) -> !
-{
-  unsafe { abort() }
-}
 
 pub struct PanicPass;
 

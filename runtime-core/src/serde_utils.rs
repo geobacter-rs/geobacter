@@ -35,6 +35,7 @@ mod link_args {
     btree_map::serialize::<S, InK, InV, OutK, OutV>(this, serializer)
   }
 }
+/// should be `abis`. oops.
 mod apis {
   use serde::*;
 
@@ -56,6 +57,92 @@ mod apis {
   {
     vec::serialize::<S, In, Out>(this, serializer)
   }
+}
+pub mod abi {
+  use serde::*;
+
+  use rustc_target::spec;
+
+  use super::*;
+
+  pub type Output = spec::abi::Abi;
+
+  #[allow(dead_code)] // for completeness.
+  pub fn deserialize<'de, D>(deserializer: D) -> Result<Output, D::Error>
+    where D: Deserializer<'de>,
+  {
+    Abi::deserialize::<D>(deserializer)
+      .map(Into::into)
+  }
+  pub fn serialize<S>(this: &Output, serializer: S) -> Result<S::Ok, S::Error>
+    where S: Serializer,
+  {
+    Abi::serialize::<S>(&Abi::from(*this), serializer)
+  }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "::vk::device::Features")]
+pub struct VkFeatures {
+  pub robust_buffer_access: bool,
+  pub full_draw_index_uint32: bool,
+  pub image_cube_array: bool,
+  pub independent_blend: bool,
+  pub geometry_shader: bool,
+  pub tessellation_shader: bool,
+  pub sample_rate_shading: bool,
+  pub dual_src_blend: bool,
+  pub logic_op: bool,
+  pub multi_draw_indirect: bool,
+  pub draw_indirect_first_instance: bool,
+  pub depth_clamp: bool,
+  pub depth_bias_clamp: bool,
+  pub fill_mode_non_solid: bool,
+  pub depth_bounds: bool,
+  pub wide_lines: bool,
+  pub large_points: bool,
+  pub alpha_to_one: bool,
+  pub multi_viewport: bool,
+  pub sampler_anisotropy: bool,
+  pub texture_compression_etc2: bool,
+  pub texture_compression_astc_ldr: bool,
+  pub texture_compression_bc: bool,
+  pub occlusion_query_precise: bool,
+  pub pipeline_statistics_query: bool,
+  pub vertex_pipeline_stores_and_atomics: bool,
+  pub fragment_stores_and_atomics: bool,
+  pub shader_tessellation_and_geometry_point_size: bool,
+  pub shader_image_gather_extended: bool,
+  pub shader_storage_image_extended_formats: bool,
+  pub shader_storage_image_multisample: bool,
+  pub shader_storage_image_read_without_format: bool,
+  pub shader_storage_image_write_without_format: bool,
+  pub shader_uniform_buffer_array_dynamic_indexing: bool,
+  pub shader_sampled_image_array_dynamic_indexing: bool,
+  pub shader_storage_buffer_array_dynamic_indexing: bool,
+  pub shader_storage_image_array_dynamic_indexing: bool,
+  pub shader_clip_distance: bool,
+  pub shader_cull_distance: bool,
+  pub shader_f3264: bool,
+  pub shader_int64: bool,
+  pub shader_int16: bool,
+  pub shader_resource_residency: bool,
+  pub shader_resource_min_lod: bool,
+  pub sparse_binding: bool,
+  pub sparse_residency_buffer: bool,
+  pub sparse_residency_image2d: bool,
+  pub sparse_residency_image3d: bool,
+  pub sparse_residency2_samples: bool,
+  pub sparse_residency4_samples: bool,
+  pub sparse_residency8_samples: bool,
+  pub sparse_residency16_samples: bool,
+  pub sparse_residency_aliased: bool,
+  pub variable_multisample_rate: bool,
+  pub inherited_queries: bool,
+
+  pub buffer_device_address: bool,
+  pub buffer_device_address_capture_replay: bool,
+  pub buffer_device_address_multi_device: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -190,6 +277,8 @@ pub struct TargetOptions {
   /// Emscripten toolchain.
   /// Defaults to false.
   pub is_like_emscripten: bool,
+  /// Whether the target toolchain is like Fuchsia's.
+  pub is_like_fuchsia: bool,
   /// Whether the linker support GNU-like arguments such as -O. Defaults to false.
   pub linker_is_gnu: bool,
   /// The MinGW toolchain has a known issue that prevents it from correctly
@@ -230,9 +319,6 @@ pub struct TargetOptions {
   /// defined in libgcc.  If this option is enabled, the target must provide
   /// `eh_unwind_resume` lang item.
   pub custom_unwind_resume: bool,
-
-  /// If necessary, a different crate to link exe allocators by default
-  pub exe_allocation_crate: Option<String>,
 
   /// Flag indicating whether ELF TLS (e.g. #[thread_local]) is available for
   /// this target.
@@ -324,11 +410,24 @@ pub struct TargetOptions {
   /// wasm32 where the whole program either has simd or not.
   pub simd_types_indirect: bool,
 
+  /// If set, have the linker export exactly these symbols, instead of using
+  /// the usual logic to figure this out from the crate itself.
+  pub override_export_symbols: Option<Vec<String>>,
+
   /// Description of all address spaces and how they are shared with one another.
   /// Defaults to a single, flat, address space. Note it is generally assumed that
   /// the address space `0` is your flat address space.
   #[serde(with = "AddrSpaces")]
   pub addr_spaces: ::rustc_target::spec::AddrSpaces,
+
+  /// Determines how or whether the MergeFunctions LLVM pass should run for
+  /// this target. Either "disabled", "trampolines", or "aliases".
+  /// The MergeFunctions pass is generally useful, but some targets may need
+  /// to opt out. The default is "aliases".
+  ///
+  /// Workaround for: https://github.com/rust-lang/rust/issues/57356
+  #[serde(with = "MergeFunctions")]
+  pub merge_functions: ::rustc_target::spec::MergeFunctions,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -567,6 +666,14 @@ impl From<spec::LldFlavor> for LldFlavor {
 }
 
 #[derive(Serialize, Deserialize)]
+#[serde(remote = "::rustc_target::spec::MergeFunctions")]
+pub enum MergeFunctions {
+  Disabled,
+  Trampolines,
+  Aliases
+}
+
+#[derive(Serialize, Deserialize)]
 pub enum Abi {
   // NB: This ordering MUST match the AbiDatas array below.
   // (This is ensured by the test indices_are_correct().)
@@ -584,6 +691,7 @@ pub enum Abi {
   Msp430Interrupt,
   X86Interrupt,
   AmdGpuKernel,
+  SpirKernel,
 
   // Multiplatform / generic ABIs
   Rust,
@@ -613,6 +721,7 @@ impl Into<spec::abi::Abi> for Abi {
       Msp430Interrupt => Abi::Msp430Interrupt,
       X86Interrupt => Abi::X86Interrupt,
       AmdGpuKernel => Abi::AmdGpuKernel,
+      SpirKernel => Abi::SpirKernel,
 
       // Multiplatform / generic ABIs
       Rust => Abi::Rust,
@@ -643,6 +752,7 @@ impl From<spec::abi::Abi> for Abi {
       Msp430Interrupt => Abi::Msp430Interrupt,
       X86Interrupt => Abi::X86Interrupt,
       AmdGpuKernel => Abi::AmdGpuKernel,
+      SpirKernel => Abi::SpirKernel,
 
       // Multiplatform / generic ABIs
       Rust => Abi::Rust,

@@ -6,9 +6,8 @@ version = "0.1.0"
 [dependencies]
 ndarray = "0.10.12"
 log = "=0.4.4"
-
-[dependencies.hsa-rt]
-path = "../hsa-rt"
+legionella-core = { path = "../legionella-core" }
+vulkano = "0.11.1"
 
 [dependencies.hsa-core]
 path = "../hsa-core"

@@ -1,7 +1,6 @@
 
 use std::error::Error;
-use std::ffi::{OsStr, };
-use std::marker::PhantomData;
+use std::ffi::{OsStr, CString, CStr, };
 use std::sync::{Arc, RwLock, Weak, atomic::AtomicUsize,
                 atomic::Ordering, };
 use std::path::{Component};
@@ -12,32 +11,30 @@ use syntax;
 
 use indexvec::{Idx, IndexVec};
 
-use hsa_core::kernel::KernelId;
-use hsa_rt::agent::{DeviceType, Profiles, DefaultFloatRoundingModes, };
-use hsa_rt::code_object::CodeObjectReaderRef;
-use hsa_rt::executable::{FrozenExecutable, Executable, CommonExecutable, };
-
 use {Accelerator, AcceleratorId, AcceleratorTargetDesc, };
 use metadata::{Metadata, MetadataLoadingError, CrateSource, CrateNameHash,
                CrateMetadata, CrateMetadataLoader, DummyMetadataLoader, };
 use platform::os::{get_mapped_files, dylib_search_paths};
-use codegen::worker::{CodegenComms, CodegenUnsafeSyncComms, };
-use codegen::products::CodegenResults;
-use accelerators::{host::HostAccel, amd::AmdGpuAccel, RustBuildRoot,
-                   DeviceLibsStaging, };
+use codegen::worker::{CodegenComms, CodegenUnsafeSyncComms, CodegenDesc,
+                      CodegenShaderInterface, };
+use codegen::products::{CodegenResults, };
+use accelerators::{RustBuildRoot, DeviceLibsStaging, };
 use utils::{HashMap, new_hash_set, };
+
+use vk;
+
+use lcore::*;
+use lstd::vk_help::{StaticPipelineLayoutDesc, StaticShaderInterfaceDef, };
 
 pub use rustc::session::config::OutputType;
 
 type Translators = HashMap<Arc<AcceleratorTargetDesc>, CodegenUnsafeSyncComms>;
-type CodegenCacheKey = (Arc<AcceleratorTargetDesc>, KernelId);
+type CodegenCacheKey = (Arc<AcceleratorTargetDesc>, CodegenDesc);
 type CodegenCache = HashMap<CodegenCacheKey, Arc<CodegenResults>>;
 
 const FRAMEWORK_DATA_SUBDIR: &'static str = ".legionella";
 
 pub struct ContextData {
-  _hsa_ctx: hsa_rt::ApiContext,
-
   syntax_globals: syntax::Globals,
   cstore: CStore,
 
@@ -45,13 +42,16 @@ pub struct ContextData {
 }
 /// Data that will be wrapped in a rw mutex.
 pub struct ContextDataMut {
-  local_accels: Vec<Arc<Accelerator>>,
+  next_accel_id: AcceleratorId,
+
+  /// unfortunate that we have to initialize this after we create the full
+  /// instance.
+  host_codegen: Option<CodegenUnsafeSyncComms>,
+
   accelerators: IndexVec<AcceleratorId, Option<Arc<Accelerator>>>,
 
   translators: Translators,
   codegen_cache: CodegenCache,
-  // Only None during initialization.
-  host_codegen: Option<CodegenComms>,
 }
 
 #[derive(Clone)]
@@ -149,45 +149,17 @@ impl Context {
       Ok(cstore)
     })?;
 
-    let hsa_ctx = hsa_rt::ApiContext::try_upref()?;
-    let agents = hsa_ctx.agents()?;
-    // we take the first CPU we find as the "host" accelerator. This is arbitrary.
-    // There should always be at least one CPU accelerator.
-    let host = agents.iter()
-      .find(|agent| {
-        match agent.device_type() {
-          Ok(DeviceType::Cpu) => true,
-          _ => false,
-        }
-      })
-      .expect("Huh? No CPU agents on this system?")
-      .clone();
-    let agents: Vec<_> = agents.into_iter()
-      .enumerate()
-      .filter(|&(_, ref agent)| agent != &host )
-      .collect();
-
-    let mut accelerators = IndexVec::with_capacity(agents.len() + 1);
-    let mut local_accels = Vec::with_capacity(agents.len() + 1);
+    let accelerators = IndexVec::new();
     let translators: Translators = Default::default();
 
-    let host = Arc::new(HostAccel::new(AcceleratorId::new(0), host)?);
-    let host_target_desc = host.accel_target_desc()?;
-
-    let host = host as Arc<Accelerator>;
-
-    accelerators.push(Some(host.clone()));
-    local_accels.push(host.clone());
-
     let data = ContextDataMut {
+      next_accel_id: AcceleratorId::new(0),
+      host_codegen: None,
       accelerators,
-      local_accels,
       translators,
       codegen_cache: Default::default(),
-      host_codegen: None,
     };
     let data = ContextData {
-      _hsa_ctx: hsa_ctx,
       syntax_globals,
       cstore,
 
@@ -196,69 +168,25 @@ impl Context {
     let data = Arc::new(data);
     let context = Context(data);
 
-    {
-      let mut data = context.0.m.write().unwrap();
-
-      let host_codegen = CodegenComms::new(&context,
-                                           host_target_desc.clone(),
-                                           &host)?;
-      host.set_codegen(host_codegen.clone());
-      data.host_codegen = Some(host_codegen.clone());
-
-      data.translators.insert(host_target_desc, unsafe { host_codegen.clone().sync_comms() });
-
-      // add the rest of the accelerators
-      for (id, agent) in agents.into_iter() {
-        let accel = match agent.device_type() {
-          Err(e) => {
-            error!("agent {}: error getting device type: {:?}; ignoring",
-                   id, e);
-            continue;
-          },
-          Ok(DeviceType::Cpu) => {
-            HostAccel::new(data.get_next_accelerator_id(), agent)
-              .map(|v| Arc::new(v) as Arc<Accelerator>)
-          },
-          Ok(DeviceType::Gpu) => {
-            let vendor = agent.vendor_name();
-            match vendor {
-              Ok(ref vendor) if vendor == "AMD" => {
-                AmdGpuAccel::new(data.get_next_accelerator_id(), Arc::downgrade(&host),
-                                 agent)
-                  .map(|v| Arc::new(v) as Arc<Accelerator>)
-              },
-              Ok(vendor) => {
-                warn!("agent {}: unsupported non-AMD GPU vendor: {}; ignoring",
-                      id, vendor);
-                continue;
-              },
-              Err(e) => Err(e.into()),
-            }
-          },
-          Ok(DeviceType::Dsp) => {
-            warn!("agent {}: unsupported DSP `{}` (file a bug report?); ignoring",
-                  id, agent.name().unwrap_or_else(|_| "<name error>".into()));
-            continue;
-          },
-        };
-
-        let accel = match accel {
-          Ok(a) => a,
-          Err(e) => {
-            error!("agent {}: error creating accelerator: {:?}; ignoring",
-                   id, e);
-            continue;
-          },
-        };
-
-        data.accelerators.push(Some(accel.clone()));
-        data.local_accels.push(accel.clone());
-
-        data.create_translator_for_accel(&context, &accel)?;
-      }
-    }
+    context.init_host_codegen()?;
 
     Ok(context)
+  }
+
+  fn init_host_codegen(&self) -> Result<(), Box<Error>> {
+    let host_desc = Arc::default();
+    let host_codegen = CodegenComms::new_host(self, host_desc)?;
+
+    let mut w = self.0.m.write()
+      .map_err(|_| {
+        "poisoned lock!"
+      })?;
+
+    w.host_codegen = Some(unsafe {
+      host_codegen.sync_comms()
+    });
+
+    Ok(())
   }
 
   pub(crate) fn cstore(&self) -> &CStore {
@@ -268,16 +196,27 @@ impl Context {
     &self.0.syntax_globals
   }
 
-  pub fn downgrade_ref(&self) -> WeakContext {
-    WeakContext(Arc::downgrade(&self.0))
-  }
-
-  pub fn primary_host_accel(&self) -> Result<Arc<Accelerator>, Box<Error>> {
-    let b = self.0.m.read()
+  pub fn host_codegen(&self) -> Result<CodegenComms, Box<Error>> {
+    let r = self.0.m.read()
       .map_err(|_| {
         "poisoned lock!"
       })?;
-    Ok(b.local_accels[0].clone())
+    Ok(r.host_codegen.as_ref().expect("no host codegen").clone_unsync())
+  }
+
+  pub fn add_accel<T>(&self, accel: Arc<T>) -> Result<(), Box<Error>>
+    where T: Accelerator,
+  {
+    let gaccel = accel as Arc<Accelerator>;
+    let mut w = self.0.m.write()
+      .map_err(|_| {
+        "poisoned lock!"
+      })?;
+    w.create_translator_for_accel(self, &gaccel)
+  }
+
+  pub fn downgrade_ref(&self) -> WeakContext {
+    WeakContext(Arc::downgrade(&self.0))
   }
 
   pub fn filter_accels<F>(&self, f: F) -> Result<Vec<Arc<Accelerator>>, Box<Error>>
@@ -308,7 +247,20 @@ impl Context {
 
     Ok(r)
   }
-  pub fn manually_compile(&self, accel: &Arc<Accelerator>, id: KernelId)
+
+  pub fn take_accel_id(&self) -> Result<AcceleratorId, Box<Error>> {
+    let id = self.0.m.write()
+      .map_err(|_| {
+        "poisoned lock!"
+      })?
+      .get_next_accelerator_id();
+    Ok(id)
+  }
+
+  /// This is not meant to be used directly.
+  pub fn manually_compile_desc(&self,
+                               accel: &Arc<Accelerator>,
+                               desc: CodegenDesc)
     -> Result<Arc<CodegenResults>, Box<Error>>
   {
     use std::fs::File;
@@ -319,8 +271,15 @@ impl Context {
 
     use tempdir::TempDir;
 
-    let target_desc = accel.accel_target_desc()?;
-    let cache_key = (target_desc.clone(), id);
+    // technically, if disregarding the possibility for remote accels,
+    // this double caches. However, we cache here anyway so that, in the
+    // future, we can add clustering where the master controller (ie the
+    // machine which invokes the compute jobs) does the codegening and
+    // sends the results to the compute nodes en masse (it's likely that
+    // such cases would have a large set of identical accels).
+
+    let target_desc = accel.accel_target_desc();
+    let cache_key = (target_desc.clone(), desc);
     {
       let read = self.0.m.read()
         .map_err(|_| {
@@ -337,8 +296,7 @@ impl Context {
         "this accelerator has no codegen attached"
       })?;
 
-    let host = accel.host_accel()
-      .and_then(|host| host.get_codegen() );
+    let host = accel.host_codegen();
 
     let objs = if let Some(builder) = accel.device_libs_builder() {
       // create the target specific cache dir:
@@ -361,14 +319,15 @@ impl Context {
       vec![]
     };
 
-    let mut codegen = codegen.codegen(id, host)?;
+    let mut codegen = codegen.codegen(desc, host)?;
 
     let tdir = TempDir::new("link-compilation")?;
     let obj_filename = tdir.path().join("obj.bc");
     {
       let mut out = File::create(&obj_filename)?;
 
-      let obj = codegen.outputs.remove(&OutputType::Object)
+      let obj = codegen.outputs
+        .remove(&OutputType::Bitcode)
         .expect("no object output");
 
       out.write_all(&obj[..])?;
@@ -391,15 +350,10 @@ impl Context {
       linked_filename = obj_filename;
     }
 
-    let obj_filename = tdir.path().join("codegen.obj");
-    let mut cmd = Command::new(rbr.llvm_tool("llc"));
-    cmd.arg("-filetype=obj")
-      .arg(format!("-mcpu={}", target_desc.target.options.cpu))
-      .arg(format!("-mtriple={}", target_desc.target.llvm_target))
-      .arg(format!("-mattr={}", target_desc.target.options.features))
-      .arg(format!("-relocation-model={}", target_desc.target.options.relocation_model))
-      .arg("-O3")
-      .arg("-o").arg(&obj_filename)
+    let spv_filename = tdir.path().join("kernel.spv");
+    let mut cmd = Command::new(rbr.llvm_tool("llvm-spirv"));
+    cmd
+      .arg("-o").arg(&spv_filename)
       .arg(linked_filename);
     info!("codegen-ing: {:?}", cmd);
 
@@ -407,30 +361,15 @@ impl Context {
       return Err("codegen failed".into());
     }
 
-    let elf_filename = tdir.path().join("elf.so");
-
-    let mut cmd = Command::new(rbr.lld());
-    cmd.arg(obj_filename)
-      .arg("-E")
-      .arg("-e").arg("0")
-      .arg("-O2")
-      .arg("--shared")
-      .arg("-o").arg(&elf_filename);
-    info!("linking: {:?}", cmd);
-
-    if !cmd.spawn()?.wait()?.success() {
-      return Err("linking failed".into());
-    }
-
     tdir.into_path();
 
-    let mut elf = Vec::new();
+    let mut bin = Vec::new();
     {
-      let mut file = File::open(&elf_filename)?;
-      file.read_to_end(&mut elf)?;
+      let mut file = File::open(&spv_filename)?;
+      file.read_to_end(&mut bin)?;
     }
 
-    codegen.outputs.insert(OutputType::Exe, elf);
+    codegen.outputs.insert(OutputType::Exe, bin);
 
     let codegen = Arc::new(codegen);
     let mut write = self.0.m.write()
@@ -449,8 +388,10 @@ impl Context {
 }
 
 impl ContextDataMut {
-  fn get_next_accelerator_id(&self) -> AcceleratorId {
-    AcceleratorId::new(self.accelerators.len())
+  fn get_next_accelerator_id(&mut self) -> AcceleratorId {
+    let id = self.next_accel_id;
+    self.next_accel_id.0 += 1;
+    id
   }
   fn create_translator_for_accel(&mut self, context: &Context,
                                  accel: &Arc<Accelerator>)
@@ -458,10 +399,10 @@ impl ContextDataMut {
   {
     use std::collections::hash_map::Entry;
 
-    let accel_desc = accel.accel_target_desc()?;
+    let accel_desc = accel.accel_target_desc().clone();
     match self.translators.entry(accel_desc.clone()) {
       Entry::Occupied(o) => {
-        let comms: CodegenComms = o.get().clone_into();
+        let comms: CodegenComms = o.get().clone_unsync();
         comms.add_accel(accel);
         accel.set_codegen(comms);
       },
@@ -475,7 +416,7 @@ impl ContextDataMut {
     Ok(())
   }
 }
-
+impl Eq for Context { }
 impl PartialEq for Context {
   fn eq(&self, rhs: &Self) -> bool {
     Arc::ptr_eq(&self.0, &rhs.0)
@@ -500,27 +441,207 @@ impl WeakContext {
   }
 }
 
-pub struct Kernel {
-  pub(crate) main_object: u64,
-  pub(crate) group_segment_size: u32,
-  pub(crate) kernarg_segment_size: u32,
-  pub(crate) kernarg_segment_align: u32,
-  pub(crate) private_segment_size: u32,
-  pub(crate) exe: FrozenExecutable,
+#[derive(Debug)]
+pub struct SpirvModule {
+  entry: CString,
+  exe_model: ExecutionModel,
+  /// If Some(..), this function is a shader; if None, it is a kernel.
+  shader: Option<CodegenShaderInterface>,
+  spirv: vk::pipeline::shader::ShaderModule,
+  pipeline_desc: StaticPipelineLayoutDesc,
 }
-impl Kernel {
-  pub fn group_segment_size(&self) -> u32 { self.group_segment_size }
-  pub fn private_segment_size(&self) -> u32 { self.private_segment_size }
+impl SpirvModule {
+  pub fn descriptor_set(&self) -> &StaticPipelineLayoutDesc {
+    &self.pipeline_desc
+  }
+  pub fn entry(self: Arc<Self>) -> SpirvEntry {
+    match self.exe_model {
+      ExecutionModel::Kernel |
+      ExecutionModel::GLCompute => {
+        SpirvEntry::Kernel(SpirvComputeKernel {
+          module: self,
+        })
+      },
+      _ => {
+        SpirvEntry::Shader(SpirvGraphicsShader {
+          module: self,
+        })
+      },
+    }
+  }
+  pub fn entry_ref<'a>(self: &'a Arc<Self>) -> SpirvEntryRef<'a> {
+    if self.shader.is_some() {
+      SpirvEntryRef::Shader(SpirvGraphicsShaderRef {
+        module: &*self,
+      })
+    } else {
+      SpirvEntryRef::Kernel(SpirvComputeKernelRef {
+        module: &*self,
+      })
+    }
+  }
+
+  pub fn graphics_ty(&self) -> vk::pipeline::shader::GraphicsShaderType {
+    use vk::pipeline::shader::GraphicsShaderType;
+    match self.exe_model {
+      ExecutionModel::Vertex => GraphicsShaderType::Vertex,
+      ExecutionModel::TessellationControl => GraphicsShaderType::TessellationControl,
+      ExecutionModel::TessellationEval => GraphicsShaderType::TessellationEvaluation,
+      ExecutionModel::Geometry => unimplemented!("TODO geometry primitive modes"),
+      ExecutionModel::Fragment => GraphicsShaderType::Fragment,
+      _ => panic!("not a graphics shader exe model"),
+    }
+  }
 }
 
-pub(crate) struct ModuleData(KernelId, WeakContext, RwLock<ModuleData_>);
+#[derive(Clone, Copy, Debug)]
+pub struct SpirvComputeKernelRef<'a> {
+  module: &'a SpirvModule,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct SpirvGraphicsShaderRef<'a> {
+  module: &'a SpirvModule,
+}
+#[derive(Clone, Copy, Debug)]
+pub enum SpirvEntryRef<'a> {
+  Kernel(SpirvComputeKernelRef<'a>),
+  Shader(SpirvGraphicsShaderRef<'a>),
+}
+#[derive(Clone, Debug)]
+pub struct SpirvComputeKernel {
+  module: Arc<SpirvModule>,
+}
+#[derive(Clone, Debug)]
+pub struct SpirvGraphicsShader {
+  module: Arc<SpirvModule>,
+}
+#[derive(Clone, Debug)]
+pub enum SpirvEntry {
+  Kernel(SpirvComputeKernel),
+  Shader(SpirvGraphicsShader),
+}
+
+unsafe impl<'a> vk::pipeline::shader::EntryPointAbstract for SpirvComputeKernelRef<'a> {
+  type PipelineLayout = StaticPipelineLayoutDesc;
+  type SpecializationConstants = ();
+
+  fn module(&self) -> &vk::pipeline::shader::ShaderModule {
+    &self.module.spirv
+  }
+  fn name(&self) -> &CStr {
+    &self.module.entry
+  }
+  fn layout(&self) -> &Self::PipelineLayout { &self.module.pipeline_desc }
+}
+unsafe impl<'a> vk::pipeline::shader::EntryPointAbstract for SpirvGraphicsShaderRef<'a> {
+  type PipelineLayout = StaticPipelineLayoutDesc;
+  type SpecializationConstants = ();
+
+  fn module(&self) -> &vk::pipeline::shader::ShaderModule {
+    &self.module.spirv
+  }
+  fn name(&self) -> &CStr {
+    &self.module.entry
+  }
+  fn layout(&self) -> &Self::PipelineLayout { &self.module.pipeline_desc }
+}
+unsafe impl<'a> vk::pipeline::shader::GraphicsEntryPointAbstract for SpirvGraphicsShaderRef<'a> {
+  type InputDefinition = StaticShaderInterfaceDef;
+  type OutputDefinition = StaticShaderInterfaceDef;
+
+  fn input(&self) -> &Self::InputDefinition { &self.module.shader.as_ref().unwrap().0 }
+  fn output(&self) -> &Self::OutputDefinition { &self.module.shader.as_ref().unwrap().1 }
+  fn ty(&self) -> vk::pipeline::shader::GraphicsShaderType {
+    self.module.graphics_ty()
+  }
+}
+unsafe impl vk::pipeline::shader::EntryPointAbstract for SpirvComputeKernel {
+  type PipelineLayout = StaticPipelineLayoutDesc;
+  type SpecializationConstants = ();
+
+  fn module(&self) -> &vk::pipeline::shader::ShaderModule {
+    &self.module.spirv
+  }
+  fn name(&self) -> &CStr {
+    &self.module.entry
+  }
+  fn layout(&self) -> &Self::PipelineLayout { &self.module.pipeline_desc }
+}
+unsafe impl vk::pipeline::shader::EntryPointAbstract for SpirvGraphicsShader {
+  type PipelineLayout = StaticPipelineLayoutDesc;
+  type SpecializationConstants = ();
+
+  fn module(&self) -> &vk::pipeline::shader::ShaderModule {
+    &self.module.spirv
+  }
+  fn name(&self) -> &CStr {
+    &self.module.entry
+  }
+  fn layout(&self) -> &Self::PipelineLayout { &self.module.pipeline_desc }
+}
+unsafe impl vk::pipeline::shader::GraphicsEntryPointAbstract for SpirvGraphicsShader {
+  type InputDefinition = StaticShaderInterfaceDef;
+  type OutputDefinition = StaticShaderInterfaceDef;
+
+  fn input(&self) -> &Self::InputDefinition { &self.module.shader.as_ref().unwrap().0 }
+  fn output(&self) -> &Self::OutputDefinition { &self.module.shader.as_ref().unwrap().1 }
+  fn ty(&self) -> vk::pipeline::shader::GraphicsShaderType {
+    self.module.graphics_ty()
+  }
+}
+
+impl<'a> SpirvEntryRef<'a> {
+  pub fn kernel_entry(self) -> Option<SpirvComputeKernelRef<'a>> {
+    match self {
+      SpirvEntryRef::Kernel(k) => Some(k),
+      _ => None,
+    }
+  }
+  pub fn shader_entry(self) -> Option<SpirvGraphicsShaderRef<'a>> {
+    match self {
+      SpirvEntryRef::Shader(s) => Some(s),
+      _ => None,
+    }
+  }
+}
+impl SpirvEntry {
+  pub fn kernel_entry(self) -> Option<SpirvComputeKernel> {
+    match self {
+      SpirvEntry::Kernel(k) => Some(k),
+      _ => None,
+    }
+  }
+  pub fn shader_entry(self) -> Option<SpirvGraphicsShader> {
+    match self {
+      SpirvEntry::Shader(s) => Some(s),
+      _ => None,
+    }
+  }
+
+  pub fn as_ref(&self) -> SpirvEntryRef {
+    match self {
+      &SpirvEntry::Kernel(ref k) =>
+        SpirvEntryRef::Kernel(SpirvComputeKernelRef {
+          module: &*k.module,
+        }),
+      &SpirvEntry::Shader(ref s) =>
+        SpirvEntryRef::Shader(SpirvGraphicsShaderRef {
+          module: &*s.module,
+        }),
+    }
+  }
+}
+
+pub(crate) struct ModuleData(WeakContext, RwLock<ModuleData_>);
 impl ModuleData {
-  pub(crate) fn compile(&self, context: &Context,
-                        accel: &Arc<Accelerator>)
-    -> Result<Arc<Kernel>, Box<Error>>
+  pub(crate) fn compile(&self,
+                        context: &Context,
+                        accel: &Arc<Accelerator>,
+                        desc: CodegenDesc)
+    -> Result<Arc<SpirvModule>, Box<Error>>
   {
     {
-      let read = self.2.read()
+      let read = self.1.read()
         .map_err(|_| {
           "poisoned lock!"
         })?;
@@ -532,7 +653,7 @@ impl ModuleData {
 
     // XXX this is not ideal: compiling the same kernel for different
     // accels will be serialized.
-    let mut write = self.2.write()
+    let mut write = self.1.write()
       .map_err(|_| {
         "poisoned lock!"
       })?;
@@ -544,81 +665,34 @@ impl ModuleData {
       }
     }
 
-    let codegen = context.manually_compile(accel, self.0)?;
-    // XXX hardcoded.
-    let profiles = Profiles::base();
-    let rounding_mode = DefaultFloatRoundingModes::near();
-    let exe = Executable::new(profiles, rounding_mode, "")?;
+    let codegen = context.manually_compile_desc(accel, desc)?;
+    let shader = codegen.desc.interface;
+    let pipeline_desc = codegen.desc.pipeline;
+    let exe_bin = codegen.outputs.get(&OutputType::Exe).unwrap();
 
-    let agent = accel.agent();
+    let dev = accel.device();
 
-    {
-      let exe_bin = codegen.outputs.get(&OutputType::Exe).unwrap();
-      let exe_reader = CodeObjectReaderRef::new(exe_bin.as_ref())
-        .expect("CodeObjectReaderRef::new");
-
-      exe.load_agent_code_object(agent, &exe_reader, "")?;
-    }
-    let exe = exe.freeze("")?;
-
-    let props = {
-      let symbols = exe.agent_symbols(agent)?;
-      let kernel_symbol = symbols.into_iter()
-        .filter(|symbol| symbol.is_kernel())
-        .find(|symbol| {
-          match symbol.name() {
-            Ok(ref n) if n == &codegen.kernel_symbol => true,
-            Ok(n) => {
-              info!("ignoring symbol {}", n);
-              false
-            },
-            Err(_) => {
-              warn!("unnamed symbol; skipping");
-              false
-            },
-          }
-        })
-        .ok_or_else(|| {
-          format!("failed to find {}", codegen.kernel_symbol)
-        })?;
-      (kernel_symbol.kernel_object()?
-        .ok_or_else(|| "unexpected 0 for kernel object id" )?,
-       kernel_symbol.kernel_group_segment_size()? as _,
-       kernel_symbol.kernel_kernarg_segment_size()? as _,
-       kernel_symbol.kernel_kernarg_segment_align()? as _,
-       kernel_symbol.kernel_private_segment_size()? as _)
+    let spirv = unsafe {
+      vk::pipeline::shader::ShaderModule::new(dev.clone(),
+                                              exe_bin)?
     };
+    // vulkano puts the ShaderModule in an Arc. Extract it here:
+    let spirv = Arc::try_unwrap(spirv)
+      .ok()
+      .expect("spirv module is already shared? Impossible!");
 
-    let (main_object, group_size, kernarg_size,
-      kernarg_align, private_size) = props;
+    println!("symbol: {}", codegen.symbol);
 
-    #[derive(Debug)]
-    struct KernelProps {
-      group_size: u32,
-      kernarg_size: u32,
-      kernarg_align: u32,
-      private_size: u32,
-    }
-    let props = KernelProps {
-      group_size,
-      kernarg_size,
-      kernarg_align,
-      private_size,
-    };
-
-    info!("kernel `{}` props: {:#?}", codegen.kernel_symbol,
-          props);
-
-    let kernel = Kernel {
-      main_object,
-      group_segment_size: group_size,
-      kernarg_segment_size: kernarg_size,
-      kernarg_segment_align: kernarg_align,
-      private_segment_size: private_size,
-      exe,
+    let kernel = SpirvModule {
+      entry: CString::new(codegen.symbol.clone())
+        .expect("str -> CString"),
+      exe_model: desc.exe_model,
+      shader,
+      spirv,
+      pipeline_desc,
     };
     let kernel = Arc::new(kernel);
-    if write.exes.len() < accel.id().index() {
+    if write.exes.len() <= accel.id().index() {
       write.exes.resize(accel.id().index() + 1, None);
     }
     write.exes[accel.id()] = Some(kernel.clone());
@@ -627,12 +701,14 @@ impl ModuleData {
 }
 #[derive(Default)]
 pub(crate) struct ModuleData_ {
-  exes: IndexVec<AcceleratorId, Option<Arc<Kernel>>>,
+  exes: IndexVec<AcceleratorId, Option<Arc<SpirvModule>>>,
 }
-pub(crate) struct ModuleContextData<Args, Ret>(&'static AtomicUsize,
-                                               PhantomData<*mut (Args, Ret)>);
+#[derive(Clone, Copy, Debug)]
+/// No PhantomData on this, this object doesn't own the arguments or return
+/// values of the function it represents.
+pub(crate) struct ModuleContextData(&'static AtomicUsize);
 
-impl<Args, Ret> ModuleContextData<Args, Ret> {
+impl ModuleContextData {
   pub fn upgrade(&self, context: &Context) -> Option<Arc<ModuleData>> {
     let ptr_usize = self.0.load(Ordering::Acquire);
     if ptr_usize == 0 { return None; }
@@ -644,7 +720,7 @@ impl<Args, Ret> ModuleContextData<Args, Ret> {
     Arc::into_raw(arc);
 
     let arc = arc_clone;
-    let expected_context = arc.1.upgrade();
+    let expected_context = arc.0.upgrade();
     if expected_context.is_none() { return None; }
     let expected_context = expected_context.unwrap();
     assert!(expected_context == context,
@@ -653,7 +729,7 @@ impl<Args, Ret> ModuleContextData<Args, Ret> {
     Some(arc)
   }
 
-  pub fn get_cache_data(&self, kernel_id: KernelId, context: &Context)
+  pub fn get_cache_data(&self, context: &Context)
     -> Arc<ModuleData>
   {
     use std::intrinsics::unlikely;
@@ -661,7 +737,7 @@ impl<Args, Ret> ModuleContextData<Args, Ret> {
     let mut cached = self.upgrade(context);
     if unsafe { unlikely(cached.is_none()) } {
       let data = RwLock::new(Default::default());
-      let data = ModuleData(kernel_id, context.downgrade_ref(), data);
+      let data = ModuleData(context.downgrade_ref(), data);
       let data = Arc::new(data);
       let data_ptr = Arc::into_raw(data.clone());
       let data_usize = data_ptr as usize;
@@ -718,18 +794,23 @@ impl<Args, Ret> ModuleContextData<Args, Ret> {
 
     cached.unwrap()
   }
-}
 
-impl<'a, F, Args, Ret> From<&'a F> for ModuleContextData<Args, Ret>
-  where F: Fn<Args, Output = Ret>,
-{
-  fn from(f: &'a F) -> Self {
+  pub fn get<F, Args, Ret>(f: &F) -> Self
+    where F: Fn<Args, Output = Ret>,
+  {
     use hsa_core::kernel::kernel_context_data_id;
     let data_ref = kernel_context_data_id(f);
-    ModuleContextData(data_ref, PhantomData)
+    ModuleContextData(data_ref)
   }
 }
-impl<Args, Ret> Clone for ModuleContextData<Args, Ret> {
-  fn clone(&self) -> Self { *self }
+impl Eq for ModuleContextData { }
+impl PartialEq for ModuleContextData {
+  fn eq(&self, rhs: &Self) -> bool {
+    self.0 as *const AtomicUsize == rhs.0 as *const AtomicUsize
+  }
 }
-impl<Args, Ret> Copy for ModuleContextData<Args, Ret> { }
+impl<'a> PartialEq<&'a ModuleContextData> for ModuleContextData {
+  fn eq(&self, rhs: &&Self) -> bool {
+    self.0 as *const AtomicUsize == rhs.0 as *const AtomicUsize
+  }
+}

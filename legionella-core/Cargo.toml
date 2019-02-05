@@ -1,0 +1,8 @@
+[package]
+name = "legionella-core"
+version = "0.1.0"
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+edition = "2018"
+
+[dependencies]
+vulkano = "0.11.1"

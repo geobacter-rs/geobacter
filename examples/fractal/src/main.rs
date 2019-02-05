@@ -62,8 +62,11 @@ const START_SCALE: f32 = 1.0;
 const WORKITEM_SIZE: usize = 16;
 const OUT_NAME: &'static str = "out9.mkv";
 
-fn work(mut image: nd::ArrayViewMut2<Elem>,
-        scale: f32) {
+fn work(args: Args) {
+  let Args {
+    mut image,
+    scale,
+  } = args;
 
   let dispatch = dispatch_packet();
 
@@ -97,7 +100,7 @@ fn work(mut image: nd::ArrayViewMut2<Elem>,
         2.0 * z.x() * z.y() + c.y(),
       ]);
 
-      if z.length() > 40.0 {
+      if z.length_sqrd() > 40.0 {
         break;
       }
 
@@ -105,7 +108,23 @@ fn work(mut image: nd::ArrayViewMut2<Elem>,
       if i >= 1.0 { break; }
     }
 
-    let mut write: Vec3<f32> = Vec3::splat(i);
+    // use a simple cosine palette to determine color:
+    // http://iquilezles.org/www/articles/palettes/palettes.htm
+    let d = Vec3::new([0.3, 0.3, 0.5]);
+    let e = Vec3::new([-0.2, -0.3, -0.5]);
+    let f = Vec3::new([2.1, 2.0, 3.0]);
+    let g = Vec3::new([0.0, 0.1, 0.0]);
+
+
+    let i: Vec3<f32> = Vec3::splat(i);
+    let t = (f * i + g) * 6.28318;
+    let t = Vec3::new([
+      t.x().cos(),
+      t.y().cos(),
+      t.z().cos(),
+    ]);
+    let mut write = d + e * t;
+
     write *= u8::max_value() as f32;
 
     // XXX casts are currently ugly.
@@ -118,12 +137,11 @@ fn work(mut image: nd::ArrayViewMut2<Elem>,
   }
 }
 
-/*#[repr(packed)]
+#[repr(packed)]
 pub struct Args<'a> {
   image: nd::ArrayViewMut2<'a, Elem>,
   scale: f32,
-}*/
-type Args<'a> = (nd::ArrayViewMut2<'a, Elem>, f32);
+}
 
 pub fn main() {
   env_logger::init();
@@ -316,7 +334,7 @@ pub fn main() {
 }
 
 fn render_frame<F>(accel: &Arc<Accelerator>,
-                   invoc: &mut Invoc<F, Args, (usize, usize), (usize, usize)>,
+                   invoc: &mut Invoc<F, (Args, ), (usize, usize), (usize, usize)>,
                    pixels: &mut HostLockedAgentPtr<nd::Array2<Elem>>,
                    queue: &KernelMultiQueue,
                    ffmpeg: &mut Child,
@@ -325,7 +343,7 @@ fn render_frame<F>(accel: &Arc<Accelerator>,
                    mut args_storage: &mut ArgsStorage,
                    kernel_completion: &Signal,
                    frame_index: usize)
-  where F: for<'a> Fn(nd::ArrayViewMut2<'a, Elem>, f32)
+  where F: for<'a> Fn(Args<'a>)
 {
   let mut call = None;
   if frame_index < MAX_FRAMES {
@@ -336,8 +354,11 @@ fn render_frame<F>(accel: &Arc<Accelerator>,
       .into_shape((Y_SIZE, X_SIZE, ))
       .unwrap();
     let scale = 1.0 / (START_SCALE + frame_index as f32 * TAU);
-    let args = (image, scale);
-    let call_ = invoc.call_async(args, accel,
+    let args = Args {
+      image,
+      scale,
+    };
+    let call_ = invoc.call_async((args, ), accel,
                                  queue, kernel_completion,
                                  args_storage);
     assert!(call_.is_ok(), "kernel enqueue error: {:?}", call_.err().unwrap());

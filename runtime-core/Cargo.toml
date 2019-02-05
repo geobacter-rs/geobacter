@@ -1,6 +1,6 @@
 [package]
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
-name = "runtime"
+name = "runtime-core"
 version = "0.1.0"
 
 [dependencies]
@@ -17,16 +17,14 @@ serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1.0.5"
 tempdir = "0.3.6"
-ndarray = "0.10.12"
+vulkano = "0.11.1"
+owning_ref = "0.4.0"
+legionella-core = { path = "../legionella-core" }
+legionella-std = { path = "../legionella-std" }
+crossbeam = "0.6.0"
 
 [dependencies.hsa-core]
 path = "../hsa-core"
-
-[dependencies.hsa-rt]
-path = "../hsa-rt"
-
-[dependencies.hsa-rt-sys]
-path = "../hsa-rt-sys"
 
 [dependencies.legionella-intrinsics]
 path = "../legionella-intrinsics"

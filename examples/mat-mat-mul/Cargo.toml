@@ -19,5 +19,5 @@ path = "../../hsa-rt"
 [dependencies.hsa-rt-sys]
 path = "../../hsa-rt-sys"
 
-[dependencies.runtime]
-path = "../../runtime"
+[dependencies.runtime-core]
+path = "../../runtime-core"
