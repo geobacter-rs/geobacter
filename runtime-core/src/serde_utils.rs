@@ -575,11 +575,12 @@ pub enum PanicStrategy {
 
 #[derive(Serialize, Deserialize)]
 pub enum LinkerFlavor {
-    Em,
-    Gcc,
-    Ld,
-    Msvc,
-    Lld(#[serde(with = "LldFlavor")] ::rustc_target::spec::LldFlavor),
+  Em,
+  Gcc,
+  Ld,
+  Msvc,
+  Lld(#[serde(with = "LldFlavor")] ::rustc_target::spec::LldFlavor),
+  PtxLinker,
 }
 mod linker_flavor {
   use serde::*;
@@ -614,6 +615,7 @@ impl Into<spec::LinkerFlavor> for LinkerFlavor {
       Ld => LinkerFlavor::Ld,
       Msvc => LinkerFlavor::Msvc,
       Lld(v) => LinkerFlavor::Lld(v.into()),
+      PtxLinker => LinkerFlavor::PtxLinker,
     }
   }
 }
@@ -627,6 +629,7 @@ impl From<spec::LinkerFlavor> for LinkerFlavor {
       Ld => LinkerFlavor::Ld,
       Msvc => LinkerFlavor::Msvc,
       Lld(v) => LinkerFlavor::Lld(v.into()),
+      PtxLinker => LinkerFlavor::PtxLinker,
     }
   }
 }

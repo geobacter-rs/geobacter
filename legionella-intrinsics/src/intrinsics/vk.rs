@@ -213,8 +213,7 @@ impl LegionellaCustomIntrinsicMirGen for ComputePipelineLayoutDesc {
       let ptr = Pointer::from(alloc_id);
       let scalar = Scalar::Ptr(ptr);
       let slice = ConstValue::new_slice(scalar,
-                                        desc_set.len() as _,
-                                        &tcx);
+                                        desc_set.len() as _);
 
       c_desc_set_bindings.push(slice);
     }
@@ -226,8 +225,7 @@ impl LegionellaCustomIntrinsicMirGen for ComputePipelineLayoutDesc {
     let ptr = Pointer::from(alloc_id);
     let scalar = Scalar::Ptr(ptr);
     let slice = ConstValue::new_slice(scalar,
-                                      desc_set_bindings.len() as _,
-                                      &tcx);
+                                      desc_set_bindings.len() as _);
     let ret_ty = self.output(tcx);
     let slice = const_value_rvalue(tcx, slice, ret_ty);
 
@@ -310,7 +308,7 @@ impl LegionellaCustomIntrinsicMirGen for ComputePipelineRequiredCapabilities {
     let (alloc_id, ..) = static_tuple_alloc(tcx, "required caps", caps, array_ty);
     let ptr = Pointer::from(alloc_id);
     let scalar = Scalar::Ptr(ptr);
-    let slice = ConstValue::new_slice(scalar, caps_len as _, &tcx);
+    let slice = ConstValue::new_slice(scalar, caps_len as _);
     let caps = const_value_rvalue(tcx, slice, ret_ty);
 
     let ret = mir::Place::Local(mir::RETURN_PLACE);
@@ -391,7 +389,7 @@ impl LegionellaCustomIntrinsicMirGen for ComputePipelineRequiredExtensions {
     let (alloc_id, ..) = static_tuple_alloc(tcx, "required exts", exts, array_ty);
     let ptr = Pointer::from(alloc_id);
     let scalar = Scalar::Ptr(ptr);
-    let slice = ConstValue::new_slice(scalar, exts_len as _, &tcx);
+    let slice = ConstValue::new_slice(scalar, exts_len as _);
     let exts = const_value_rvalue(tcx, slice, ret_ty);
 
     let ret = mir::Place::Local(mir::RETURN_PLACE);

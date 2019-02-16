@@ -56,8 +56,7 @@ fn redirect_or_panic<'a, 'tcx, F>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let str = format!("{}", str);
     let id = tcx.allocate_bytes(str.as_bytes());
     let v = ConstValue::new_slice(Scalar::Ptr(id.into()),
-                                  str.len() as u64,
-                                  &tcx);
+                                  str.len() as u64);
     let v = tcx.mk_const(Const {
       ty: tcx.mk_static_str(),
       val: v,

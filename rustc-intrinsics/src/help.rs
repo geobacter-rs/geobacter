@@ -153,8 +153,7 @@ pub trait LegionellaTyCtxtHelp<'a, 'tcx>: Copy
     let tcx = self.as_tcx();
     let id = tcx.allocate_bytes(v.as_bytes());
     let v = ConstValue::new_slice(Scalar::Ptr(id.into()),
-                                  v.len() as u64,
-                                  &tcx);
+                                  v.len() as u64);
     let v = self.mk_const(Const {
       ty: tcx.mk_static_str(),
       val: v,
@@ -232,10 +231,10 @@ pub fn build_compiler_opt<'a, 'tcx, F, T>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
       },
       val => unimplemented!("scalar type {:?}", val),
     };
-    ConstValue::new_slice(Scalar::Ptr(ptr), 1, &tcx)
+    ConstValue::new_slice(Scalar::Ptr(ptr), 1)
   } else {
     let s = Scalar::ptr_null(&tcx);
-    ConstValue::new_slice(s, 0, &tcx)
+    ConstValue::new_slice(s, 0)
   }
 }
 
@@ -272,8 +271,7 @@ pub fn static_str_const_value<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 {
   let id = tcx.allocate_bytes(s.as_bytes());
   ConstValue::new_slice(Scalar::Ptr(id.into()),
-                        s.len() as u64,
-                        &tcx)
+                        s.len() as u64)
 }
 
 pub fn static_tuple_const_value<'a, 'tcx, I>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
@@ -414,9 +412,10 @@ pub fn write_static_tuple<'a, 'tcx, I>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
       ConstValue::Scalar(scalar) => {
         write_scalar(scalar);
       },
-      ConstValue::ScalarPair(l, r) => {
-        write_scalar(l);
-        write_scalar(r);
+      ConstValue::Slice(data, len) => {
+        write_scalar(data);
+        let len = Scalar::from_uint(len, tcx.data_layout().pointer_size);
+        write_scalar(len);
       },
       _ => {
         bug!("unhandled ConstValue: {:?}", element);
