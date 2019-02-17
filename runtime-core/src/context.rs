@@ -353,6 +353,7 @@ impl Context {
     let spv_filename = tdir.path().join("kernel.spv");
     let mut cmd = Command::new(rbr.llvm_tool("llvm-spirv"));
     cmd
+      .arg("-spirv-mem2reg=false") // this is already done by our optimizations
       .arg("-o").arg(&spv_filename)
       .arg(linked_filename);
     info!("codegen-ing: {:?}", cmd);

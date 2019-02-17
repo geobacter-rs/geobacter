@@ -8,9 +8,7 @@ extern crate log;
 extern crate vulkano as vk;
 extern crate env_logger;
 
-use std::env::{split_paths, join_paths, var_os, set_var, };
 use std::ffi::CString;
-use std::time::{Duration, };
 use std::sync::{Arc, };
 
 use vk::buffer::BufferUsage;
@@ -48,6 +46,7 @@ fn data_binding() -> BufferBinding<Data> {
 }
 
 #[legionella(capabilities(Kernel))]
+#[legionella(local_size(x = 64, y = 1, z = 1))]
 fn kernel() {
   // we have to use unsafe here because all invocations can access any
   // part of `DATA` (as reflected in the use of a static mut).
@@ -64,20 +63,6 @@ pub fn main() {
   let mut layers = vec![];
   for layer in layers_list().unwrap() {
     layers.push(layer.name().to_string());
-  }
-
-  let paths = var_os("LD_LIBRARY_PATH")
-    .as_ref()
-    .map(|paths| {
-      split_paths(paths)
-        .chain(Some("/usr/local/lib".into()).into_iter())
-    })
-    .map(|paths| {
-      join_paths(paths).expect("failed to join paths")
-    });
-  if let Some(paths) = paths {
-    set_var("LD_LIBRARY_PATH",
-            paths);
   }
 
   env_logger::init();
@@ -208,19 +193,17 @@ pub fn main() {
 
     let cmd_buf = AutoCommandBufferBuilder::new(device.clone(), queue.family())
       .expect("failed to create auto cmd buf")
-      .dispatch([ELEMENTS as _, 1, 1], pipeline.clone(),
+      .dispatch([(ELEMENTS / 64) as _, 1, 1], pipeline.clone(),
                 desc_sets, ())
       .expect("failed to build cmd buf dispatch")
       .build()
       .expect("build cmd buf");
 
-    let dur = Duration::new(0, 0);
-
     cmd_buf.execute(queue.clone())
       .expect("start compute")
       .then_signal_fence_and_flush()
       .expect("then_signal_fence_and_flush")
-      .wait(Some(dur))
+      .wait(None)
       .expect("GpuFuture::wait");
 
     println!("Kernel finished; checking results");
