@@ -945,7 +945,7 @@ fn providers_remote_and_local(providers: &mut Providers) {
     .. *providers
   };
 
-  fn entry_fn<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, _cnum: CrateNum) -> Option<(DefId, EntryFnType)> {
+  fn entry_fn<'a, 'tcx>(_tcx: TyCtxt<'a, 'tcx, 'tcx>, _cnum: CrateNum) -> Option<(DefId, EntryFnType)> {
     None
   }
   fn fn_sig<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> ty::PolyFnSig<'tcx> {

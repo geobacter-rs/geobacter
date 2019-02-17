@@ -2,8 +2,7 @@
 use std::error::Error;
 use std::sync::{Arc, RwLock, };
 
-use rustc_target::spec::{AddrSpaceIdx, AddrSpaceKind, AddrSpaceProps,
-                         PanicStrategy, abi::Abi, };
+use rustc_target::spec::{PanicStrategy, abi::Abi, };
 
 use vk;
 
@@ -89,7 +88,6 @@ impl Accelerator for VkAccel {
 // private methods
 impl VkAccel {
   fn init_target_desc(&mut self) -> Result<(), Box<Error>> {
-    use std::str::FromStr;
     use vk::device::RawDeviceExtensions;
     let desc = Arc::make_mut(&mut self.target_desc);
 

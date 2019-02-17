@@ -29,7 +29,7 @@ use self::rustc::session::{config, Session, };
 use self::rustc::session::config::{ErrorOutputType, Input, };
 use self::rustc::ty::{self, TyCtxt, layout::Align, };
 use self::rustc::ty::query::Providers;
-use self::rustc::ty::{Const, ParamEnv, };
+use self::rustc::ty::{Const, };
 use self::rustc_codegen_utils::codegen_backend::CodegenBackend;
 use self::rustc_data_structures::fx::{FxHashMap, };
 use self::rustc_data_structures::sync::{Lrc, };
@@ -270,10 +270,6 @@ impl CustomIntrinsicMirGen for KernelIdFor {
                                        mir: &mut mir::Mir<'tcx>)
     where 'tcx: 'a
   {
-    let _parent_param_substs = instance.substs;
-
-    let reveal_all = ParamEnv::reveal_all();
-
     let source_info = mir::SourceInfo {
       span: DUMMY_SP,
       scope: mir::OUTERMOST_SOURCE_SCOPE,
@@ -297,29 +293,6 @@ impl CustomIntrinsicMirGen for KernelIdFor {
 
     let slice = build_compiler_opt(tcx, instance, |tcx, instance| {
       let def_id = instance.def_id();
-      let ty = instance.ty(tcx);
-      let sig = ty.fn_sig(tcx);
-      let sig = tcx.normalize_erasing_late_bound_regions(reveal_all, &sig);
-      let inputs = sig.inputs();
-      for input in inputs.iter() {
-        let msg = format!("input ty: {:?}", input);
-        tcx.sess.note_without_error(&msg);
-        match input.sty {
-          ty::Adt(def, _subs) => {
-            let msg = format!("adt did: {:?}, repr {:?}",
-                              def.did, def.repr);
-            tcx.sess.note_without_error(&msg);
-            for (idx, variant) in def.variants.iter().enumerate() {
-              let msg = format!("index {} variant def: {:#?}",
-                                idx, variant);
-              tcx.sess.note_without_error(&msg);
-            }
-            continue;
-          },
-          _ => { },
-        }
-      }
-
       let crate_name = tcx.crate_name(def_id.krate);
       let disambiguator = tcx.crate_disambiguator(def_id.krate);
       let (d_hi, d_lo) = disambiguator.to_fingerprint().as_value();
