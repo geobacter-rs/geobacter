@@ -99,6 +99,8 @@ pub fn workgroup_id() -> Vec3<usize> { gv3!(WORKGROUP_ID) }
 pub fn workgroup_size() -> Vec3<usize> { gv3!(WORKGROUP_SIZE) }
 
 extern "rust-intrinsic" {
+  fn __legionella_check_glcompute_shader<F>(f: &F)
+    where F: Fn<(), Output = ()>;
   fn __legionella_check_kernel_shader<F>(f: &F)
     where F: Fn<(), Output = ()>;
 }
@@ -130,7 +132,7 @@ pub fn kernel_desc<F>(f: &F) -> KernelDesc
   where F: Fn<(), Output = ()>,
 {
   unsafe {
-    __legionella_check_kernel_shader(f);
+    __legionella_check_glcompute_shader(f);
   }
 
   let id = kernel_id_for(f);

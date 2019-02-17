@@ -41,6 +41,7 @@ impl CheckFn {
       CheckFn(ExecutionModel::TessellationControl),
       CheckFn(ExecutionModel::TessellationEval),
       CheckFn(ExecutionModel::Fragment),
+      CheckFn(ExecutionModel::GLCompute),
       CheckFn(ExecutionModel::Kernel),
     ]
   }

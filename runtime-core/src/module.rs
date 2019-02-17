@@ -37,7 +37,7 @@ impl KernelDesc {
 
     let desc = CodegenDesc {
       id: self.desc.id,
-      exe_model: ExecutionModel::Kernel,
+      exe_model: ExecutionModel::GLCompute,
       pipeline: self.desc.pipeline_desc,
       interface: None,
       capabilities: self.desc.capabilities,

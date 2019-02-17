@@ -45,7 +45,7 @@ fn data_binding() -> BufferBinding<Data> {
   BufferBinding::new(&data_binding)
 }
 
-#[legionella(capabilities(Kernel))]
+#[legionella(capabilities(Shader))]
 #[legionella(local_size(x = 64, y = 1, z = 1))]
 fn kernel() {
   // we have to use unsafe here because all invocations can access any
