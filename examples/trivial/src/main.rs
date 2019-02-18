@@ -8,7 +8,6 @@ extern crate log;
 extern crate vulkano as vk;
 extern crate env_logger;
 
-use std::ffi::CString;
 use std::sync::{Arc, };
 
 use vk::buffer::BufferUsage;
@@ -16,7 +15,7 @@ use vk::buffer::cpu_access::{CpuAccessibleBuffer, };
 use vk::command_buffer::{CommandBuffer, AutoCommandBufferBuilder, };
 use vk::descriptor::descriptor_set::{PersistentDescriptorSet, };
 use vk::descriptor::pipeline_layout::PipelineLayout;
-use vk::device::{Device, Features, RawDeviceExtensions, };
+use vk::device::{Device, Features, };
 use vk::instance::{layers_list, Instance, InstanceExtensions, PhysicalDevice,
                    debug::DebugCallback, debug::MessageTypes };
 use vk::pipeline::ComputePipeline;
@@ -76,12 +75,7 @@ pub fn main() {
 
   let pipeline = kernel_desc.pipeline_desc;
   info!("pipeline desc: {:#?}", pipeline);
-  let mut raw_exts = kernel_desc.raw_device_extensions();
-  {
-    let mut remove = RawDeviceExtensions::none();
-    remove.insert(CString::new("VK_EXT_buffer_device_address").unwrap());
-    raw_exts = raw_exts.difference(&remove);
-  }
+  let raw_exts = kernel_desc.raw_device_extensions();
 
   let mut features = Features::none();
   features.robust_buffer_access = true;
@@ -130,6 +124,7 @@ pub fn main() {
 
   for phy in PhysicalDevice::enumerate(&instance) {
     println!("Physical Device Name: `{}`", phy.name());
+    if phy.name().contains("RADV") { continue; }
 
     // initialization
     let q_fam = phy.queue_families()
