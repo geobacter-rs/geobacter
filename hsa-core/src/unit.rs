@@ -1297,6 +1297,22 @@ impl Vec4<f32> {
   pub const fn new_c(v: [f32; 4]) -> Self {
     Vec(InnerVecN4(v[0], v[1], v[2], v[3]))
   }
+  /// Kludge: multiple in-scope `new_c`
+  pub const fn new_f32_c(v: [f32; 4]) -> Self { Self::new_c(v) }
+}
+impl Vec3<f32> {
+  pub const fn new_c(v: [f32; 3]) -> Self {
+    Vec(InnerVecN3(v[0], v[1], v[2]))
+  }
+  /// Kludge: multiple in-scope `new_c`
+  pub const fn new_f32_c(v: [f32; 3]) -> Self { Self::new_c(v) }
+}
+impl Vec2<f32> {
+  pub const fn new_c(v: [f32; 2]) -> Self {
+    Vec(InnerVecN2(v[0], v[1]))
+  }
+  /// Kludge: multiple in-scope `new_c`
+  pub const fn new_f32_c(v: [f32; 2]) -> Self { Self::new_c(v) }
 }
 impl Vec3<u32> {
   pub const fn new_c(v: [u32; 3]) -> Self {
@@ -1311,4 +1327,18 @@ impl Vec3<usize> {
   }
   /// Kludge: multiple in-scope `new_c`
   pub const fn new_usize_c(v: [usize; 3]) -> Self { Self::new_c(v) }
+}
+impl Vec4<u8> {
+  pub const fn new_c(v: [u8; 4]) -> Self {
+    Vec(InnerVecN4(v[0], v[1], v[2], v[3]))
+  }
+  /// Kludge: multiple in-scope `new_c`
+  pub const fn new_u8_c(v: [u8; 4]) -> Self { Self::new_c(v) }
+}
+impl Vec4<u32> {
+  pub const fn new_c(v: [u32; 4]) -> Self {
+    Vec(InnerVecN4(v[0], v[1], v[2], v[3]))
+  }
+  /// Kludge: multiple in-scope `new_c`
+  pub const fn new_u32_c(v: [u32; 4]) -> Self { Self::new_c(v) }
 }
