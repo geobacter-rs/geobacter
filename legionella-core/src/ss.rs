@@ -19,8 +19,8 @@ pub enum ExeModel {
   TessellationEval,
   Geometry,
   Fragment,
-  /// Present for completeness, not actually used.
   GLCompute,
+  /// Present for completeness, not actually used.
   Kernel,
 }
 impl FromStr for ExeModel {

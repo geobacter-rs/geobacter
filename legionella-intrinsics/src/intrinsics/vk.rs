@@ -153,7 +153,7 @@ impl LegionellaCustomIntrinsicMirGen for ComputePipelineLayoutDesc {
     visited.remove(&mono_root);
 
     let _root_attrs = legionella_root_attrs(tcx, did,
-                                            ExecutionModel::Kernel,
+                                            ExecutionModel::GLCompute,
                                             false);
 
     let mut desc_set_bindings: Vec<Vec<Option<DescriptorDesc>>> = vec![];
@@ -168,7 +168,7 @@ impl LegionellaCustomIntrinsicMirGen for ComputePipelineLayoutDesc {
       };
 
       let attrs = legionella_global_attrs(tcx,
-                                          ExecutionModel::Kernel,
+                                          ExecutionModel::GLCompute,
                                           instance, false);
 
       if let Some(desc) = attrs.descriptor_set_desc {
@@ -292,7 +292,7 @@ impl LegionellaCustomIntrinsicMirGen for ComputePipelineRequiredCapabilities {
     let did = kernel.def_id();
 
     let root_attrs = legionella_root_attrs(tcx, did,
-                                           ExecutionModel::Kernel,
+                                           ExecutionModel::GLCompute,
                                            false);
 
     let caps = root_attrs.capabilities
@@ -373,7 +373,7 @@ impl LegionellaCustomIntrinsicMirGen for ComputePipelineRequiredExtensions {
     let did = kernel.def_id();
 
     let root_attrs = legionella_root_attrs(tcx, did,
-                                           ExecutionModel::Kernel,
+                                           ExecutionModel::GLCompute,
                                            false);
 
     let exts = root_attrs.required_extensions()
