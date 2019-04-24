@@ -1,5 +1,5 @@
 
-use std::marker::{PhantomData, };
+use std::marker::{PhantomData, Unsize, };
 use std::ops::{RangeBounds, Bound,  Deref, DerefMut, };
 
 use vk_help::{__legionella_compute_descriptor_set_binding, };
@@ -56,7 +56,9 @@ pub struct UniformArray<T>
   set_binding: &'static (u32, u32),
 }
 
-pub unsafe trait DescriptorSetBinding {
+/// This trait really doesn't conceptually depend on T, but `AddBinding`
+/// needs it to associate types with their unsized counterpart
+pub unsafe trait DescriptorSetBinding<T> {
   fn set_binding(&self) -> (usize, usize);
 }
 
@@ -78,7 +80,7 @@ impl<T> Deref for Uniform<T>
   }
 }
 
-unsafe impl<T> DescriptorSetBinding for Uniform<T>
+unsafe impl<T> DescriptorSetBinding<T> for Uniform<T>
   where T: Sized + Copy + 'static,
 {
   fn set_binding(&self) -> (usize, usize) {
@@ -86,7 +88,7 @@ unsafe impl<T> DescriptorSetBinding for Uniform<T>
      self.set_binding.1 as usize)
   }
 }
-unsafe impl<T> DescriptorSetBinding for UniformArray<T>
+unsafe impl<T> DescriptorSetBinding<T> for UniformArray<T>
   where T: Sized + Copy + 'static,
 {
   fn set_binding(&self) -> (usize, usize) {
@@ -124,17 +126,6 @@ impl<T> UniformArray<T>
 impl<T> Uniform<T>
   where T: Sized + Copy + 'static,
 {
-  pub fn add_binding<Pl, B, R>(&self, builder: PersistentDescriptorSetBuilder<Pl, R>, data: B)
-    -> Result<PersistentDescriptorSetBuilder<Pl, (R, PersistentDescriptorSetBuf<B>)>,
-              PersistentDescriptorSetError>
-    where B: TypedBufferAccess<Content = T>,
-          Pl: PipelineLayoutAbstract,
-  {
-    let (_, binding) = self.set_binding();
-    builder.enter_array_binding(binding)?
-      .add_buffer(data)?
-      .leave_array()
-  }
 }
 
 impl<T> UniformArray<T>
@@ -149,6 +140,69 @@ impl<T> UniformArray<T>
   {
     let (_, binding) = self.set_binding();
     builder.enter_array_binding(binding)
+  }
+}
+
+/// Do not use this type directly, we provide macros (attributes, rather)
+/// which expand to the correct usage.
+///
+/// An arrayed uniform of type `T`. `Fm` is a marker function which is
+/// used to communicate descriptor set bindings with the compiler side.
+/// It is never called.
+///
+/// This type must be used as a global or mut static. This type is similar to
+/// `Uniform`, if possibly slower, but allows shader or kernel mutation.
+/// Because any part of the buffer data can be modified by any invocation,
+/// (not to mention `static mut` requires `unsafe { }` anyway) this type
+/// requires unsafe blocks to use.
+///
+/// Note: T must satisfy `Copy + 'static` in addition to `Sized`. They are
+/// omitted because `const fn`s can't have any other bounds other than
+/// `Sized` currently.
+///#[legionella(lang_item = "Buffer")]
+pub struct UniformBinding<T>
+  where T: Sized,
+{
+  _data: PhantomData<*const T>,
+  set_binding: &'static (u32, u32),
+}
+
+impl<T> UniformBinding<T>
+  where T: Sized,
+{
+  pub const fn new<Km>(_marker: &Km) -> Self {
+    UniformBinding {
+      _data: PhantomData,
+      set_binding: unsafe {
+        __legionella_compute_descriptor_set_binding::<Km>()
+      },
+    }
+  }
+}
+
+impl<T> UniformBinding<T>
+  where T: Sized + Copy + Sync + 'static,
+{
+  pub fn add_binding<Pl, B, R>(&self,
+                               builder: PersistentDescriptorSetBuilder<Pl, R>,
+                               data: B)
+    -> Result<PersistentDescriptorSetBuilder<Pl, (R, PersistentDescriptorSetBuf<B>)>,
+              PersistentDescriptorSetError>
+    where B: TypedBufferAccess<Content = T>,
+          Pl: PipelineLayoutAbstract,
+  {
+    let (_, binding) = self.set_binding();
+    builder.enter_array_binding(binding)?
+      .add_buffer(data)?
+      .leave_array()
+  }
+}
+unsafe impl<T> DescriptorSetBinding<T> for UniformBinding<T>
+  where T: Sized + Copy + Sync + 'static,
+{
+  fn set_binding(&self) -> (usize, usize) {
+    (self.set_binding.0 as usize,
+     self.set_binding.1 as usize)
   }
 }
 
@@ -192,25 +246,59 @@ impl<T> BufferBinding<T>
 impl<T> BufferBinding<T>
   where T: Sized + Copy + Sync + 'static,
 {
-  pub fn add_binding<Pl, B, R>(&self,
-                               builder: PersistentDescriptorSetBuilder<Pl, R>,
-                               data: B)
-    -> Result<PersistentDescriptorSetBuilder<Pl, (R, PersistentDescriptorSetBuf<B>)>,
-              PersistentDescriptorSetError>
-    where B: TypedBufferAccess<Content = T>,
-          Pl: PipelineLayoutAbstract,
-  {
-    let (_, binding) = self.set_binding();
-    builder.enter_array_binding(binding)?
-      .add_buffer(data)?
-      .leave_array()
-  }
 }
-unsafe impl<T> DescriptorSetBinding for BufferBinding<T>
+unsafe impl<T> DescriptorSetBinding<T> for BufferBinding<T>
   where T: Sized + Copy + Sync + 'static,
 {
   fn set_binding(&self) -> (usize, usize) {
     (self.set_binding.0 as usize,
      self.set_binding.1 as usize)
+  }
+}
+
+pub trait AddBinding<Pl, H, B, R, T>
+  where Pl: PipelineLayoutAbstract,
+        H: DescriptorSetBinding<T>,
+{
+  type Output;
+  type Error;
+
+  fn add_binding(self, handle: &H, data: B)
+    -> Result<Self::Output, Self::Error>
+    where B: TypedBufferAccess<Content = T>;
+
+  fn add_slice_binding<Elem>(self, handle: &H, data: B)
+    -> Result<Self::Output, Self::Error>
+    where B: TypedBufferAccess<Content = Elem>,
+          T: Unsize<Elem>,
+          Elem: ?Sized;
+}
+impl<Pl, H, B, R, T> AddBinding<Pl, H, B, R, T> for PersistentDescriptorSetBuilder<Pl, R>
+  where Pl: PipelineLayoutAbstract,
+        H: DescriptorSetBinding<T>,
+        T: Sized + Sync + 'static,
+{
+  type Output = PersistentDescriptorSetBuilder<Pl, (R, PersistentDescriptorSetBuf<B>)>;
+  type Error = PersistentDescriptorSetError;
+
+  fn add_binding(self, handle: &H, data: B)
+    -> Result<Self::Output, Self::Error>
+    where B: TypedBufferAccess<Content = T>
+  {
+    let (_, binding) = handle.set_binding();
+    self.enter_array_binding(binding)?
+      .add_buffer(data)?
+      .leave_array()
+  }
+  fn add_slice_binding<Elem>(self, handle: &H, data: B)
+    -> Result<Self::Output, Self::Error>
+    where B: TypedBufferAccess<Content = Elem>,
+          T: Unsize<Elem>,
+          Elem: ?Sized,
+  {
+    let (_, binding) = handle.set_binding();
+    self.enter_array_binding(binding)?
+      .add_buffer(data)?
+      .leave_array()
   }
 }

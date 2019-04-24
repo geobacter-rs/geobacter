@@ -26,7 +26,7 @@ use rt::context::Context;
 use rt::module::KernelDesc;
 
 use lstd::kernel::global_invocation_id;
-use lstd::mem::buffer::BufferBinding;
+use lstd::mem::buffer::{BufferBinding, AddBinding, };
 use rt::Accelerator;
 
 const ELEMENTS: usize = 4096;
@@ -124,7 +124,6 @@ pub fn main() {
 
   for phy in PhysicalDevice::enumerate(&instance) {
     println!("Physical Device Name: `{}`", phy.name());
-    if phy.name().contains("RADV") { continue; }
 
     // initialization
     let q_fam = phy.queue_families()
@@ -155,10 +154,12 @@ pub fn main() {
       .expect("failed to add accel to context");
 
     // finished core initialization
-
+    let usage = BufferUsage {
+      storage_buffer: true,
+      .. BufferUsage::none()
+    };
     let data_buffer = CpuAccessibleBuffer::from_data(device.clone(),
-                                                     BufferUsage::all(),
-                                                     data)
+                                                     usage, data)
       .expect("failed to create buffer");
 
     let pipeline = PipelineLayout::new(device.clone(),
@@ -168,8 +169,8 @@ pub fn main() {
     let desc_set_builder =
       PersistentDescriptorSet::start(pipeline, 0);
 
-    let desc_set_builder = data_binding()
-      .add_binding(desc_set_builder, data_buffer.clone())
+    let desc_set_builder = desc_set_builder
+      .add_binding(&data_binding(), data_buffer.clone())
       .expect("set/binding mismatch (this *shouldn't* happen if \
               this code compiled)");
 

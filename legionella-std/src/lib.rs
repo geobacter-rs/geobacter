@@ -6,6 +6,7 @@
 #![feature(unboxed_closures)]
 #![feature(fn_traits)]
 #![feature(const_slice_len)]
+#![feature(unsize)]
 
 extern crate hsa_core;
 extern crate core;
