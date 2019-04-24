@@ -948,21 +948,40 @@ pub fn legionella_global_attrs<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
       out.storage_class = Some(class);
 
-      if out.storage_class == Some(StorageClass::StorageBuffer) {
-        let (set_num, binding_num) =
-          require_descriptor_set_binding_nums(tcx, id);
-        out.descriptor_set_desc = Some(DescriptorSetBinding {
-          set: set_num,
-          binding: binding_num,
-          desc_ty: DescriptorDescTy::Buffer(DescriptorBufferDesc {
-            dynamic: Some(false),
-            storage: true,
-          }),
-          array_count: 1,
-          // TODO inspect the types and possibly the kernel MIR
-          // to see if a descriptor is actually modified.
-          read_only: false,
-        });
+      match out.storage_class {
+        Some(StorageClass::StorageBuffer) => {
+          let (set_num, binding_num) =
+            require_descriptor_set_binding_nums(tcx, id);
+          out.descriptor_set_desc = Some(DescriptorSetBinding {
+            set: set_num,
+            binding: binding_num,
+            desc_ty: DescriptorDescTy::Buffer(DescriptorBufferDesc {
+              dynamic: Some(false),
+              storage: true,
+            }),
+            array_count: 1,
+            // TODO inspect the types and possibly the kernel MIR
+            // to see if a descriptor is actually modified.
+            read_only: false,
+          });
+        },
+        Some(StorageClass::Uniform) => {
+          let (set_num, binding_num) =
+            require_descriptor_set_binding_nums(tcx, id);
+          out.descriptor_set_desc = Some(DescriptorSetBinding {
+            set: set_num,
+            binding: binding_num,
+            desc_ty: DescriptorDescTy::Buffer(DescriptorBufferDesc {
+              dynamic: Some(false),
+              storage: false,
+            }),
+            array_count: 1,
+            // TODO inspect the types and possibly the kernel MIR
+            // to see if a descriptor is actually modified.
+            read_only: true,
+          });
+        },
+        _ => { },
       }
     } else if item.check_name("exe_model") {
       match item.meta_item_list() {
