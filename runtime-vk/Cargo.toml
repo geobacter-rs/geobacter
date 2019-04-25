@@ -1,5 +1,6 @@
 [package]
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+license = "MIT / Apache-2.0"
 edition = "2018"
 name = "runtime-vk"
 version = "0.1.0"
