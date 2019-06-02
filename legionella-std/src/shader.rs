@@ -40,7 +40,7 @@ static VIEW_INDEX: u32 = 0;
                            TessellationEval)),
              spirv_builtin = "Position",
              storage_class = "Input")]
-static POSITION_IN: Vec4<f32> = Vec4::new_c([0.0, 0.0, 0.0, 1.0]);
+static POSITION_IN: Vec4<f32> = Vec4::new_f32_c([0.0, 0.0, 0.0, 1.0]);
 
 // this isn't unsafe; the `Output` storage class is per work item.
 pub struct Position;
@@ -66,7 +66,7 @@ impl Deref for Position {
                            TessellationEval)),
              spirv_builtin = "Position",
              storage_class = "Output")]
-static mut POSITION_OUT: Vec4<f32> = Vec4::new_c([0.0, 0.0, 0.0, 1.0]);
+static mut POSITION_OUT: Vec4<f32> = Vec4::new_f32_c([0.0, 0.0, 0.0, 1.0]);
 
 pub fn position() -> &'static Position {
   const P: &'static Position = &Position;
