@@ -1264,7 +1264,6 @@ fn build_spirv_ty_metadata<'a, 'b, 'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>,
         builtin: None,
         decorations: vec![("ArrayStride".into(),
                            vec![layout.details.size.bytes() as _])],
-        //decorations: vec![],
       };
       node
     },
