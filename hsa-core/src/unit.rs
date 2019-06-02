@@ -9,7 +9,8 @@
 //! Can't transmute `[T; 2]` to `InnerVecN2<T>`, even with
 //! `where T: Sized,`.
 //! Can't use `type FromT = [T; Self::N];`, even with
-//! `where Self: Nn,`.
+//! `where Self: Nn,` (this pretty much requires generic
+//! constants though).
 
 use std::fmt;
 use std::hash::{Hash, Hasher};
