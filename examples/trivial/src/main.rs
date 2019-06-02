@@ -9,6 +9,7 @@ extern crate vulkano as vk;
 extern crate env_logger;
 
 use std::sync::{Arc, };
+use std::ops::{DerefMut, Deref, };
 
 use vk::buffer::BufferUsage;
 use vk::buffer::cpu_access::{CpuAccessibleBuffer, };
@@ -31,13 +32,28 @@ use rt::Accelerator;
 
 const ELEMENTS: usize = 4096;
 type Element = u32;
-type Data = [Element; ELEMENTS];
+/// SPIR-V (practically) requires all `Uniform` and `StorageBuffer` globals
+/// be a structure decorated with `Block`; thus, at least until we can automate
+/// this, one must wrap these in a structure.
+#[derive(Clone, Copy)]
+struct Data([Element; ELEMENTS]);
+impl Deref for Data {
+  type Target = [Element; ELEMENTS];
+  fn deref(&self) -> &Self::Target {
+    &self.0
+  }
+}
+impl DerefMut for Data {
+  fn deref_mut(&mut self) -> &mut [Element; ELEMENTS] {
+    &mut self.0
+  }
+}
 
 // TODO fix this ugly duplication of the set and binding number attributes.
 
 #[legionella(set = "0", binding = "0",
              storage_class = "StorageBuffer")]
-static mut DATA: Data = [0; ELEMENTS];
+static mut DATA: Data = Data([0; ELEMENTS]);
 
 #[legionella(set = "0", binding = "0")]
 fn data_binding() -> BufferBinding<Data> {
@@ -117,7 +133,7 @@ pub fn main() {
                                   ty, msg.description);
                        });
 
-  let mut data: Data = [0; ELEMENTS];
+  let mut data = Data([0; ELEMENTS]);
   for (idx, dest) in data.iter_mut().enumerate() {
     *dest = idx as _;
   }
