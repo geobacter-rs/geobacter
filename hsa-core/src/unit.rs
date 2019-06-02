@@ -467,10 +467,25 @@ impl<T> VecN<T> for N16<T>
 }
 
 #[hsa_lang_type = "vec"]
-#[repr(transparent)]
-pub struct Vec<T, N>(pub <N as VecN<T>>::InnerT)
+pub struct Vec<T, N>(<N as VecN<T>>::InnerT)
   where N: VecN<T>,
         T: ScalarT;
+
+impl<T, N> Deref for Vec<T, N>
+  where N: VecN<T>,
+        T: ScalarT,
+{
+  type Target = <N as VecN<T>>::InnerT;
+  fn deref(&self) -> &Self::Target { &self.0 }
+}
+impl<T, N> DerefMut for Vec<T, N>
+  where N: VecN<T>,
+        T: ScalarT,
+{
+  fn deref_mut(&mut self) -> &mut <N as VecN<T>>::InnerT {
+    &mut self.0
+  }
+}
 
 impl<T, N> Vec<T, N>
   where N: VecN<T>,
@@ -488,23 +503,21 @@ pub type Vec4<T> = Vec<T, N4<T>>;
 pub type Vec8<T> = Vec<T, N8<T>>;
 pub type Vec16<T> = Vec<T, N16<T>>;
 
-// these will probably not stay.
-impl<T, N> Deref for Vec<T, N>
+impl<T, N> AsRef<<N as VecN<T>>::FromT> for Vec<T, N>
   where N: VecN<T>,
         T: ScalarT + Copy,
 {
-  type Target = <N as VecN<T>>::FromT;
-  fn deref(&self) -> &Self::Target {
+  fn as_ref(&self) -> &<N as VecN<T>>::FromT {
     unsafe {
       ::std::mem::transmute(&self.0)
     }
   }
 }
-impl<T, N> DerefMut for Vec<T, N>
+impl<T, N> AsMut<<N as VecN<T>>::FromT> for Vec<T, N>
   where N: VecN<T>,
         T: ScalarT + Copy,
 {
-  fn deref_mut(&mut self) -> &mut <N as VecN<T>>::FromT {
+  fn as_mut(&mut self) -> &mut <N as VecN<T>>::FromT {
     unsafe {
       ::std::mem::transmute(&mut self.0)
     }
