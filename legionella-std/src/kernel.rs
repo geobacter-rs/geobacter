@@ -66,7 +66,7 @@ static WORKGROUP_SIZE: *const Vec3<u32>;
 #[legionella(exe_model(any(Kernel, GLCompute)),
              spirv_builtin = "GlobalInvocationId",
              storage_class = "Input")]
-static GLOBAL_INVOCATION_ID: InnerVecN3<u32> = InnerVecN3(0, 0, 0, );
+static GLOBAL_INVOCATION_ID: Vec3<u32> = Vec3::new_u32_c([0, 0, 0, ]);
 
 macro_rules! g {
   ($name:ident) => {
