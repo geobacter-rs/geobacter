@@ -59,6 +59,7 @@ type CompilerDescriptorDescTy = (u32 /*CompilerDescriptorDescTyKind*/,
 
 /// vertex, tessellation_control, tessellation_evalutation, geometry, fragment, compute
 type CompilerShaderStages = (bool, bool, bool, bool, bool, bool);
+/// ty, array_count, stages, readonly
 type CompilerDescriptorDesc = (CompilerDescriptorDescTy, u32, CompilerShaderStages, bool);
 type CompilerDescriptorBindingsDesc = &'static [&'static [CompilerDescriptorDesc]];
 type CompilerDescriptorSetBindingsDesc = &'static [CompilerDescriptorBindingsDesc];
