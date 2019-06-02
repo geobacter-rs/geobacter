@@ -1064,10 +1064,19 @@ fn providers_remote_and_local(providers: &mut Providers) {
             warn!("building metadata for {:?}", id);
             warn!("{:?} attrs: {:#?}", id, global_attrs);
 
-            let metadata = build_spirv_metadata(tcx, dd, inst,
+            let mut metadata = build_spirv_metadata(tcx, dd, inst,
                                                 &global_attrs);
 
             let sc = global_attrs.storage_class(&dd.root_conditions);
+            match sc {
+              Some(StorageClass::Uniform) |
+              Some(StorageClass::StorageBuffer) => {
+                if let Some(ref mut metadata) = metadata {
+                  metadata.decorations.push(("Block".into(), vec![]));
+                }
+              },
+              _ => {},
+            }
 
             attrs.spirv = Some(SpirVAttrs {
               storage_class: sc.map(|sc| format!("{:?}", sc) ),
