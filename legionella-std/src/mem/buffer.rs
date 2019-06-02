@@ -1,6 +1,6 @@
 
 use std::marker::{PhantomData, Unsize, };
-use std::ops::{RangeBounds, Bound,  Deref, DerefMut, };
+use std::ops::{Deref, };
 
 use vk_help::{__legionella_compute_descriptor_set_binding, };
 use vk::buffer::{TypedBufferAccess, };
