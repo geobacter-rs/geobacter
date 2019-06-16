@@ -9,5 +9,6 @@
 
 #include <amd_hsa_elf.h>
 #include <amd_hsa_kernel_code.h>
+#include <amd_hsa_queue.h>
 #include <amd_hsa_signal.h>
 #include <amd_hsa_tools_interfaces.h>

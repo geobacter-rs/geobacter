@@ -7,6 +7,7 @@ members = ["hsa-core-gen", "hsa-core", "legionella-std",
 
            "legionella-core",
 
+           "amd-comgr-sys",
            "hsa-rt-sys", "hsa-rt",
            "tools/hsa-agent-info",
 

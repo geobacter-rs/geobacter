@@ -1,0 +1,14 @@
+[package]
+name = "amd-comgr-sys"
+version = "1.0.0"
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+edition = "2018"
+license = "MIT / Apache-2.0"
+build = "src/build.rs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+[build-dependencies]
+bindgen = "0.49.2"
