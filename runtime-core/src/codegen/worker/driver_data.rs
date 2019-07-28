@@ -1,10 +1,15 @@
+use std::collections::BTreeMap;
+use std::error::Error;
+use std::fs::File;
+use std::io::Read;
 use std::mem::transmute;
 use std::sync::{Weak, Arc, mpsc::Sender, mpsc::channel, };
+use std::path::Path;
 
 use rustc::hir::def_id::{DefId, };
 use rustc::mir::CustomIntrinsicMirGen;
 use rustc::ty::{self, TyCtxt, };
-use rustc::ty::item_path::{with_forced_absolute_paths};
+use rustc::session::config::OutputFilenames;
 use rustc_data_structures::fx::{FxHashMap, };
 use rustc_data_structures::sync::{Lrc, RwLock, ReadGuard, MappedReadGuard, };
 use rustc_metadata::cstore::CStore;
@@ -13,24 +18,26 @@ use syntax_pos::symbol::{InternedString, };
 
 use crossbeam::sync::WaitGroup;
 
-use hsa_core::kernel::KernelId;
-use hsa_core::kernel::kernel_id_for;
+use hsa_core::kernel::{KernelId, KernelInstance};
 
 use lintrinsics::{DefIdFromKernelId, };
-use lintrinsics::attrs::{Root, Condition, };
 
-use {Accelerator, AcceleratorTargetDesc, };
-use context::Context;
-use passes::{Pass, PassType, };
+use crate::{AcceleratorTargetDesc, };
+use crate::codegen::*;
+use crate::context::{Context, CNums};
+use crate::passes::{Pass, PassType, };
 
 use super::HostQueryMessage;
-use utils::UnsafeSyncSender;
+use crate::utils::UnsafeSyncSender;
+use crate::codegen::products::{PCodegenResults, CodegenResults, EntryDesc};
 
 // TODO move this in with shared driver stuffs.
 
-pub struct DriverData<'tcx> {
+pub struct DriverData<'tcx, P>
+  where P: PlatformCodegen,
+{
   pub context: Context,
-  pub accels: &'tcx [Weak<Accelerator>],
+  pub accels: &'tcx [Weak<P::Device>],
 
   /// DO NOT USE DIRECTLY. Use `dd.host_codegen()`
   host_codegen: Option<UnsafeSyncSender<HostQueryMessage>>,
@@ -38,10 +45,11 @@ pub struct DriverData<'tcx> {
   pub target_desc: &'tcx Arc<AcceleratorTargetDesc>,
 
   /// Needs to be initialized after the TyCtxt is created.
-  root: RwLock<Option<Root>>,
-  pub root_conditions: Vec<Condition>,
+  roots: RwLock<Vec<PCodegenDesc<'tcx, P>>>,
+  /// Needs to be initialized after the TyCtxt is created.
+  root_conditions: RwLock<Vec<P::Condition>>,
 
-  pub passes: &'tcx [Box<dyn Pass>],
+  pub passes: &'tcx [Box<dyn Pass<P>>],
 
   pub replaced_def_ids: RwLock<FxHashMap<DefId, DefId>>,
   /// maps `LOCAL_CRATE` (ie generated MIR wrappers) to their type.
@@ -49,20 +57,34 @@ pub struct DriverData<'tcx> {
   /// which we don't have.
   /// TODO: `DefId::index` should be dense, try to exploit that fact.
   pub(super) type_of: RwLock<FxHashMap<DefId, ty::Ty<'tcx>>>,
-  pub intrinsics: &'tcx FxHashMap<InternedString, Lrc<dyn CustomIntrinsicMirGen>>,
+  /// TODO: this is *only* modified before codegen starts. That is, before
+  /// we start Rust's codegen module. This doesn't need to be locked before
+  /// Rust codegen as there will only be one thread accessing it at that time.
+  /// And afterwards its immutable.
+  pub intrinsics: RwLock<FxHashMap<InternedString, Lrc<dyn CustomIntrinsicMirGen>>>,
 }
 
-impl<'tcx> DriverData<'tcx> {
+/// This shouldn't exist.
+pub struct PlatformDriverData<'tcx, P>
+  where P: PlatformCodegen,
+{
+  /// Data which doesn't directly depend on `P`.
+  pub(super) driver_data: DriverData<'tcx, P>,
+  pub(super) platform: &'tcx P,
+}
+impl<'tcx, P> PlatformDriverData<'tcx, P>
+  where P: PlatformCodegen,
+{
   pub(crate) fn new(context: Context,
-                    accels: &'tcx [Weak<Accelerator>],
+                    accels: &'tcx [Weak<P::Device>],
                     host_codegen: Option<Sender<HostQueryMessage>>,
                     target_desc: &'tcx Arc<AcceleratorTargetDesc>,
-                    root_conditions: Vec<Condition>,
-                    passes: &'tcx [Box<dyn Pass>],
-                    intrinsics: &'tcx FxHashMap<InternedString, Lrc<dyn CustomIntrinsicMirGen>>)
+                    passes: &'tcx [Box<dyn Pass<P>>],
+                    intrinsics: FxHashMap<InternedString, Lrc<dyn CustomIntrinsicMirGen>>,
+                    platform: &'tcx P)
     -> Self
   {
-    DriverData {
+    let dd = DriverData {
       context,
       accels,
       target_desc,
@@ -70,38 +92,119 @@ impl<'tcx> DriverData<'tcx> {
       host_codegen: host_codegen.map(|h| UnsafeSyncSender(h) ),
 
       // XXX? never initialized for host codegen query mode.
-      root: RwLock::new(None),
-      root_conditions,
+      roots: RwLock::new(vec![]),
+      root_conditions: RwLock::new(vec![]),
 
       passes,
 
       replaced_def_ids: RwLock::new(Default::default()),
       type_of: RwLock::new(Default::default()),
-      intrinsics,
+      intrinsics: RwLock::new(intrinsics),
+    };
+
+    PlatformDriverData {
+      driver_data: dd,
+      platform,
     }
   }
-  pub fn with<F, R>(tcx: TyCtxt<'_, 'tcx, 'tcx>, f: F) -> R
-    where F: for<'b> FnOnce(TyCtxt<'_, 'tcx, 'tcx>,
-                            &'b DriverData<'tcx>) -> R,
+
+  pub fn dd(&self) -> &DriverData<'tcx, P> { &self.driver_data }
+
+  pub(super) fn init_root(&self,
+                          desc: PKernelDesc<P>,
+                          tcx: TyCtxt<'tcx>)
+    -> Result<(), Box<dyn Error + Send + Sync + 'static>>
+  {
+    let instance = self.dd()
+      .convert_kernel_instance(tcx, desc.instance)
+      .ok_or("failed to convert Legionella kernel instance into \
+              Rust's Instance")?;
+    let root = self.platform
+      .root(desc, instance, tcx, self.dd())?;
+    self.driver_data.roots
+      .write()
+      .push(root);
+    Ok(())
+  }
+  pub(super) fn init_conditions(&'tcx self, tcx: TyCtxt<'tcx>)
+    -> Result<(), Box<dyn Error + Send + Sync + 'static>>
+  {
+    let conds = {
+      let root = self.driver_data.root();
+      self.platform
+        .root_conditions(&*root, tcx, &self.driver_data)?
+    };
+    self.driver_data.root_conditions.write()
+      .extend(conds.into_iter());
+
+    Ok(())
+  }
+  pub(super) fn post_codegen(&self, tcx: TyCtxt<'tcx>,
+                             tmpdir: &Path,
+                             out: &OutputFilenames)
+    -> Result<PCodegenResults<P>, Box<dyn Error + Send + Sync + 'static>>
+  {
+    let mut outputs = BTreeMap::new();
+    for &output_type in out.outputs.keys() {
+      let filename = Path::new(&out.out_filestem)
+        .with_extension(output_type.extension());
+      let output = tmpdir.join(filename);
+      debug!("reading output {}", output.display());
+      let mut file = File::open(output)?;
+      let mut data = Vec::new();
+      file.read_to_end(&mut data)?;
+
+      outputs.insert(output_type, data);
+    }
+
+    let mut results: PCodegenResults<P> = CodegenResults::new();
+    results.outputs = outputs;
+
+    {
+      let mut roots = self.dd().roots.write();
+      for root in roots.drain(..) {
+        let kernel_symbol = tcx.symbol_name(root.instance);
+        debug!("kernel symbol for def_id {:?}: {}",
+              root.instance.def_id(),
+              kernel_symbol);
+        let symbol = format!("{}", kernel_symbol);
+        let entry = EntryDesc {
+          kernel_instance: root.kernel_instance,
+          symbol,
+          platform: root.platform_desc,
+        };
+        results.entries.push(entry);
+      }
+    }
+
+    Ok(results)
+  }
+
+  pub fn with<F, R>(tcx: TyCtxt<'tcx>, f: F) -> R
+    where F: FnOnce(TyCtxt<'tcx>, &'tcx PlatformDriverData<'tcx, P>) -> R,
   {
     tcx
-      .with_driver_data(move |tcx, dd| {
-        dd.downcast_ref::<DriverData<'static>>()
-          .map(|dd| {
+      .with_driver_data(move |tcx, pd| {
+        pd.downcast_ref::<PlatformDriverData<'static, P>>()
+          .map(|pd| {
             // force the correct lifetime:
-            let dd: &DriverData<'tcx> = unsafe {
-              ::std::mem::transmute(dd)
+            let pd: &'tcx PlatformDriverData<'tcx, P> = unsafe {
+              ::std::mem::transmute(pd)
             };
-            dd
+            pd
           })
-          .map(move |dd| {
-            f(tcx, dd)
+          .map(move |pd| {
+            f(tcx, pd)
           })
       })
       .and_then(|a| a )
       .expect("unexpected type in tcx driver data")
   }
+}
 
+impl<'tcx, P> DriverData<'tcx, P>
+  where P: PlatformCodegen,
+{
   fn host_codegen(&self) -> Sender<HostQueryMessage> {
     let sync = self.host_codegen
       .as_ref()
@@ -132,14 +235,14 @@ impl<'tcx> DriverData<'tcx> {
       .expect("host type layout failed")
   }
 
-  pub fn passes(&self) -> &[Box<dyn Pass>] { self.passes.as_ref() }
+  pub fn passes(&self) -> &[Box<dyn Pass<P>>] { self.passes.as_ref() }
   pub fn as_def_id(&self, id: KernelId) -> Result<DefId, String> {
     self.convert_kernel_id(id)
       .ok_or_else(|| {
         format!("crate metadata missing for `{}`", id.crate_name)
       })
   }
-  pub fn replace_def_id(&self, tcx: TyCtxt<'_, 'tcx, 'tcx>,
+  pub fn replace_def_id(&self, tcx: TyCtxt<'tcx>,
                         id: DefId) -> DefId {
     let replaced = {
       let r = self.replaced_def_ids.read();
@@ -149,9 +252,7 @@ impl<'tcx> DriverData<'tcx> {
       return replaced;
     }
 
-    info!("running passes on {}", {
-      with_forced_absolute_paths(|| tcx.item_path_str(id) )
-    });
+    debug!("running passes on {}", tcx.def_path_str(id));
 
     let mut new_def_id = id;
     for pass in self.passes.iter() {
@@ -177,23 +278,34 @@ impl<'tcx> DriverData<'tcx> {
       .insert(id, new_def_id);
     new_def_id
   }
-  pub fn def_id_for<F, Args, Ret>(&self, f: &F) -> DefId
+  pub fn instance_of<F, Args, Ret>(&self, tcx: TyCtxt<'tcx>,
+                                   f: &F) -> Instance<'tcx>
     where F: Fn<Args, Output = Ret>,
   {
-    let kid = kernel_id_for(f);
-    self.convert_kernel_id(kid).unwrap()
+    let ki = KernelInstance::get(f);
+    self.convert_kernel_instance(tcx, ki)
+      .expect("instance decode failure")
   }
 
-  pub fn root(&self) -> MappedReadGuard<Root> {
-    ReadGuard::map(self.root.read(),
-                   |opt| opt.as_ref().expect("root desc uninitialized") )
+  /// Gets first root only.
+  pub fn root(&self) -> MappedReadGuard<PCodegenDesc<P>> {
+    ReadGuard::map(self.roots.read(),
+                   |opt| opt.get(0).expect("root desc uninitialized") )
   }
-  pub fn init_root(&self, root: Root) {
-    assert!(self.root.read().is_none(), "root desc already initialized");
-    *self.root.write() = Some(root);
+  pub fn roots(&self) -> MappedReadGuard<[PCodegenDesc<P>]> {
+    ReadGuard::map(self.roots.read(), |v| &v[..] )
+  }
+  pub fn root_conditions(&self) -> MappedReadGuard<[P::Condition]> {
+    ReadGuard::map(self.root_conditions.read(), |v| &v[..] )
+  }
+  /// Adds a root to the roots array. Does not check for duplicates
+  pub fn add_root(&self, root: PCodegenDesc<'tcx, P>) {
+    self.roots.write().push(root);
   }
   pub fn is_root(&self, def_id: DefId) -> bool {
-    self.root().did == def_id
+    self.roots.read()
+      .iter()
+      .any(|root| root.def_id() == def_id )
   }
 
   pub fn expect_type_of(&self, def_id: DefId) -> ty::Ty<'tcx> {
@@ -206,8 +318,11 @@ impl<'tcx> DriverData<'tcx> {
   }
 }
 
-impl<'tcx> DefIdFromKernelId for DriverData<'tcx> {
+impl<'tcx, P> DefIdFromKernelId for DriverData<'tcx, P>
+  where P: PlatformCodegen,
+{
   fn get_cstore(&self) -> &CStore {
     self.context.cstore()
   }
+  fn cnum_map(&self) -> Option<&CNums> { Some(self.context.cnums()) }
 }

@@ -1,0 +1,17 @@
+[package]
+name = "legionella-intrinsics-common"
+version = "0.1.0"
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+num-traits = "0.2.6"
+log = "0.4.7"
+seahash = "3.0.6"
+
+[dependencies.rustc-intrinsics]
+path = "../../rustc-intrinsics"
+[dependencies.hsa-core]
+path = "../../hsa-core"

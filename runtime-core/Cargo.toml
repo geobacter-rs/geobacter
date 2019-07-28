@@ -1,31 +1,29 @@
 [package]
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 license = "MIT / Apache-2.0"
-name = "runtime-core"
+name = "legionella-runtime-core"
 version = "0.1.0"
+edition = "2018"
 
 [dependencies]
 dirs = "1.0.4"
 flate2 = "1.0.1"
-fs2 = "0.4.3"
-git2 = "0.7.5"
-goblin = "0.0.15"
+goblin = "0.0.23"
 indexed_vec = "1.1.0"
-log = "=0.4.4"
-num_cpus = "1.8.0"
+log = "0.4.7"
 seahash = "3.0.5"
-serde = "1.0"
-serde_derive = "1.0"
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.5"
-tempdir = "0.3.6"
-vulkano = "0.11.1"
+tempfile = "3"
 owning_ref = "0.4.0"
-legionella-core = { path = "../legionella-core" }
-legionella-std = { path = "../legionella-std" }
-crossbeam = "0.6.0"
+crossbeam = "0.7.0"
+any_key = "0.1.1"
+erased-serde = "0.3.9"
+legionella-shared-defs = { path = "../shared-defs" }
+parking_lot = "0.9.0"
 
 [dependencies.hsa-core]
 path = "../hsa-core"
 
-[dependencies.legionella-intrinsics]
-path = "../legionella-intrinsics"
+[dependencies.legionella-intrinsics-common]
+path = "../shared-intrinsics/common"

@@ -7,11 +7,11 @@ name = "legionella-rustc-driver"
 version = "0.1.0"
 
 [dependencies]
-env_logger = "=0.5.12"
-log = "=0.4.4"
+legionella-intrinsics-common = { path = "../shared-intrinsics/common" }
+legionella-amdgpu-intrinsics = { path = "../shared-intrinsics/amdgpu" }
+legionella-vk-intrinsics = { path = "../shared-intrinsics/vk" }
+rustc-intrinsics = { path = "../rustc-intrinsics" }
 
 [dependencies.hsa-core]
 path = "../hsa-core"
 
-[dependencies.legionella-intrinsics]
-path = "../legionella-intrinsics"

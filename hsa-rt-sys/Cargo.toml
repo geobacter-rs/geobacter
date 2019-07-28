@@ -3,6 +3,7 @@ authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 build = "src/build.rs"
 name = "hsa-rt-sys"
 version = "0.1.0"
+license = "MIT / Apache-2.0"
 
 [dependencies]
 

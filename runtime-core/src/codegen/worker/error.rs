@@ -9,6 +9,9 @@ pub enum Error {
   Io(Option<KernelId>, io::Error),
   NoCrateMetadata(KernelId),
   Codegen(KernelId),
+  InitRoot(Box<dyn StdError + Send + Sync + 'static>),
+  InitConditions(Box<dyn StdError + Send + Sync + 'static>),
+  PostCodegen(Box<dyn StdError + Send + Sync + 'static>),
   ContextDead,
 }
 

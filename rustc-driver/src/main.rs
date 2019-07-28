@@ -1,6 +1,15 @@
+
+//! This is the full Legionella Rustc driver.
+//! It includes intrinsics which themselves depend on intrinsics
+//! present in `hsa-core`.
+
 #![feature(rustc_private)]
 
-extern crate legionella_intrinsics;
+extern crate legionella_intrinsics_common as common;
+extern crate legionella_amdgpu_intrinsics as amdgpu;
+extern crate legionella_vk_intrinsics as vk;
+extern crate rustc_intrinsics;
+
 extern crate hsa_core;
 extern crate rustc;
 extern crate rustc_codegen_utils;
@@ -10,53 +19,42 @@ extern crate rustc_metadata;
 extern crate syntax;
 extern crate syntax_pos;
 
-use std::fmt;
-
-use hsa_core::kernel::{KernelId, kernel_id_for, };
-
-use self::rustc_driver::{driver, Compilation, CompilerCalls, RustcDefaultCalls, };
-use self::rustc::hir::def_id::{DefId, };
-use self::rustc::middle::lang_items;
-use self::rustc::mir::{Constant, Operand, Rvalue, Statement,
-                       StatementKind, AggregateKind, Local, };
-use self::rustc::mir::interpret::{ConstValue, Scalar, };
-use self::rustc::mir::{self, CustomIntrinsicMirGen, };
-use self::rustc::session::{config, Session, };
-use self::rustc::session::config::{ErrorOutputType, Input, };
-use self::rustc::ty::{self, TyCtxt, Instance, layout::Size, };
-use self::rustc_codegen_utils::codegen_backend::CodegenBackend;
-use self::rustc_data_structures::fx::{FxHashMap, };
+use self::rustc::mir::{CustomIntrinsicMirGen, };
+use self::rustc::ty::{TyCtxt, };
 use self::rustc_data_structures::sync::{Lrc, };
-use self::syntax::ast;
-use self::syntax_pos::DUMMY_SP;
-use self::syntax_pos::symbol::{Symbol, InternedString, };
 
-use legionella_intrinsics::*;
+use crate::common::DefIdFromKernelId;
 
 pub fn main() {
-  legionella_intrinsics::main(|gen| {
+  rustc_intrinsics::main(|gen| {
     insert_all_intrinsics(&GeneratorDefIdKernelId,
                           |k, v| {
                             let inserted = gen.intrinsics.insert(k.clone(), v);
                             assert!(inserted.is_none(), "key: {}", k);
                           });
-    let (k, v) = LegionellaMirGen::new(ExeModel(None),
-                                       &GeneratorDefIdKernelId);
-    assert!(gen.intrinsics.insert(k, v).is_none());
   });
 }
 
 pub struct GeneratorDefIdKernelId;
-impl legionella_intrinsics::DefIdFromKernelId for GeneratorDefIdKernelId {
+impl common::DefIdFromKernelId for GeneratorDefIdKernelId {
   fn get_cstore(&self) -> &rustc_metadata::cstore::CStore {
-    legionella_intrinsics::generators().cstore()
+    rustc_intrinsics::generators().cstore()
   }
 }
-impl legionella_intrinsics::GetDefIdFromKernelId for GeneratorDefIdKernelId {
-  fn with_self<'a, 'tcx, F, R>(_tcx: TyCtxt<'a, 'tcx, 'tcx>, f: F) -> R
+impl common::GetDefIdFromKernelId for GeneratorDefIdKernelId {
+  fn with_self<F, R>(_tcx: TyCtxt<'_>, f: F) -> R
     where F: FnOnce(&dyn DefIdFromKernelId) -> R,
-          'tcx: 'a,
   {
     f(&GeneratorDefIdKernelId)
   }
+}
+
+/// Call `into` for every intrinsic in every platform intrinsic crate.
+pub fn insert_all_intrinsics<F, U>(marker: &U, mut into: F)
+  where F: FnMut(String, Lrc<dyn CustomIntrinsicMirGen>),
+        U: common::GetDefIdFromKernelId + Send + Sync + 'static,
+{
+  amdgpu::insert_all_intrinsics(marker, &mut into);
+  vk::shader::insert_all_intrinsics(marker, &mut into);
+  vk::vk::insert_all_intrinsics(marker, &mut into);
 }

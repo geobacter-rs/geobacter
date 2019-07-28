@@ -1,9 +1,10 @@
 
-use std::error::Error;
 use std::ops::Deref;
+use std::ptr::null;
 
-use ffi;
-use agent::Agent;
+use crate::agent::Agent;
+use crate::error::Error;
+use crate::ffi;
 
 pub use std::sync::atomic::Ordering;
 
@@ -47,18 +48,24 @@ impl Into<ffi::hsa_wait_state_t> for WaitState {
 }
 
 impl Signal {
-  pub fn new(initial: Value,
-             consumers: &[Agent])
-    -> Result<Self, Box<Error>>
+  pub fn new(initial: Value, consumers: &[Agent])
+    -> Result<Self, Error>
   {
     let len = consumers.len();
-    let consumers_ptr = consumers.as_ptr() as *const ffi::hsa_agent_t;
+    let consumers_ptr = if len != 0 {
+      consumers.as_ptr() as *const ffi::hsa_agent_t
+    } else {
+      null()
+    };
     let mut out: ffi::hsa_signal_t = unsafe { ::std::mem::uninitialized() };
     let out = check_err!(ffi::hsa_signal_create(initial,
                                                 len as _,
                                                 consumers_ptr,
                                                 &mut out as *mut _) => out)?;
     Ok(Signal(out))
+  }
+  pub fn new_global(initial: Value) -> Result<Self, Error> {
+    Self::new(initial, &[])
   }
 }
 impl Deref for Signal {
@@ -75,6 +82,7 @@ impl AsRef<Signal> for Signal {
   }
 }
 
+#[derive(Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
 pub struct SignalRef(pub(crate) ffi::hsa_signal_t);
 impl SignalRef {
@@ -193,6 +201,8 @@ impl_binop!(xor_relaxed, hsa_signal_xor_relaxed);
 impl_binop!(xor_screlease, hsa_signal_xor_screlease);
 
 impl SignalRef {
+  /// Like `wait_relaxed`, but executes an acquire fence after the
+  /// provided condition is satisfied.
   pub fn wait_scacquire(&self, condition: ConditionOrdering,
                         compare: Value, timeout_hint: Option<u64>,
                         wait_state_hint: WaitState) -> Value {
@@ -231,7 +241,7 @@ pub struct SignalGroup(ffi::hsa_signal_group_t);
 
 impl SignalGroup {
   pub fn new(signals: &[Signal], consumers: &[Agent])
-    -> Result<SignalGroup, Box<Error>>
+    -> Result<SignalGroup, Error>
   {
     let signals_len = signals.len();
     let consumers_len = consumers.len();

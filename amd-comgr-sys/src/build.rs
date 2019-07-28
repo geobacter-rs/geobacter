@@ -27,5 +27,5 @@ pub fn main() {
     .unwrap();
 
   println!("cargo:rustc-link-search=native=/opt/rocm/lib");
-  println!("cargo:rustc-link-lib=dylib=hsa-runtime64");
+  println!("cargo:rustc-link-lib=dylib=amd_comgr");
 }

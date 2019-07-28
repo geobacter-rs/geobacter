@@ -5,7 +5,7 @@ use std::fmt::Display;
 use std::fs::{read_dir};
 use std::path::{PathBuf};
 
-pub fn self_exe_path() -> Result<PathBuf, Box<Error>> {
+pub fn self_exe_path() -> Result<PathBuf, Box<dyn Error>> {
   use std::fs::read_link;
 
   const P: &'static str = "/proc/self/exe";
@@ -13,7 +13,7 @@ pub fn self_exe_path() -> Result<PathBuf, Box<Error>> {
   Ok(read_link(P)?)
 }
 
-pub fn get_mapped_files() -> Result<Vec<PathBuf>, Box<Error>> {
+pub fn get_mapped_files() -> Result<Vec<PathBuf>, Box<dyn Error>> {
   // shared objects will have parts mapped in different locations
   let mut out = HashSet::new();
 
@@ -37,7 +37,7 @@ pub fn get_mapped_files() -> Result<Vec<PathBuf>, Box<Error>> {
   Ok(ordered)
 }
 
-pub fn dylib_search_paths() -> Result<Vec<PathBuf>, Box<Error>> {
+pub fn dylib_search_paths() -> Result<Vec<PathBuf>, Box<dyn Error>> {
   use std::env::{var_os, split_paths};
 
   let paths = var_os("LD_LIBRARY_PATH").unwrap_or("".into());
@@ -45,7 +45,7 @@ pub fn dylib_search_paths() -> Result<Vec<PathBuf>, Box<Error>> {
 }
 
 #[allow(dead_code)]
-pub fn locate_dylib<T>(name: T, hash: u64) -> Result<Option<PathBuf>, Box<Error>>
+pub fn locate_dylib<T>(name: T, hash: u64) -> Result<Option<PathBuf>, Box<dyn Error>>
   where T: Display,
 {
   use std::env::{var_os, split_paths};

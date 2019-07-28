@@ -5,6 +5,7 @@
 #![feature(std_internals)]
 #![feature(compiler_builtins_lib)]
 #![feature(arbitrary_self_types)]
+#![feature(raw)]
 
 #![crate_type = "dylib"]
 
@@ -12,100 +13,216 @@
 
 extern crate hsa_core;
 #[macro_use] extern crate rustc;
+extern crate rustc_borrowck;
 extern crate rustc_metadata;
 extern crate rustc_data_structures;
 extern crate rustc_codegen_utils;
 extern crate rustc_driver;
-extern crate rustc_mir;
 extern crate rustc_incremental;
+extern crate rustc_interface;
+extern crate rustc_lint;
+extern crate rustc_mir;
+extern crate rustc_passes;
+extern crate rustc_plugin;
+extern crate rustc_privacy;
 extern crate rustc_target;
 extern crate rustc_typeck;
+extern crate rustc_traits;
 extern crate syntax;
 extern crate syntax_pos;
 extern crate compiler_builtins;
 extern crate serde;
 #[macro_use]
-extern crate serde_derive;
-#[macro_use]
+extern crate erased_serde;
 extern crate indexed_vec as indexvec;
-extern crate tempdir;
 extern crate flate2;
 extern crate goblin;
 #[macro_use]
 extern crate log;
-extern crate serde_json;
-extern crate git2;
-extern crate num_cpus;
 extern crate seahash;
 extern crate core;
 extern crate dirs;
-extern crate fs2;
-extern crate legionella_core as lcore;
-extern crate legionella_std as lstd;
-extern crate legionella_intrinsics as lintrinsics;
-extern crate vulkano as vk;
+extern crate legionella_intrinsics_common as lintrinsics;
+extern crate legionella_shared_defs as shared_defs;
 extern crate owning_ref;
 extern crate crossbeam;
+extern crate any_key;
 
-use std::collections::BTreeSet;
+use std::any::Any;
 use std::error::Error;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher, };
 use std::sync::{Arc, };
 
-use indexvec::Idx;
+use crate::any_key::AnyHash;
 
-use rustc::session::config::host_triple;
-use rustc_target::spec::{Target, TargetTriple, abi::Abi, };
+use crate::serde::{Deserialize, Serialize, };
 
-use accelerators::DeviceLibsBuild;
-use codegen::worker::CodegenComms;
+use crate::shared_defs::platform::Platform;
+
+use crate::rustc::session::config::host_triple;
+use crate::rustc_target::spec::{Target, TargetTriple, abi::Abi, };
+
+use crate::context::{Context, PlatformModuleData, };
+use crate::codegen::{PlatformCodegen, CodegenComms};
+use crate::codegen::products::PCodegenResults;
 
 pub mod context;
-pub mod module;
 pub mod codegen;
-pub mod accelerators;
 pub mod passes;
-pub mod error;
 mod metadata;
 mod platform;
 mod serde_utils;
 mod utils;
 
-newtype_index!(AcceleratorId);
+indexvec::newtype_index!(AcceleratorId);
 
-pub trait Accelerator: Debug + Send + Sync + 'static {
+/// A common interface to a specific compute device. Note this doesn't
+/// include functions for managing memory or kernel instances. Sadly,
+/// such features are left to implementation defined interfaces for
+/// now.
+pub trait Accelerator: Debug + Any + Send + Sync + 'static {
   fn id(&self) -> AcceleratorId;
 
-  /// Get a comm interface for the codegen for the host of the accel.
-  fn host_codegen(&self) -> CodegenComms;
-
-  fn device(&self) -> &Arc<vk::device::Device>;
+  /// Get the value `current_platform()` would return if executed
+  /// on this accelerator. Since some platforms include device specific
+  /// info, this property requires an active device instance.
+  fn platform(&self) -> Platform;
 
   fn accel_target_desc(&self) -> &Arc<AcceleratorTargetDesc>;
-  fn device_libs_builder(&self) -> Option<Box<DeviceLibsBuilder>> { None }
+  /// Set the reference to the target to the provided object.
+  /// This will be given target descs which are identical to
+  /// the desc returned by `Self::accel_target_desc`.
+  /// Used by the context only during initialization.
+  fn set_accel_target_desc(&mut self, desc: Arc<AcceleratorTargetDesc>);
 
-  fn set_codegen(&self, comms: CodegenComms) -> Option<CodegenComms>;
-  fn get_codegen(&self) -> Option<CodegenComms>;
+  /// Create the codegen worker, using the platform specific
+  /// helper type. This will only be called once per unique
+  /// `AcceleratorTargetDesc`.
+  /// Used by the context only during initialization.
+  fn create_target_codegen(self: &mut Arc<Self>, ctxt: &Context)
+    -> Result<Arc<dyn Any + Send + Sync + 'static>, Box<dyn Error>>
+    where Self: Sized;
+  /// Used by the context only during initialization.
+  fn set_target_codegen(self: &mut Arc<Self>,
+                        codegen_comms: Arc<dyn Any + Send + Sync + 'static>)
+    where Self: Sized;
+
+  /// Special downcast helper as trait objects can't be "reunsized" into
+  /// another trait object, even when this trait requires
+  /// `Self: Any + 'static`.
+  ///
+  /// Must be implemented manually :(
+  /// Just paste this into your impls:
+  /// ```ignore
+  /// fn downcast_ref(this: &dyn Accelerator) -> Option<&Self>
+  ///    where Self: Sized,
+  /// {
+  ///    use std::any::TypeId;
+  ///    use std::mem::transmute;
+  ///    use std::raw::TraitObject;
+  ///
+  ///    if this.type_id() != TypeId::of::<Self>() {
+  ///      return None;
+  ///    }
+  ///
+  ///    // We have to do this manually.
+  ///    let this: TraitObject = unsafe { transmute(this) };
+  ///    let this = this.data as *mut Self;
+  ///    Some(unsafe { &*this })
+  ///  }
+  /// ```
+  fn downcast_ref(this: &dyn Accelerator) -> Option<&Self>
+    where Self: Sized;
+
+  /// Special downcast helper as trait objects can't be "reunsized" into
+  /// another trait object, even when this trait requires
+  /// `Self: Any + 'static`.
+  ///
+  /// Must be implemented manually :(
+  /// Just paste this into your impls:
+  /// ```ignore
+  /// fn downcast_ref(this: &dyn Accelerator) -> Option<&Self>
+  ///    where Self: Sized,
+  /// {
+  ///    use std::any::TypeId;
+  ///    use std::mem::transmute;
+  ///    use std::raw::TraitObject;
+  ///
+  ///    if this.type_id() != TypeId::of::<Self>() {
+  ///      return None;
+  ///    }
+  ///
+  ///    // We have to do this manually.
+  ///    let this = this.clone();
+  ///    let this = Arc::into_raw(this);
+  ///    let this: TraitObject = unsafe { transmute(this) };
+  ///    let this = this.data as *mut Self;
+  ///    Some(unsafe { Arc::from_raw(this) })
+  ///  }
+  /// ```
+  fn downcast_arc(this: &Arc<dyn Accelerator>) -> Option<Arc<Self>>
+    where Self: Sized;
 }
 
-pub trait DeviceLibsBuilder: Debug + Send + Sync {
-  fn run_build(&self, device_libs: &mut DeviceLibsBuild) -> Result<(), Box<Error>>;
+pub trait Device: Accelerator + Sized {
+  type Codegen: PlatformCodegen<Device = Self>;
+  type TargetDesc: PlatformTargetDesc;
+  type ModuleData: PlatformModuleData;
+
+  fn codegen(&self) -> CodegenComms<Self::Codegen>;
+
+  /// Load the result of `post_codegen` into whatever platform/API
+  /// specific structure is required.
+  /// `self` is a reference to the Arc containing this accel,
+  /// use if you need to store a reference to this accel in
+  /// the platform specific object.
+  /// Note: the returned `PlatformModuleData` will be stored in a
+  /// per-function *global*; `self` references should probably be weak.
+  fn load_kernel(self: &Arc<Self>, results: &PCodegenResults<Self::Codegen>)
+    -> Result<Arc<Self::ModuleData>, Box<dyn Error>>;
 }
 
 /// A hashable structure describing what is best supported by a device.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct AcceleratorTargetDesc {
   pub allow_indirect_function_calls: bool,
   #[serde(with = "serde_utils::abi")]
   pub kernel_abi: Abi,
-  #[serde(flatten, with = "serde_utils::VkFeatures")]
-  pub features: vk::device::Features,
-  pub extensions: BTreeSet<String>,
+
+  /// This is here to make sure two identical devices which are used from
+  /// two different hosts aren't mistakenly shared.
+  #[serde(with = "serde_utils::Target")]
+  pub host_target: Target,
+
   #[serde(flatten, with = "serde_utils::Target")]
   pub target: Target,
+  pub platform: Box<dyn PlatformTargetDesc>,
 }
 impl AcceleratorTargetDesc {
+  pub fn new<T>(platform: T) -> Self
+    where T: PlatformTargetDesc,
+  {
+    // always base the info on the host.
+    let target = Self::host_target();
+
+    AcceleratorTargetDesc {
+      allow_indirect_function_calls: true,
+      kernel_abi: Abi::C,
+      host_target: target.clone(),
+      target,
+      platform: Box::new(platform),
+    }
+  }
+
+  pub fn host_target() -> Target {
+    let host = host_triple();
+    let triple = TargetTriple::from_triple(host);
+    let target = Target::search(&triple)
+      .expect("no host target?");
+    target
+  }
+
   pub fn allow_indirect_function_calls(&self) -> bool {
     self.allow_indirect_function_calls
   }
@@ -114,50 +231,45 @@ impl AcceleratorTargetDesc {
     *target = self.target.clone();
   }
 
-  pub fn is_host(&self) -> bool { !self.is_spirv() }
-  fn is_spirv(&self) -> bool {
+  pub fn is_host(&self) -> bool {
+    // XXX this comparison is rather expensive
+    self.target == self.host_target
+  }
+  pub fn is_amdgpu(&self) -> bool {
+    self.target.arch == "amdgpu"
+  }
+  pub fn is_spirv(&self) -> bool {
     self.target.llvm_target == "spir64-unknown-unknown"
   }
-
-  pub fn get_stable_hash(&self) -> u64 {
-    let mut hasher = seahash::SeaHasher::new();
-    self.hash(&mut hasher);
-    hasher.finish()
-  }
+  pub fn is_cuda(&self) -> bool { false }
 }
 impl Eq for AcceleratorTargetDesc { }
-impl Default for AcceleratorTargetDesc {
-  fn default() -> Self {
-    // always base the info on the host.
-    let host = host_triple();
-    let triple = TargetTriple::from_triple(host);
-    let target = Target::search(&triple)
-      .expect("no host target?");
-    AcceleratorTargetDesc {
-      allow_indirect_function_calls: true,
-      kernel_abi: Abi::C,
-      features: vk::device::Features::none(),
-      extensions: Default::default(),
-      target,
-    }
+impl PartialEq for AcceleratorTargetDesc {
+  fn eq(&self, rhs: &Self) -> bool {
+    self.allow_indirect_function_calls == rhs.allow_indirect_function_calls &&
+      self.kernel_abi == rhs.kernel_abi &&
+      self.host_target == rhs.host_target &&
+      self.target == rhs.target &&
+      AnyHash::eq(self.platform.as_any_hash(),
+                  rhs.platform.as_any_hash())
   }
 }
 impl Hash for AcceleratorTargetDesc {
   fn hash<H>(&self, hasher: &mut H)
     where H: Hasher,
   {
-    self.allow_indirect_function_calls.hash(hasher);
-    self.features.hash(hasher);
+    ::std::hash::Hash::hash(&self.allow_indirect_function_calls,
+                            hasher);
+    ::std::hash::Hash::hash(&self.kernel_abi, hasher);
 
     macro_rules! impl_for {
       ({
         $(pub $field_name:ident: $field_ty:ty,)*
       }, $field:expr) => (
-        $($field.$field_name.hash(hasher);)*
+        $(::std::hash::Hash::hash(&$field.$field_name, hasher);)*
       );
     }
 
-    // skipped:
     impl_for!({
       pub llvm_target: String,
       pub target_endian: String,
@@ -170,6 +282,18 @@ impl Hash for AcceleratorTargetDesc {
       pub data_layout: String,
       pub linker_flavor: LinkerFlavor,
     }, self.target);
+    impl_for!({
+      pub llvm_target: String,
+      pub target_endian: String,
+      pub target_pointer_width: String,
+      pub target_c_int_width: String,
+      pub target_os: String,
+      pub target_env: String,
+      pub target_vendor: String,
+      pub arch: String,
+      pub data_layout: String,
+      pub linker_flavor: LinkerFlavor,
+    }, self.host_target);
 
     // skipped:
     // pub is_builtin: bool,
@@ -248,5 +372,128 @@ impl Hash for AcceleratorTargetDesc {
       pub override_export_symbols: Option<Vec<String>>,
       pub addr_spaces: AddrSpaces,
     }, self.target.options);
+    impl_for!({
+      pub linker: Option<String>,
+      pub lld_flavor: LldFlavor,
+      pub pre_link_args: LinkArgs,
+      pub pre_link_args_crt: LinkArgs,
+      pub pre_link_objects_exe: Vec<String>,
+      pub pre_link_objects_exe_crt: Vec<String>,
+      pub pre_link_objects_dll: Vec<String>,
+      pub late_link_args: LinkArgs,
+      pub post_link_objects: Vec<String>,
+      pub post_link_objects_crt: Vec<String>,
+      pub post_link_args: LinkArgs,
+      pub link_env: Vec<(String, String)>,
+      pub asm_args: Vec<String>,
+      pub cpu: String,
+      pub features: String,
+      pub dynamic_linking: bool,
+      pub only_cdylib: bool,
+      pub executables: bool,
+      pub relocation_model: String,
+      pub code_model: Option<String>,
+      pub tls_model: String,
+      pub disable_redzone: bool,
+      pub eliminate_frame_pointer: bool,
+      pub function_sections: bool,
+      pub dll_prefix: String,
+      pub dll_suffix: String,
+      pub exe_suffix: String,
+      pub staticlib_prefix: String,
+      pub staticlib_suffix: String,
+      pub target_family: Option<String>,
+      pub abi_return_struct_as_int: bool,
+      pub is_like_osx: bool,
+      pub is_like_solaris: bool,
+      pub is_like_windows: bool,
+      pub is_like_msvc: bool,
+      pub is_like_android: bool,
+      pub is_like_emscripten: bool,
+      pub is_like_fuchsia: bool,
+      pub linker_is_gnu: bool,
+      pub allows_weak_linkage: bool,
+      pub has_rpath: bool,
+      pub no_default_libraries: bool,
+      pub position_independent_executables: bool,
+      pub relro_level: RelroLevel,
+      pub archive_format: String,
+      pub allow_asm: bool,
+      pub custom_unwind_resume: bool,
+      pub has_elf_tls: bool,
+      pub obj_is_bitcode: bool,
+      pub no_integrated_as: bool,
+      pub min_atomic_width: Option<u64>,
+      pub max_atomic_width: Option<u64>,
+      pub atomic_cas: bool,
+      pub panic_strategy: PanicStrategy,
+      pub abi_blacklist: Vec<Abi>,
+      pub crt_static_allows_dylibs: bool,
+      pub crt_static_default: bool,
+      pub crt_static_respected: bool,
+      pub stack_probes: bool,
+      pub min_global_align: Option<u64>,
+      pub default_codegen_units: Option<u64>,
+      pub trap_unreachable: bool,
+      pub requires_lto: bool,
+      pub singlethread: bool,
+      pub no_builtins: bool,
+      pub i128_lowering: bool,
+      pub codegen_backend: String,
+      pub default_hidden_visibility: bool,
+      pub embed_bitcode: bool,
+      pub emit_debug_gdb_scripts: bool,
+      pub requires_uwtable: bool,
+      pub override_export_symbols: Option<Vec<String>>,
+      pub addr_spaces: AddrSpaces,
+    }, self.host_target.options);
+
+    let platform = self.platform.as_any_hash();
+    platform.hash(hasher);
   }
 }
+
+/// Info specific to a OS/API combo. This must not contain device-unique
+/// data. An example of data to not include would be a PCIe address of a
+/// device.
+pub trait PlatformTargetDesc
+  where Self: Debug + erased_serde::Serialize,
+        Self: AnyHash + Sync + Send + 'static,
+{
+  fn as_any_hash(&self) -> &dyn AnyHash;
+
+  fn downcast_ref(this: &dyn PlatformTargetDesc) -> Option<&Self>
+    where Self: Sized,
+  {
+    use std::any::TypeId;
+    use std::mem::transmute;
+    use std::raw::TraitObject;
+
+    if this.type_id() != TypeId::of::<Self>() {
+      return None;
+    }
+
+    // We have to do this manually.
+    let this: TraitObject = unsafe { transmute(this) };
+    let this = this.data as *mut Self;
+    Some(unsafe { &*this })
+  }
+  fn downcast_box(this: Box<dyn PlatformTargetDesc>)
+    -> Result<Box<Self>, Box<dyn PlatformTargetDesc>>
+    where Self: Sized,
+  {
+    use std::any::TypeId;
+    use std::mem::transmute;
+    use std::raw::TraitObject;
+
+    if this.type_id() != TypeId::of::<Self>() {
+      return Err(this);
+    }
+
+    // We have to do this manually.
+    let this: TraitObject = unsafe { transmute(Box::into_raw(this)) };
+    let this = this.data as *mut Self;
+    Ok(unsafe { Box::from_raw(this) })
+  }
+}
+erased_serde::serialize_trait_object!(PlatformTargetDesc);

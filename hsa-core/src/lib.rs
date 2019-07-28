@@ -1,19 +1,26 @@
-#![feature(custom_attribute)]
+
+//! TODO specialization of libcore/libstd traits (like Deref on
+//! `&'a NewType<T>`) is broken because they don't mark things
+//! as `default`, as required for specialization.
+
 #![feature(intrinsics)]
 #![feature(unboxed_closures)]
-#![feature(repr_simd)]
-#![feature(associated_type_defaults)]
-#![feature(platform_intrinsics)]
 #![feature(fn_traits)]
+#![feature(const_fn, const_transmute)]
+#![feature(slice_from_raw_parts)]
+#![feature(slice_index_methods)]
+#![feature(coerce_unsized)]
+#![feature(unsize)]
+#![feature(specialization)]
+#![feature(ptr_internals)]
 
-#[macro_use] extern crate serde_derive;
-extern crate serde;
-extern crate num_traits;
+extern crate legionella_shared_defs as shared_defs;
 
-#[macro_use] extern crate hsa_core_gen;
+#[macro_use]
+pub mod macros;
 
-mod intrinsics;
-pub mod marker;
-pub mod traits;
-pub mod unit;
 pub mod kernel;
+pub mod platform;
+pub mod ptr;
+pub mod ref_;
+pub mod slice;

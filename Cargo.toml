@@ -1,21 +1,31 @@
 
 [workspace]
-members = ["hsa-core-gen", "hsa-core", "legionella-std",
-           "runtime-core", "runtime-amd", "runtime-nv",
-           "rustc-intrinsics", "legionella-intrinsics",
-           "bootstrap-rustc-driver", "rustc-driver",
+members = ["hsa-core-gen", "hsa-core",
+           "runtime-core", "shared-defs",
 
-           "legionella-core",
+           "rustc-intrinsics", "bootstrap-rustc-driver",
+           "rustc-driver",
 
-           "amd-comgr-sys",
+           "shared-intrinsics/common", "shared-intrinsics/vk",
+           "shared-intrinsics/amdgpu",
+           # TODO
+           # "shared-intrinsics/nv",
+
+           "legionella-vk-core", "legionella-vk-std", "runtime-vk",
+           "examples/vk/trivial", "examples/vk/fractal",
+
+           "amd-comgr-sys", "amd-comgr",
            "hsa-rt-sys", "hsa-rt",
            "tools/hsa-agent-info",
+           "legionella-amdgpu-std", "runtime-amd",
+           "examples/amdgpu/trivial", "examples/amdgpu/fractal",
+           "examples/amdgpu/mut-slice-ub",
 
-           "rav1e",
+           "runtime-nv",
 
-           "examples/trivial", "examples/ndarray",
-           "examples/mat-mat-mul", "examples/fwd-conv",
-           "examples/fractal", "examples/mut-slice-ub", ]
+           # Tests here
+           "tests/driver/run-pass/generic-substs"
+           ]
 
 [profile.release]
 debug = true

@@ -6,7 +6,7 @@ UNMODIFIED_RUSTC=$(dirname ${ORIGINAL_RUSTC})/unmodified-rustc
 START_DIR=`pwd`
 FRAMEWORK_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
 
-# If our wrapper is already installed, use it instead.
+# If our wrapper is already installed, use the unmodified driver instead.
 if [ -e ${UNMODIFIED_RUSTC} ]
 then
   mv ${UNMODIFIED_RUSTC} ${ORIGINAL_RUSTC}

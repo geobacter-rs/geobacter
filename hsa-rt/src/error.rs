@@ -38,7 +38,7 @@ pub enum Error {
   InvalidWavefront,
   NotInitialized,
   OutOfResources,
-  RefCountOverflow,
+  Overflow,
   ResourceFree,
   VariableAlreadyDefined,
   VariableUndefined,
@@ -88,12 +88,17 @@ impl Error {
     Err(e)
   }
 }
-impl ::std::error::Error for Error {
-  fn description(&self) -> &str {
-    // TODO
-    unimplemented!();
+impl From<::std::string::FromUtf8Error> for Error {
+  fn from(_: ::std::string::FromUtf8Error) -> Self {
+    Error::General
   }
 }
+impl From<::std::str::Utf8Error> for Error {
+  fn from(_: ::std::str::Utf8Error) -> Self {
+    Error::General
+  }
+}
+impl ::std::error::Error for Error { }
 impl fmt::Display for Error {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     write!(f, "{:?}", self)

@@ -1,0 +1,15 @@
+[package]
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+edition = "2018"
+name = "examples-amdgpu-trivial"
+version = "0.1.0"
+
+[dependencies]
+env_logger = "0.6.0"
+ndarray = "0.12.1"
+ndarray-parallel = "0.9"
+packed_simd = "0.3.3"
+rand = { version = "0.7.0", features = ["small_rng", "simd_support", ] }
+legionella-runtime-core = { path = "../../../runtime-core" }
+legionella-runtime-amd = { path = "../../../runtime-amd" }
+legionella-amdgpu-std = { path = "../../../legionella-amdgpu-std" }

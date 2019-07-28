@@ -1,0 +1,13 @@
+[package]
+name = "legionella-shared-defs"
+version = "0.1.0"
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }

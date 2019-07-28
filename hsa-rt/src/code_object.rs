@@ -1,9 +1,9 @@
 
-use std::error::Error;
 use std::mem::transmute;
 
-use ffi;
-use ApiContext;
+use crate::ApiContext;
+use crate::error::Error;
+use crate::ffi;
 
 pub trait CodeObjectReader {
   #[doc(hidden)]
@@ -29,7 +29,7 @@ pub struct CodeObjectReaderRef<'a> {
 }
 
 impl<'a> CodeObjectReaderRef<'a> {
-  pub fn new(from: &'a [u8]) -> Result<Self, Box<Error>> {
+  pub fn new(from: &'a [u8]) -> Result<Self, Error> {
     let mut out = CodeObjectReaderSys(ffi::hsa_code_object_reader_s {
       handle: 0,
     }, ApiContext::upref());
@@ -51,7 +51,7 @@ pub struct CodeObjectReaderOwned {
   buf: Vec<u8>,
 }
 impl CodeObjectReaderOwned {
-  pub fn create(from: Vec<u8>) -> Result<Self, Box<Error>> {
+  pub fn create(from: Vec<u8>) -> Result<Self, Error> {
     let mut out = CodeObjectReaderSys(ffi::hsa_code_object_reader_s {
       handle: 0,
     }, ApiContext::upref());

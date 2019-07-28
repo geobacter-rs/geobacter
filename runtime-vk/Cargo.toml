@@ -2,11 +2,12 @@
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 license = "MIT / Apache-2.0"
 edition = "2018"
-name = "runtime-vk"
+name = "legionella-runtime-vk"
 version = "0.1.0"
 
 [dependencies]
-vulkano = "*"
+vulkano = "0.11.1"
+legionella-intrinsics-common = { path = "../shared-intrinsics/common" }
 
-[dependencies.runtime-core]
+[dependencies.legionella-runtime-core]
 path = "../runtime-core"

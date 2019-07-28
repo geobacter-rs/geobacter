@@ -1,0 +1,18 @@
+[package]
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+edition = "2018"
+license = "MIT / Apache-2.0"
+name = "legionella-vk-intrinsics"
+version = "0.1.0"
+
+[dependencies]
+num-traits = "0.2.6"
+vulkano = "0.11.1"
+
+legionella-vk-core = { path = "../../legionella-vk-core" }
+legionella-intrinsics-common = { path = "../common" }
+
+[dependencies.rustc-intrinsics]
+path = "../../rustc-intrinsics"
+[dependencies.hsa-core]
+path = "../../hsa-core"

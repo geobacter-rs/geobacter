@@ -6,5 +6,4 @@ license = "MIT / Apache-2.0"
 edition = "2018"
 
 [dependencies]
-env_logger = "=0.5.12"
-log = "=0.4.4"
+legionella-shared-defs = { path = "../shared-defs" }

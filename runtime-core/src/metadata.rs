@@ -1,4 +1,5 @@
 
+use std::borrow::Cow;
 use std::error::Error;
 use std::io;
 use std::path::{PathBuf, Path};
@@ -19,9 +20,13 @@ use rustc_target;
 use syntax_pos::symbol::{Symbol};
 use flate2::read::DeflateDecoder;
 
+use crate::utils::{new_hash_set, new_hash_map, };
+
+pub use crate::lintrinsics::CNums;
+
 #[derive(Debug)]
 pub enum MetadataLoadingError {
-  Generic(Box<Error>),
+  Generic(Box<dyn Error>),
   Io(io::Error),
   SectionMissing,
   SymbolUtf(Utf8Error),
@@ -45,8 +50,8 @@ impl fmt::Display for MetadataLoadingError {
     f.pad(self.description())
   }
 }
-impl From<Box<Error>> for MetadataLoadingError {
-  fn from(v: Box<Error>) -> Self {
+impl From<Box<dyn Error>> for MetadataLoadingError {
+  fn from(v: Box<dyn Error>) -> Self {
     MetadataLoadingError::Generic(v)
   }
 }
@@ -75,7 +80,7 @@ pub struct CrateMetadataLoader {
   name_to_blob: FxHashMap<CrateNameHash, (CrateSource, String, SharedMetadataBlob)>,
 
   crate_nums: FxHashMap<CrateNameHash, CrateNum>,
-  roots: FxHashMap<CrateNameHash, Option<schema::CrateRoot>>,
+  roots: FxHashMap<CrateNameHash, Option<schema::CrateRoot<'static>>>,
 }
 impl CrateMetadataLoader {
   fn process_crate_metadata(&mut self,
@@ -96,7 +101,7 @@ impl CrateMetadataLoader {
       Entry::Occupied(o) => {
         return (o.get().clone(), name, false);
       },
-      Entry::Vacant(mut v) => {
+      Entry::Vacant(v) => {
         let cnum = cstore.alloc_new_crate_num();
         info!("crate_num: {}, source: {}, symbol_name: {}",
               cnum,
@@ -146,7 +151,7 @@ impl CrateMetadataLoader {
                      dep_blob);
         match self.name_to_blob.entry(name) {
           Entry::Occupied(_) => { },
-          Entry::Vacant(mut v) => {
+          Entry::Vacant(v) => {
             v.insert(value);
           },
         }
@@ -181,7 +186,6 @@ impl CrateMetadataLoader {
   {
     use rustc::session::search_paths::PathKind;
     use rustc::middle::cstore::DepKind;
-    use rustc_metadata::cstore;
 
     let (src, symbol_name, shared_krate) = {
       let &(ref src, ref symbol_name, ref krate) =
@@ -203,7 +207,7 @@ impl CrateMetadataLoader {
 
     let root = shared_krate.get_root();
 
-    debug!("loading from: {}, name: {}, cnum: {}",
+    info!("loading from: {}, name: {}, cnum: {}",
            Path::new(src.file_name().unwrap()).display(),
            root.name, cnum);
 
@@ -232,7 +236,7 @@ impl CrateMetadataLoader {
             continue;
           },
           None => {
-            //info!("crate num not found for `{:?}`, finding manually", dep.name);
+            info!("crate num not found for `{:?}`, finding manually", dep.name);
           },
         }
 
@@ -283,6 +287,7 @@ impl CrateMetadataLoader {
         rlib: None,
         rmeta: None,
       },
+      private_dep: false,
     };
     let cmeta = Lrc::new(cmeta);
     into.0.push(cmeta);
@@ -467,4 +472,123 @@ impl MetadataLoader for DummyMetadataLoader {
   {
     Err("this should never be called".into())
   }
+}
+
+pub struct LoadedCrateMetadata {
+  pub globals: syntax::Globals,
+  pub cstore:  CStore,
+  pub cnums: CNums,
+}
+
+/// Loads the Rust metadata for all linked crates. This data isn't light;
+/// you'll probably want to store it somewhere and reuse it a lot.
+pub fn context_metadata() -> Result<LoadedCrateMetadata, Box<dyn Error>> {
+  use crate::platform::os::{get_mapped_files, dylib_search_paths};
+  use crate::syntax::source_map::edition::Edition;
+
+  use std::ffi::OsStr;
+  use std::path::Component;
+
+  let syntax_globals = syntax::Globals::new(Edition::Edition2018);
+
+  let (cstore, cnums) = syntax_globals.with(|| -> Result<_, Box<dyn Error>> {
+    let mapped = get_mapped_files()?;
+    debug!("mapped files: {:#?}", mapped);
+    let mut unique_metadata = new_hash_set();
+    let mut rust_mapped = vec![];
+
+    for mapped in mapped.into_iter() {
+      let metadata = match Metadata::new(CrateSource::Mapped(mapped.clone())) {
+        Ok(md) => md,
+        Err(MetadataLoadingError::SectionMissing) => { continue; },
+        e => e?,
+      };
+
+      {
+        let owner = metadata.owner_blob();
+        let owner = owner.get_root();
+        let name = CrateNameHash {
+          name: owner.name,
+          hash: owner.hash.as_u64(),
+        };
+        if !unique_metadata.insert(name) { continue; }
+      }
+
+      rust_mapped.push(metadata);
+    }
+
+    for search_dir in dylib_search_paths()?.into_iter() {
+      info!("adding dylibs in search path {}", search_dir.display());
+      for entry in search_dir.read_dir()? {
+        let entry = match entry {
+          Ok(v) => v,
+          Err(_) => { continue; },
+        };
+
+        let path = entry.path();
+        if !path.is_file() { continue; }
+        let extension = path.extension();
+        if extension.is_none() || extension.unwrap() != "so" { continue; }
+        // skip other toolchains
+        // XXX revisit this when deployment code is written.
+        if path.components().any(|v| v == Component::Normal(OsStr::new(".rustup"))) {
+          continue;
+        }
+
+        let metadata = match Metadata::new(CrateSource::SearchPaths(path.clone())) {
+          Ok(md) => md,
+          Err(MetadataLoadingError::SectionMissing) => { continue; },
+          e => e?,
+        };
+
+        {
+          let owner = metadata.owner_blob();
+          let owner = owner.get_root();
+          let name = CrateNameHash {
+            name: owner.name,
+            hash: owner.hash.as_u64(),
+          };
+          if !unique_metadata.insert(name) { continue; }
+        }
+
+        rust_mapped.push(metadata);
+      }
+    }
+
+    let md_loader = Box::new(DummyMetadataLoader);
+    let md_loader = md_loader as Box<dyn MetadataLoader + Sync>;
+    let cstore = CStore::new(md_loader);
+    let mut cnums = new_hash_map();
+    {
+      let mut loader = CrateMetadataLoader::default();
+      let CrateMetadata(meta) = loader.build(rust_mapped, &cstore)
+        .unwrap();
+      for meta in meta.into_iter() {
+        let name = CrateNameHash {
+          name: meta.name,
+          hash: meta.root.hash.as_u64(),
+        };
+        let cnum = loader.lookup_cnum(&name)
+          .unwrap();
+
+
+        let fingerprint = meta.root.disambiguator.to_fingerprint()
+          .as_value();
+        let key = (Cow::Owned(format!("{}", meta.name)),
+                   fingerprint.0,
+                   fingerprint.1);
+
+        cstore.set_crate_data(cnum, meta);
+        cnums.insert(key, cnum);
+      }
+    }
+
+    Ok((cstore, cnums))
+  })?;
+
+  Ok(LoadedCrateMetadata {
+    globals: syntax_globals,
+    cstore,
+    cnums,
+  })
 }

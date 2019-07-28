@@ -18,16 +18,14 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 
 #[inline(never)]
-fn force_rustc_deps_link() -> rustc::ty::query::Providers<'static> {
+#[allow(dead_code)]
+pub fn force_rustc_deps_link() {
   // this will pull in the rustc deps:
-  let mut providers = rustc::ty::query::Providers::default();
-  rustc_driver::driver::default_provide(&mut providers);
-  rustc_driver::driver::default_provide_extern(&mut providers);
-  providers
+  rustc_driver::main();
 }
 
 #[cfg(unix)]
-pub fn get_mapped_files() -> Result<Vec<PathBuf>, Box<Error>> {
+pub fn get_mapped_files() -> Result<Vec<PathBuf>, Box<dyn Error>> {
   use std::collections::HashSet;
   use std::fs::read_dir;
   // shared objects will have parts mapped in different locations
@@ -44,7 +42,6 @@ pub fn get_mapped_files() -> Result<Vec<PathBuf>, Box<Error>> {
     out.insert(link);
   }
 
-  // make sure the exe is first:
   let mut ordered = vec![];
   ordered.extend(out.into_iter());
 
@@ -55,8 +52,6 @@ pub fn main() {
   use std::fs::File;
   use std::io::{Write};
   use std::time::{SystemTime, UNIX_EPOCH};
-
-  let _ = force_rustc_deps_link();
 
   let out = Path::new(&var_os("OUT_DIR").unwrap()).join("timestamp.rs");
 

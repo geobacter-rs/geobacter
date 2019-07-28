@@ -1,10 +1,14 @@
 
 use super::{Pass, PassType};
+use crate::codegen::PlatformCodegen;
+use crate::syntax_pos::symbol::sym;
 
 pub struct LangItemPass;
 
-impl Pass for LangItemPass {
-  fn pass_type(&self) -> PassType {
+impl<P> Pass<P> for LangItemPass
+  where P: PlatformCodegen,
+{
+  fn pass_type(&self) -> PassType<P> {
     PassType::Replacer(|tcx, dd, def_id| {
       use rustc::middle::lang_items::*;
 
@@ -18,16 +22,16 @@ impl Pass for LangItemPass {
         .require(LangItem::EhPersonalityLangItem)
         .ok();
       if Some(def_id) == eh_personality_did {
-        return Some(dd.def_id_for(&rust_eh_personality));
+        return Some(dd.instance_of(tcx, &rust_eh_personality).def_id());
       }
 
       let attrs = tcx.get_attrs(def_id);
       for attr in attrs.iter() {
-        if attr.check_name("lang") {
+        if attr.check_name(sym::lang) {
           match attr.value_str() {
-            Some(v) if v == "panic_fmt" => {
+            Some(v) if v == sym::panic_impl => {
               let new_def_id = tcx.lang_items()
-                .require(LangItem::PanicFnLangItem)
+                .require(LangItem::PanicImplLangItem)
                 .unwrap();
               return Some(new_def_id);
             },

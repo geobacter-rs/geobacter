@@ -1,0 +1,21 @@
+[package]
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+edition = "2018"
+name = "mut-slice-ub"
+version = "0.1.0"
+
+[dependencies]
+env_logger = "0.6"
+log = "0.4.7"
+
+[dependencies.hsa-rt]
+path = "../../../hsa-rt"
+
+[dependencies.hsa-rt-sys]
+path = "../../../hsa-rt-sys"
+
+[dependencies.legionella-runtime-core]
+path = "../../../runtime-core"
+
+[dependencies.legionella-amdgpu-std]
+path = "../../../legionella-amdgpu-std"

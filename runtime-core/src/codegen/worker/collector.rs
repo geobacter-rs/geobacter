@@ -10,39 +10,26 @@
 
 use rustc::hir::def_id::{CrateNum, LOCAL_CRATE, };
 use rustc::mir::mono::{CodegenUnit, MonoItem, Linkage, Visibility, };
-use rustc::ty::query::Providers;
-use rustc::ty::{TyCtxt, Instance, };
+use rustc::ty::{TyCtxt, };
 use rustc::util::nodemap::{DefIdSet, FxHashSet, };
 use rustc_mir::monomorphize::{collector::InliningMap,
                               partitioning::partition,
-                              partitioning::PartitioningStrategy,
-                              MonoItemExt, };
+                              partitioning::PartitioningStrategy, };
 use rustc_data_structures::fx::{FxHashMap};
 
 use std::sync::{Arc, };
 
+use crate::codegen::PlatformCodegen;
 use super::driver_data::DriverData;
 
 use lintrinsics::collector::{collect_items_rec, create_fn_mono_item, };
 use lintrinsics::stubbing::Stubber;
 
-pub fn provide(providers: &mut Providers) {
-  providers.collect_and_partition_mono_items =
-    collect_and_partition_mono_items;
-}
-
-fn collect_and_partition_mono_items<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                              cnum: CrateNum)
+pub fn collect_and_partition_mono_items<'tcx, P>(tcx: TyCtxt<'tcx>,
+                                                 dd: &'tcx DriverData<'tcx, P>,
+                                                 cnum: CrateNum)
   -> (Arc<DefIdSet>, Arc<Vec<Arc<CodegenUnit<'tcx>>>>)
-{
-  DriverData::with(tcx, move |tcx, dd| {
-    collect_and_partition_mono_items_(tcx, dd, cnum)
-  })
-}
-fn collect_and_partition_mono_items_<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>,
-                                           dd: &DriverData<'tcx>,
-                                           cnum: CrateNum)
-  -> (Arc<DefIdSet>, Arc<Vec<Arc<CodegenUnit<'tcx>>>>)
+  where P: PlatformCodegen,
 {
   assert_eq!(cnum, LOCAL_CRATE);
 
@@ -52,7 +39,7 @@ fn collect_and_partition_mono_items_<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>,
   // the kernel_id intrinsic. Plus, we *only* want to codegen what is
   // actually used in the function.
 
-  let root = Instance::mono(tcx, dd.root().did);
+  let root = dd.root().instance.clone();
   let mono_root = create_fn_mono_item(root);
 
   let mut visited: FxHashSet<_> = Default::default();

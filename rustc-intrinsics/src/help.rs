@@ -1,4 +1,5 @@
 
+use std::borrow::Cow;
 use std::iter::{repeat, };
 
 use crate::rustc::mir::{Constant, Operand, Rvalue, };
@@ -13,9 +14,9 @@ use crate::syntax_pos::{DUMMY_SP, };
 
 // TODO report a helpful message if a closure is given.
 
-pub fn extract_fn_instance<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                     instance: ty::Instance<'tcx>,
-                                     local_ty: ty::Ty<'tcx>)
+pub fn extract_fn_instance<'tcx>(tcx: TyCtxt<'tcx>,
+                                 instance: ty::Instance<'tcx>,
+                                 local_ty: ty::Ty<'tcx>)
   -> ty::Instance<'tcx>
 {
   let reveal_all = ParamEnv::reveal_all();
@@ -46,9 +47,9 @@ pub fn extract_fn_instance<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
   instance
 }
 
-pub fn extract_opt_fn_instance<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                         instance: ty::Instance<'tcx>,
-                                         local_ty: ty::Ty<'tcx>)
+pub fn extract_opt_fn_instance<'tcx>(tcx: TyCtxt<'tcx>,
+                                     instance: ty::Instance<'tcx>,
+                                     local_ty: ty::Ty<'tcx>)
   -> Option<ty::Instance<'tcx>>
 {
   let reveal_all = ParamEnv::reveal_all();
@@ -82,40 +83,16 @@ pub fn extract_opt_fn_instance<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
   Some(instance)
 }
 
-/*macro_rules! mk_alloc_fn {
-    ($name:ident, $cv:ident, $ty:ident, ) => {
-      fn $name(self, v: impl Into<u128>) -> ConstValue<'tcx> {
-        let tcx = self.as_tcx();
-        let ty = tcx.types.$ty;
-        let env = ParamEnv::reveal_all().and(ty);
-        let layout = tcx.layout_of(env)
-          .expect("layout failure");
-        let size = layout.details.size;
-        let align = layout.details.align.pref;
+pub trait LegionellaTyCtxtHelp<'tcx>: Copy {
+  fn as_tcx(self) -> TyCtxt<'tcx>;
 
-        let mut alloc = Allocation::undef(size, align, ());
-        let alloc_id = tcx.alloc_map.lock().reserve();
-
-      }
-    };
-}*/
-
-pub trait LegionellaTyCtxtHelp<'a, 'tcx>: Copy
-  where 'tcx: 'a,
-{
-  fn as_tcx(self) -> TyCtxt<'a, 'tcx, 'tcx>;
-
-  fn mk_const(self, c: ty::Const<'tcx>) -> &'tcx ty::LazyConst {
-    let l = ty::LazyConst::Evaluated(c);
-    self.as_tcx().intern_lazy_const(l)
-  }
   fn mk_const_op(self,
                  src: mir::SourceInfo,
                  c: ty::Const<'tcx>) -> Operand<'tcx> {
     let v = Constant {
       span: src.span,
       ty: c.ty,
-      literal: self.mk_const(c),
+      literal: self.as_tcx().mk_const(c),
       user_ty: None,
     };
     let v = Box::new(v);
@@ -139,8 +116,8 @@ pub trait LegionellaTyCtxtHelp<'a, 'tcx>: Copy
     let v = Scalar::from_uint(v, size);
     ConstValue::Scalar(v)
   }
-  fn mk_usize_c(self, v: impl Into<u128>) -> &'tcx ty::LazyConst<'tcx> {
-    self.mk_const(ty::Const {
+  fn mk_usize_c(self, v: impl Into<u128>) -> &'tcx ty::Const<'tcx> {
+    self.as_tcx().mk_const(ty::Const {
       ty: self.as_tcx().types.usize,
       val: self.mk_usize_cv(v),
     })
@@ -152,9 +129,12 @@ pub trait LegionellaTyCtxtHelp<'a, 'tcx>: Copy
   {
     let tcx = self.as_tcx();
     let id = tcx.allocate_bytes(v.as_bytes());
-    let v = ConstValue::new_slice(Scalar::Ptr(id.into()),
-                                  v.len() as u64);
-    let v = self.mk_const(Const {
+    let v = ConstValue::Slice {
+      data: tcx.alloc_map.lock().unwrap_memory(id),
+      start: 0,
+      end: v.len(),
+    };
+    let v = tcx.mk_const(Const {
       ty: tcx.mk_static_str(),
       val: v,
     });
@@ -173,7 +153,7 @@ pub trait LegionellaTyCtxtHelp<'a, 'tcx>: Copy
   {
     let tcx = self.as_tcx();
     let v = self.mk_u64_cv(v);
-    let v = self.mk_const(Const {
+    let v = tcx.mk_const(Const {
       ty: tcx.types.u64,
       val: v,
     });
@@ -187,25 +167,25 @@ pub trait LegionellaTyCtxtHelp<'a, 'tcx>: Copy
     Operand::Constant(v)
   }
 }
-impl<'a, 'tcx> LegionellaTyCtxtHelp<'a, 'tcx> for TyCtxt<'a, 'tcx, 'tcx>
-  where 'tcx: 'a,
-{
-  fn as_tcx(self) -> TyCtxt<'a, 'tcx, 'tcx> { self }
+impl<'tcx> LegionellaTyCtxtHelp<'tcx> for TyCtxt<'tcx> {
+  fn as_tcx(self) -> TyCtxt<'tcx> { self }
 }
 
 // TODO move the following functions into `LegionellaTyCtxtHelp`.
 
-pub fn build_compiler_opt<'a, 'tcx, F, T>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                          val: Option<T>,
-                                          some_val: F)
+pub fn build_compiler_opt<'tcx, F, T>(tcx: TyCtxt<'tcx>,
+                                      val: Option<T>,
+                                      some_val: F)
   -> ConstValue<'tcx>
-  where F: FnOnce(TyCtxt<'a, 'tcx, 'tcx>, T) -> ConstValue<'tcx>,
+  where F: FnOnce(TyCtxt<'tcx>, T) -> ConstValue<'tcx>,
 {
   if let Some(val) = val {
     let val = some_val(tcx, val);
-    let ptr = match val {
-      ConstValue::Scalar(Scalar::Ptr(ptr)) => ptr,
-      ConstValue::Scalar(Scalar::Bits { size, .. }) => {
+    let alloc = match val {
+      ConstValue::Scalar(Scalar::Ptr(ptr)) => {
+        tcx.alloc_map.lock().unwrap_memory(ptr.alloc_id)
+      },
+      ConstValue::Scalar(Scalar::Raw { size, .. }) => {
         // create an allocation for this
 
         let scalar = match val {
@@ -215,7 +195,7 @@ pub fn build_compiler_opt<'a, 'tcx, F, T>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
         let size = Size::from_bytes(size as _);
         let align = Align::from_bytes(1).unwrap();
-        let mut alloc = Allocation::undef(size, align, ());
+        let mut alloc = Allocation::undef(size, align);
         let alloc_id = tcx.alloc_map.lock().reserve();
 
         let ptr = Pointer::from(alloc_id);
@@ -227,22 +207,33 @@ pub fn build_compiler_opt<'a, 'tcx, F, T>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         let alloc = tcx.intern_const_alloc(alloc);
         tcx.alloc_map.lock().set_alloc_id_memory(alloc_id, alloc);
 
-        ptr
+        alloc
       },
       val => unimplemented!("scalar type {:?}", val),
     };
-    ConstValue::new_slice(Scalar::Ptr(ptr), 1)
+    ConstValue::Slice {
+      data: alloc,
+      start: 0,
+      end: 1,
+    }
   } else {
-    let s = Scalar::ptr_null(&tcx);
-    ConstValue::new_slice(s, 0)
+    // Create an empty slice to represent a None value:
+    const C: &'static [u8] = &[];
+    let alloc = Allocation::from_byte_aligned_bytes(Cow::Borrowed(C));
+    let alloc = tcx.intern_const_alloc(alloc);
+    tcx.alloc_map.lock().create_memory_alloc(alloc);
+    ConstValue::Slice {
+      data: alloc,
+      start: 0,
+      end: 0,
+    }
   }
 }
 
-pub fn const_value_rvalue<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                    const_val: ConstValue<'tcx>,
-                                    ty: ty::Ty<'tcx>)
+pub fn const_value_rvalue<'tcx>(tcx: TyCtxt<'tcx>,
+                                const_val: ConstValue<'tcx>,
+                                ty: ty::Ty<'tcx>)
   -> Rvalue<'tcx>
-  where 'tcx: 'a,
 {
   let source_info = mir::SourceInfo {
     span: DUMMY_SP,
@@ -265,19 +256,21 @@ pub fn const_value_rvalue<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
   Rvalue::Use(constant)
 }
 
-pub fn static_str_const_value<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                        s: &str)
+pub fn static_str_const_value<'tcx>(tcx: TyCtxt<'tcx>, s: &str)
   -> ConstValue<'tcx>
 {
   let id = tcx.allocate_bytes(s.as_bytes());
-  ConstValue::new_slice(Scalar::Ptr(id.into()),
-                        s.len() as u64)
+  ConstValue::Slice {
+    data: tcx.alloc_map.lock().unwrap_memory(id),
+    start: 0,
+    end: s.len(),
+  }
 }
 
-pub fn static_tuple_const_value<'a, 'tcx, I>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                             what: &str,
-                                             tuple: I,
-                                             ty: ty::Ty<'tcx>)
+pub fn static_tuple_const_value<'tcx, I>(tcx: TyCtxt<'tcx>,
+                                         what: &str,
+                                         tuple: I,
+                                         ty: ty::Ty<'tcx>)
   -> ConstValue<'tcx>
   where I: ExactSizeIterator<Item = ConstValue<'tcx>>,
 {
@@ -287,10 +280,10 @@ pub fn static_tuple_const_value<'a, 'tcx, I>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
   ConstValue::Scalar(scalar)
 }
 
-pub fn static_tuple_alloc<'a, 'tcx, I>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                       what: &str,
-                                       tuple: I,
-                                       ty: ty::Ty<'tcx>)
+pub fn static_tuple_alloc<'tcx, I>(tcx: TyCtxt<'tcx>,
+                                   what: &str,
+                                   tuple: I,
+                                   ty: ty::Ty<'tcx>)
   -> (AllocId, &'tcx Allocation, Size)
   where I: ExactSizeIterator<Item = ConstValue<'tcx>>,
 {
@@ -302,7 +295,7 @@ pub fn static_tuple_alloc<'a, 'tcx, I>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
   let align = layout.details.align.pref;
 
   let data = vec![0; size.bytes() as usize];
-  let mut alloc = Allocation::from_bytes(&data, align, ());
+  let mut alloc = Allocation::from_bytes(&data, align);
   let alloc_id = tcx.alloc_map.lock().reserve();
 
   let mut tuple = tuple.enumerate();
@@ -326,13 +319,13 @@ pub fn static_tuple_alloc<'a, 'tcx, I>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
   tcx.alloc_map.lock().set_alloc_id_memory(alloc_id, alloc);
   (alloc_id, alloc, size)
 }
-pub fn write_static_tuple<'a, 'tcx, I>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                       what: &str,
-                                       tuple: &mut I,
-                                       alloc_id: AllocId,
-                                       alloc: &mut Allocation,
-                                       base: Size,
-                                       ty: ty::Ty<'tcx>)
+pub fn write_static_tuple<'tcx, I>(tcx: TyCtxt<'tcx>,
+                                   what: &str,
+                                   tuple: &mut I,
+                                   alloc_id: AllocId,
+                                   alloc: &mut Allocation,
+                                   base: Size,
+                                   ty: ty::Ty<'tcx>)
   where I: ExactSizeIterator<Item = (usize, ConstValue<'tcx>)>,
 {
   let env = ParamEnv::reveal_all()
@@ -358,11 +351,10 @@ pub fn write_static_tuple<'a, 'tcx, I>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     _ => unimplemented!("layout offsets {:?}", layout),
   };
 
-  let ty_fields: Box<Iterator<Item = ty::Ty<'tcx>>> = match ty.sty {
+  let ty_fields: Box<dyn Iterator<Item = ty::Ty<'tcx>>> = match ty.sty {
     Tuple(tuple_fields) => {
-      let iter = tuple_fields.iter().cloned();
-      assert_eq!(iter.len(), fields.len());
-      Box::new(iter) as Box<_>
+      assert_eq!(tuple_fields.len(), fields.len());
+      Box::new(tuple_fields.types()) as Box<_>
     },
     Array(element, _count) => {
       Box::new(repeat(element)) as Box<_>
@@ -394,7 +386,7 @@ pub fn write_static_tuple<'a, 'tcx, I>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let mut write_scalar = |scalar| {
       let ptr = Pointer::new(alloc_id, base + offset);
       let size = match scalar {
-        Scalar::Bits { size, .. } => {
+        Scalar::Raw { size, .. } => {
           Size::from_bytes(size as _)
         },
         Scalar::Ptr(_) => {
@@ -412,10 +404,15 @@ pub fn write_static_tuple<'a, 'tcx, I>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
       ConstValue::Scalar(scalar) => {
         write_scalar(scalar);
       },
-      ConstValue::Slice(data, len) => {
-        write_scalar(data);
-        let len = Scalar::from_uint(len, tcx.data_layout().pointer_size);
-        write_scalar(len);
+      ConstValue::Slice { data, start, end, } => {
+        // this process follows the same procedure as in rustc_codegen_ssa
+        let id = tcx.alloc_map.lock().create_memory_alloc(data);
+        let offset = Size::from_bytes(start as u64);
+        let ptr = Pointer::new(id, offset);
+        write_scalar(ptr.into());
+        let size = Scalar::from_uint((end - start) as u128,
+                                     tcx.data_layout().pointer_size);
+        write_scalar(size);
       },
       _ => {
         bug!("unhandled ConstValue: {:?}", element);
@@ -424,6 +421,6 @@ pub fn write_static_tuple<'a, 'tcx, I>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
   }
 }
 
-pub fn mk_static_slice<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, elem: ty::Ty<'tcx>) -> ty::Ty<'tcx> {
-  tcx.mk_imm_ref(tcx.types.re_static, tcx.mk_slice(elem))
+pub fn mk_static_slice<'tcx>(tcx: TyCtxt<'tcx>, elem: ty::Ty<'tcx>) -> ty::Ty<'tcx> {
+  tcx.mk_imm_ref(tcx.lifetimes.re_static, tcx.mk_slice(elem))
 }

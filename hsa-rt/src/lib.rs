@@ -1,24 +1,25 @@
-#![feature(thread_local)]
 #![feature(optin_builtin_traits)]
 #![feature(core_intrinsics)]
 #![feature(unsize)]
 #![feature(coerce_unsized)]
 #![feature(allocator_api)]
+#![feature(slice_from_raw_parts)]
+#![feature(alloc_layout_extra)]
 
 use std::cmp::{self, PartialEq, PartialOrd, Ord, };
-use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub extern crate hsa_rt_sys as ffi;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde;
 extern crate ndarray as nd;
-#[macro_use]
 extern crate log;
 
 macro_rules! check_err {
   ($call:expr) => {
     {
+      #[allow(unused_unsafe)]
       $crate::error::Error::from_status(unsafe {
         $call
       })
@@ -26,6 +27,7 @@ macro_rules! check_err {
   };
   ($call:expr => $result:expr) => {
     {
+      #[allow(unused_unsafe)]
       $crate::error::Error::from_status(unsafe {
         $call
       })
@@ -47,7 +49,7 @@ pub mod ext;
 
 /// The AMD HSA impl uses a lock before actually ref counting the
 /// runtime singleton. For speed, we maintain a separate ref counter.
-static GLOBAL_REFCOUNT: AtomicUsize = ATOMIC_USIZE_INIT;
+static GLOBAL_REFCOUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug, Eq, Hash)]
 pub struct ApiContext;

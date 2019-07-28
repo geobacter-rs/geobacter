@@ -1,0 +1,8 @@
+[package]
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+edition = "2018"
+name = "generic-substs"
+version = "0.1.0"
+
+[dependencies]
+hsa-core = { path = "../../../../hsa-core" }

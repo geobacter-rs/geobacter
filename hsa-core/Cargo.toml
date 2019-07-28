@@ -5,12 +5,6 @@ name = "hsa-core"
 version = "0.1.0"
 
 [dependencies]
-serde = "1.0"
-serde_derive = "1.0"
-num-traits = "*"
-
-[dependencies.hsa-core-gen]
-optional = false
-path = "../hsa-core-gen"
+legionella-shared-defs = { path = "../shared-defs" }
 
 [dev-dependencies]

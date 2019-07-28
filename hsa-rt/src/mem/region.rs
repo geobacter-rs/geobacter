@@ -1,7 +1,7 @@
 
 use std::borrow::{BorrowMut, Borrow, };
-use std::error::Error;
 use std::fmt;
+use std::intrinsics;
 use std::marker::Unsize;
 use std::mem::{transmute, size_of, };
 use std::ops::{Deref, DerefMut, CoerceUnsized, };
@@ -10,6 +10,7 @@ use std::ptr::NonNull;
 
 use ApiContext;
 use agent::{Agent};
+use crate::error::Error;
 use ffi;
 
 macro_rules! region_info {
@@ -71,12 +72,13 @@ impl fmt::Debug for GlobalFlags {
   }
 }
 
+/// TODO implement `std::alloc::Alloc`.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Region(pub(crate) ffi::hsa_region_t, ApiContext);
 
 impl Region {
   pub fn id(&self) -> u64 { self.0.handle }
-  pub fn segment(&self) -> Result<Segment, Box<Error>> {
+  pub fn segment(&self) -> Result<Segment, Error> {
     let segment = region_info!(self, ffi::hsa_region_info_t_HSA_REGION_INFO_SEGMENT,
                                [0u32; 1])?;
     match segment[0] {
@@ -85,14 +87,12 @@ impl Region {
       ffi::hsa_region_segment_t_HSA_REGION_SEGMENT_PRIVATE => Ok(Segment::Private),
       ffi::hsa_region_segment_t_HSA_REGION_SEGMENT_GROUP => Ok(Segment::Group),
       ffi::hsa_region_segment_t_HSA_REGION_SEGMENT_KERNARG => Ok(Segment::KernelArg),
-      _ => {
-        return Ok(Err(format!("unknown segment enum value: {}", segment[0]))?);
-      },
+      _ => Err(Error::General),
     }
   }
 
   // will return Ok(None) iff self is not a global segment.
-  pub fn global_flags(&self) -> Result<Option<GlobalFlags>, Box<Error>> {
+  pub fn global_flags(&self) -> Result<Option<GlobalFlags>, Error> {
     match self.segment()? {
       Segment::Global => {},
       _ => { return Ok(None); },
@@ -102,33 +102,33 @@ impl Region {
     Ok(Some(GlobalFlags(flags[0])))
   }
   /// XXX 32bit machine controlling a cluster with 64bit regions?!
-  /// Probably won't ever be an issue, I guess.
-  pub fn size(&self) -> Result<usize, Box<Error>> {
+  /// Probably won't ever be an issue, I bet.
+  pub fn size(&self) -> Result<usize, Error> {
     let size = region_info!(self, ffi::hsa_region_info_t_HSA_REGION_INFO_SIZE,
                             [0usize; 1])?;
     Ok(size[0])
   }
-  pub fn alloc_max_size(&self) -> Result<usize, Box<Error>> {
+  pub fn alloc_max_size(&self) -> Result<usize, Error> {
     let size = region_info!(self, ffi::hsa_region_info_t_HSA_REGION_INFO_ALLOC_MAX_SIZE,
                             [0usize; 1])?;
     Ok(size[0])
   }
-  pub fn alloc_max_private_workgroup_size(&self) -> Result<u32, Box<Error>> {
+  pub fn alloc_max_private_workgroup_size(&self) -> Result<u32, Error> {
     let size = region_info!(self, ffi::hsa_region_info_t_HSA_REGION_INFO_ALLOC_MAX_PRIVATE_WORKGROUP_SIZE,
                             [0u32; 1])?;
     Ok(size[0])
   }
-  pub fn runtime_alloc_allowed(&self) -> Result<bool, Box<Error>> {
+  pub fn runtime_alloc_allowed(&self) -> Result<bool, Error> {
     let b = region_info!(self, ffi::hsa_region_info_t_HSA_REGION_INFO_RUNTIME_ALLOC_ALLOWED,
                          [false; 1])?;
     Ok(b[0])
   }
-  pub fn runtime_alloc_granule(&self) -> Result<usize, Box<Error>> {
+  pub fn runtime_alloc_granule(&self) -> Result<usize, Error> {
     let size = region_info!(self, ffi::hsa_region_info_t_HSA_REGION_INFO_RUNTIME_ALLOC_GRANULE,
                             [0usize; 1])?;
     Ok(size[0])
   }
-  pub fn runtime_alloc_alignment(&self) -> Result<usize, Box<Error>> {
+  pub fn runtime_alloc_alignment(&self) -> Result<usize, Error> {
     let size = region_info!(self, ffi::hsa_region_info_t_HSA_REGION_INFO_RUNTIME_ALLOC_ALIGNMENT,
                             [0usize; 1])?;
     Ok(size[0])
@@ -136,8 +136,7 @@ impl Region {
   /// All allocations will have alignment `runtime_alloc_alignment`.
   /// This is generally the page size.
   #[allow(unused_unsafe)]
-  pub unsafe fn allocate<T>(&self, count: usize) -> Result<NonNull<T>, Box<Error>> {
-    assert_ne!(size_of::<T>(), 0, "can't allocate with a zero size");
+  pub unsafe fn allocate<T>(&self, count: usize) -> Result<NonNull<T>, Error> {
     let bytes = size_of::<T>() * count;
     let mut ptr: *mut T = 0 as _;
     check_err!(ffi::hsa_memory_allocate(self.0, bytes,
@@ -146,7 +145,7 @@ impl Region {
     Ok(NonNull::new_unchecked(ptr))
   }
   #[allow(unused_unsafe)]
-  pub unsafe fn deallocate<T>(&self, ptr: *mut T) -> Result<(), Box<Error>>  {
+  pub unsafe fn deallocate<T>(&self, ptr: *mut T) -> Result<(), Error>  {
     // actually don't need `self`.
     check_err!(ffi::hsa_memory_free(ptr as *mut _))?;
     Ok(())
@@ -154,7 +153,7 @@ impl Region {
 }
 
 impl Agent {
-  pub fn all_regions(&self) -> Result<Vec<Region>, Box<Error>> {
+  pub fn all_regions(&self) -> Result<Vec<Region>, Error> {
     extern "C" fn get(out: ffi::hsa_region_t,
                       items: *mut c_void) -> ffi::hsa_status_t {
       let items: &mut Vec<Region> = unsafe {
@@ -177,20 +176,20 @@ pub struct RegionBox<T>
 }
 
 impl<T> RegionBox<T> {
-  pub fn new(region: &Region, v: T) -> Result<Self, Box<Error>> {
-    let mut ptr = unsafe { region.allocate(1)? };
-    unsafe { *ptr.as_mut() = v; }
+  pub fn new(region: &Region, v: T) -> Result<Self, Error> {
+    let ptr = unsafe { region.allocate(1)? };
+    unsafe { intrinsics::move_val_init(ptr.as_ptr(), v); }
     Ok(RegionBox {
       b: ptr,
     })
   }
-  pub fn new_default(region: &Region) -> Result<Self, Box<Error>>
+  pub fn new_default(region: &Region) -> Result<Self, Error>
     where T: Default,
   {
     Self::new(region, Default::default())
   }
 
-  pub fn clone_into(&self, region: &Region) -> Result<Self, Box<Error>>
+  pub fn clone_into(&self, region: &Region) -> Result<Self, Error>
     where T: Clone,
   {
     let v = unsafe { self.b.as_ref().clone() };
@@ -205,6 +204,36 @@ impl<T> RegionBox<T> {
     RegionBox {
       b: ptr,
     }
+  }
+  pub fn as_ptr(&self) -> *const T { self.b.as_ptr() as *const T }
+  pub fn as_mut_ptr(&self) -> *mut T { self.b.as_ptr() }
+}
+impl<T> RegionBox<[T]> {
+  pub unsafe fn uninitialized_slice(region: &Region, count: usize)
+    -> Result<Self, Error>
+  {
+    use std::ptr::slice_from_raw_parts_mut;
+
+    let bytes = size_of::<T>().checked_mul(count)
+      .ok_or(Error::Overflow)?;
+    let ptr = region.allocate::<u8>(bytes)?;
+    let slice = slice_from_raw_parts_mut(ptr.as_ptr() as *mut T, count);
+    Ok(RegionBox {
+      b: NonNull::new_unchecked(slice),
+    })
+  }
+}
+impl<T> RegionBox<T>
+  where T: ?Sized,
+{
+  /// Drop our inner contents and deallocate, returning whether the
+  /// deallocation was successful.
+  pub fn checked_drop(self) -> Result<(), Error> {
+    let ptr = self.b.as_ptr();
+    ::std::mem::forget(self); // don't run our normal dtor
+
+    unsafe { ::std::ptr::drop_in_place(ptr); }
+    check_err!(ffi::hsa_memory_free(ptr as *mut _) => ())
   }
 }
 impl<T> Deref for RegionBox<T>

@@ -1,5 +1,5 @@
 [package]
-name = "runtime-nv"
+name = "legionella-runtime-nv"
 version = "0.1.0"
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 license = "MIT / Apache-2.0"
@@ -7,5 +7,5 @@ edition = "2018"
 
 [dependencies]
 
-[dependencies.runtime-core]
+[dependencies.legionella-runtime-core]
 path = "../runtime-core"

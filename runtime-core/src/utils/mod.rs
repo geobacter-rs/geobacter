@@ -1,29 +1,12 @@
-use std::collections::{HashMap as StdHashMap, HashSet as StdHashSet, };
-use std::error::Error;
+
 use std::fmt;
-use std::fs::{create_dir_all, File, };
-use std::hash::{BuildHasherDefault, Hash, };
+use std::fs::{create_dir_all, };
+use std::hash::{Hash, Hasher, };
 use std::io;
-use std::ops::{Deref, DerefMut, };
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::mpsc::Sender;
 
-use seahash::{SeaHasher, };
-
-use fs2::FileExt;
-
-pub mod git;
-
-pub type HashMap<K, V> = StdHashMap<K, V, BuildHasherDefault<SeaHasher>>;
-pub type HashSet<K> = StdHashSet<K, BuildHasherDefault<SeaHasher>>;
-
-/// HashSet doesn't implement `Default` w/ custom hashers, for some reason.
-pub fn new_hash_set<K>() -> HashSet<K>
-  where K: Eq + Hash,
-{
-  HashSet::with_hasher(BuildHasherDefault::default())
-}
+pub use lintrinsics::hash::*;
 
 pub trait CreateIfNotExists: AsRef<Path> {
   fn create_if_not_exists(&self) -> io::Result<()> {
@@ -38,16 +21,6 @@ pub trait CreateIfNotExists: AsRef<Path> {
 
 impl CreateIfNotExists for PathBuf { }
 impl<'a> CreateIfNotExists for &'a Path { }
-
-pub fn run_cmd(mut cmd: Command) -> Result<(), Box<Error>> {
-  info!("running command {:?}", cmd);
-  let mut child = cmd.spawn()?;
-  if !child.wait()?.success() {
-    Err(format!("command failed: {:?}", cmd).into())
-  } else {
-    Ok(())
-  }
-}
 
 /// DO NOT SEND ON THIS SENDER. Only send on a thread local
 /// clone of the sender in this obj.
@@ -76,31 +49,13 @@ impl<T> fmt::Debug for UnsafeSyncSender<T> {
   }
 }
 
-pub struct FileLockGuard(File);
-impl FileLockGuard {
-  pub fn enter_create<T>(file: T) -> Result<Self, Box<Error>>
-    where T: AsRef<Path>,
-  {
-    let file = File::create(file)?;
-    file.lock_exclusive()?;
-    Ok(FileLockGuard(file))
+pub trait StableHash: Hash {
+  fn stable_hash(&self) -> u64 {
+    let mut hasher = crate::seahash::SeaHasher::new();
+    Hash::hash(self, &mut hasher);
+    hasher.finish()
   }
 }
-
-impl Deref for FileLockGuard {
-  type Target = File;
-  fn deref(&self) -> &File { &self.0 }
-}
-impl DerefMut for FileLockGuard {
-  fn deref_mut(&mut self) -> &mut File { &mut self.0 }
-}
-impl Drop for FileLockGuard {
-  fn drop(&mut self) {
-    match self.0.unlock() {
-      Ok(_) => {},
-      Err(e) => {
-        error!("failed to unlock file in guard drop: {}", e);
-      }
-    }
-  }
-}
+impl<T> StableHash for T
+  where T: Hash,
+{ }
