@@ -157,12 +157,13 @@ pub enum Capability {
     ext: [],
     features: [tessellation_shader, ],
   },
-  Addresses = {
+  // TODO upstream the vulkano changes
+  /*Addresses = {
     id: 4,
     implies: [],
     ext: [VK_EXT_buffer_device_address, ],
     features: [buffer_device_address, ],
-  },
+  },*/
   Linkage = {
     id: 5,
     implies: [],
@@ -297,7 +298,9 @@ pub enum Capability {
   },
   GenericPointer = {
     id: 38,
-    implies: [Addresses, ],
+    implies: [
+      //Addresses,
+    ],
     ext: [],
   },
   Int8 = {
