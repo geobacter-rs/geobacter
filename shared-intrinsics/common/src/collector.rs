@@ -10,9 +10,9 @@
 /// can be allowed.
 
 use rustc::middle::lang_items::{self, ExchangeMallocFnLangItem, };
-use rustc::mir::{self, Location, Promoted, visit::Visitor, };
+use rustc::mir::{self, Location, Promoted, visit::Visitor, AssertMessage, };
 use rustc::mir::interpret::{AllocId, ConstValue, GlobalId, GlobalAlloc,
-                            Scalar, ErrorHandled, InterpError, };
+                            Scalar, ErrorHandled, };
 use rustc::mir::mono::{MonoItem, };
 use rustc::ty::adjustment::{CustomCoerceUnsized, PointerCast};
 use rustc::ty::{self, TyCtxt, Instance, ParamEnv, subst::SubstsRef,
@@ -230,22 +230,23 @@ fn find_vtable_types_for_unsizing<'tcx>(tcx: TyCtxt<'tcx>,
                                         target_ty: ty::Ty<'tcx>)
   -> (ty::Ty<'tcx>, ty::Ty<'tcx>) {
   let ptr_vtable = |inner_source: ty::Ty<'tcx>, inner_target: ty::Ty<'tcx>| {
+    let param_env = ty::ParamEnv::reveal_all();
     let type_has_metadata = |ty: ty::Ty<'tcx>| -> bool {
       use syntax_pos::DUMMY_SP;
-      if ty.is_sized(tcx.at(DUMMY_SP), ty::ParamEnv::reveal_all()) {
+      if ty.is_sized(tcx.at(DUMMY_SP), param_env) {
         return false;
       }
-      let tail = tcx.struct_tail(ty);
+      let tail = tcx.struct_tail_erasing_lifetimes(ty, param_env);
       match tail.sty {
         ty::Foreign(..) => false,
         ty::Str | ty::Slice(..) | ty::Dynamic(..) => true,
-        _ => bug!("unexpected unsized tail: {:?}", tail.sty),
+        _ => bug!("unexpected unsized tail: {:?}", tail),
       }
     };
     if type_has_metadata(inner_source) {
       (inner_source, inner_target)
     } else {
-      tcx.struct_lockstep_tails(inner_source, inner_target)
+      tcx.struct_lockstep_tails_erasing_lifetimes(inner_source, inner_target, param_env)
     }
   };
 
@@ -344,7 +345,7 @@ fn collect_const<'tcx, F>(tcx: TyCtxt<'tcx>,
     ConstValue::Scalar(Scalar::Ptr(ptr)) =>
       collect_miri(tcx, ptr.alloc_id, output),
     ConstValue::Slice { data: alloc, start: _, end: _ } |
-    ConstValue::ByRef(_, _, alloc) => {
+    ConstValue::ByRef { alloc, .. } => {
       for &((), id) in alloc.relocations.values() {
         collect_miri(tcx, id, output);
       }
@@ -617,7 +618,7 @@ impl<'a, 'tcx, F, G> mir::visit::Visitor<'tcx> for MirNeighborCollector<'a, 'tcx
         // For us, however, these lang items need to get inserted into
         // the runtime codegen module.
         match msg {
-          &InterpError::BoundsCheck { .. } => {
+          &AssertMessage::BoundsCheck { .. } => {
             let li = lang_items::PanicBoundsCheckFnLangItem;
             let def_id = tcx.require_lang_item(li);
             let inst = Instance::mono(tcx, def_id);

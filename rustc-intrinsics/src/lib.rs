@@ -14,8 +14,7 @@
 
 #[macro_use]
 extern crate rustc;
-extern crate rustc_allocator;
-extern crate rustc_borrowck;
+extern crate rustc_ast_borrowck;
 extern crate rustc_codegen_ssa;
 extern crate rustc_codegen_utils;
 extern crate rustc_data_structures;
@@ -57,7 +56,7 @@ use self::rustc::mir::{Constant, Operand, Rvalue, Statement,
 use self::rustc::mir::interpret::{ConstValue, Scalar, Allocation,
                                   PointerArithmetic, Pointer, };
 use self::rustc::mir::{self, CustomIntrinsicMirGen, AggregateKind,
-                       LocalDecl, PlaceBase, Place, };
+                       LocalDecl, Place, };
 use self::rustc::session::{Session, early_error, };
 use self::rustc::session::config::{ErrorOutputType, };
 use self::rustc::ty::{self, TyCtxt, layout::Align, layout::Size, Instance, };
@@ -591,8 +590,7 @@ impl CustomIntrinsicMirGen for WorkItemKill {
         tcx.types.u32,
       ]);
       let arg_local = LocalDecl::new_temp(arg_ty, DUMMY_SP);
-      let arg_local_id = PlaceBase::Local(mir.local_decls.next_index());
-      let arg_local_id = Place::Base(arg_local_id);
+      let arg_local_id = Place::from(mir.local_decls.next_index());
       mir.local_decls.push(arg_local);
       let stmt_kind = StatementKind::Assign(arg_local_id.clone(),
                                             Box::new(rvalue));
@@ -604,8 +602,7 @@ impl CustomIntrinsicMirGen for WorkItemKill {
 
       let arg_ref_ty = tcx.mk_imm_ref(tcx.lifetimes.re_erased, arg_ty);
       let arg_ref_local = LocalDecl::new_temp(arg_ref_ty, DUMMY_SP);
-      let arg_ref_local_id = mir.local_decls.next_index();
-      let arg_ref_local_id = Place::Base(PlaceBase::Local(arg_ref_local_id));
+      let arg_ref_local_id = Place::from(mir.local_decls.next_index());
       mir.local_decls.push(arg_ref_local);
       let rvalue = Rvalue::Ref(tcx.lifetimes.re_erased,
                                mir::BorrowKind::Shared,

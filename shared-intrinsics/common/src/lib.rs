@@ -47,7 +47,7 @@ use self::rustc::hir::def_id::{DefId, DefIndex, CrateNum, };
 use self::rustc::middle::lang_items::{self, LangItem, };
 use self::rustc::mir::{self, CustomIntrinsicMirGen, Operand, Rvalue,
                        AggregateKind, LocalDecl, Place, StatementKind,
-                       Constant, Statement, PlaceBase, };
+                       Constant, Statement, };
 use self::rustc::mir::interpret::{ConstValue, Scalar, Allocation, };
 use self::rustc::ty::{self, TyCtxt, layout::Size, Instance, Const, };
 use self::rustc::ty::codec::decode_substs;
@@ -325,8 +325,7 @@ pub fn redirect_or_panic<'tcx, F>(tcx: TyCtxt<'tcx>,
         tcx.types.u32,
       ]);
       let arg_local = LocalDecl::new_temp(arg_ty, DUMMY_SP);
-      let arg_local_id = PlaceBase::Local(mir.local_decls.next_index());
-      let arg_local_id = Place::Base(arg_local_id);
+      let arg_local_id = Place::from(mir.local_decls.next_index());
       mir.local_decls.push(arg_local);
       let stmt_kind = StatementKind::Assign(arg_local_id.clone(),
                                             Box::new(rvalue));
@@ -338,8 +337,7 @@ pub fn redirect_or_panic<'tcx, F>(tcx: TyCtxt<'tcx>,
 
       let arg_ref_ty = tcx.mk_imm_ref(tcx.lifetimes.re_erased, arg_ty);
       let arg_ref_local = LocalDecl::new_temp(arg_ref_ty, DUMMY_SP);
-      let arg_ref_local_id = mir.local_decls.next_index();
-      let arg_ref_local_id = Place::Base(PlaceBase::Local(arg_ref_local_id));
+      let arg_ref_local_id = Place::from(mir.local_decls.next_index());
       mir.local_decls.push(arg_ref_local);
       let rvalue = Rvalue::Ref(tcx.lifetimes.re_erased,
                                mir::BorrowKind::Shared,
