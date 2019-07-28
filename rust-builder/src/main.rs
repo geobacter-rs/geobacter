@@ -4,7 +4,7 @@
 //! driver into it.
 //!
 //! It is intended that development of the Rust Legionella patches
-//! is done a separate checkout, which is passed to us via `--repo-url`
+//! is done in a separate checkout, which is passed to us via `--repo-url`
 //!
 
 use std::env::{current_dir, var, };
@@ -37,7 +37,7 @@ pub fn main() {
 
   // If "build-config" is not given, we manage our own.
   let config_path = Arg::with_name("build-config")
-    .long("config-path")
+    .long("config")
     .help("path to custom config.toml")
     .takes_value(true);
 
@@ -92,7 +92,7 @@ fn get_crate_manifest(krate: &str) -> PathBuf {
 
 const RUST_FLAGS: &str = "-Z always-encode-mir -Z always-emit-metadata";
 fn get_rust_flags() -> String {
-  let mut prev = var("RUSTFLAGS").unwrap();
+  let mut prev = var("RUSTFLAGS").unwrap_or_default();
   if prev.len() != 0 {
     prev.push_str(" ");
   }
@@ -294,10 +294,10 @@ ar = "ar"
     let cmd = self.x_py_command("build");
     run_unlogged_cmd("build-rust", cmd);
   }
-  fn install_legionella_drivers(&self) {
+  fn install_legionella_drivers(&self) -> PathBuf {
     let bootstrap = self.install_bootstrap_driver();
     self.install_driver("rustc", "legionella-rustc-driver",
-                        Some("rustc-driver"), Some(&bootstrap));
+                        Some("rustc-driver"), Some(&bootstrap))
   }
   fn install_toolchain_into_rustup(&self) {
     if let Some(name) = self.rustup() {
@@ -314,9 +314,17 @@ ar = "ar"
   fn run(&self) {
     self.checkout_rust_sources();
     self.write_config_toml();
-    self.build_docs();
     self.build_toolchain();
-    self.install_legionella_drivers();
+    self.build_docs();
+    let driver = self.install_legionella_drivers();
+    self.install_toolchain_into_rustup();
+
+    // verify the driver works:
+    let mut cmd = Command::new(driver);
+    cmd.arg("--version");
+    run_unlogged_cmd("verify-rustc", cmd);
+
+    println!("Complete! :)");
   }
 }
 impl<'a> Builder for ArgMatches<'a> {
@@ -337,7 +345,7 @@ impl<'a> Builder for ArgMatches<'a> {
   }
 
   fn given_config_path(&self) -> Option<&str> {
-    self.value_of("config-path")
+    self.value_of("build-config")
   }
 
   fn target_dir(&self) -> &Path {
@@ -351,7 +359,6 @@ impl<'a> Builder for ArgMatches<'a> {
 }
 
 fn run_unlogged_cmd(task: &str, mut cmd: Command) {
-  println!();
   println!("({}): Running: {:?}", task, cmd);
   let mut child = cmd.spawn().unwrap();
   assert!(child.wait().unwrap().success(), "{:?}", cmd);
