@@ -223,8 +223,7 @@ impl PlatformCodegen for Codegenner {
           if note.n_type != NT_AMDGPU_METADATA { continue; }
 
           let desc = note.desc;
-          let md = rmps_from_slice(desc)
-            .expect("rmps_from_slice");
+          let md = rmps_from_slice(desc)?;
           info!("found NT_AMDGPU_METADATA note: {:#?}", md);
           metadata = Some(md);
           break;
