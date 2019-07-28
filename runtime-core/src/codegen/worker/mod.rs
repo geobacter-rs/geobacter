@@ -473,7 +473,7 @@ impl<P> WorkerTranslatorData<P>
     let (tx, rx) = channel();
 
     let tmpdir = TDBuilder::new()
-      .prefix("legionella-runtime-codegen")
+      .prefix("legionella-runtime-codegen-")
       .tempdir()
       .with_kernel_id(id)?;
 
