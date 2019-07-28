@@ -4,7 +4,7 @@ members = ["hsa-core-gen", "hsa-core",
            "runtime-core", "shared-defs",
 
            "rustc-intrinsics", "bootstrap-rustc-driver",
-           "rustc-driver",
+           "rustc-driver", "rust-builder",
 
            "shared-intrinsics/common", "shared-intrinsics/vk",
            "shared-intrinsics/amdgpu",
@@ -38,6 +38,3 @@ rpath = true
 rpath = true
 [profile.bench]
 rpath = true
-
-[replace]
-"vulkano:0.11.1" = { path = "vulkano/vulkano" }
