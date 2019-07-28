@@ -123,8 +123,7 @@ impl<T> fmt::Pointer for BoxSlice<T>
   where T: Sized,
 {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "BoxSlice<{}>({:p})",
-           unsafe { type_name::<T>() },
+    write!(f, "BoxSlice<{}>({:p})", type_name::<T>(),
            &self.ptr)
   }
 }
