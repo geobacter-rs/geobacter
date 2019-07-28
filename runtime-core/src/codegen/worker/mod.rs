@@ -725,6 +725,7 @@ pub fn create_empty_hir_crate() -> rustc::hir::Crate {
     trait_impls,
     body_ids,
     modules,
+    non_exported_macro_attrs: Default::default(),
   }
 }
 

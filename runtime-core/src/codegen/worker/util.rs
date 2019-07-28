@@ -6,7 +6,7 @@ use rustc::session::{config, Session};
 use rustc::session::CrateDisambiguator;
 use rustc::traits;
 use rustc::ty;
-use rustc_borrowck as borrowck;
+use rustc_ast_borrowck as borrowck;
 use rustc_data_structures::fingerprint::Fingerprint;
 use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_data_structures::sync::{Lock, };

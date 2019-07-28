@@ -320,10 +320,6 @@ pub struct TargetOptions {
   /// for this target unconditionally.
   pub no_builtins: bool,
 
-  /// Whether to lower 128-bit operations to compiler_builtins calls.  Use if
-  /// your backend only supports 64-bit and smaller math.
-  pub i128_lowering: bool,
-
   /// The codegen backend to use for this target, typically "llvm"
   pub codegen_backend: String,
 

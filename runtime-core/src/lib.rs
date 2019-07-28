@@ -13,7 +13,7 @@
 
 extern crate hsa_core;
 #[macro_use] extern crate rustc;
-extern crate rustc_borrowck;
+extern crate rustc_ast_borrowck;
 extern crate rustc_metadata;
 extern crate rustc_data_structures;
 extern crate rustc_codegen_utils;
@@ -363,7 +363,6 @@ impl Hash for AcceleratorTargetDesc {
       pub requires_lto: bool,
       pub singlethread: bool,
       pub no_builtins: bool,
-      pub i128_lowering: bool,
       pub codegen_backend: String,
       pub default_hidden_visibility: bool,
       pub embed_bitcode: bool,
@@ -438,7 +437,6 @@ impl Hash for AcceleratorTargetDesc {
       pub requires_lto: bool,
       pub singlethread: bool,
       pub no_builtins: bool,
-      pub i128_lowering: bool,
       pub codegen_backend: String,
       pub default_hidden_visibility: bool,
       pub embed_bitcode: bool,
