@@ -38,7 +38,6 @@ extern crate rmp_serde as rmps;
 extern crate rustc;
 extern crate rustc_target;
 
-//extern crate amd_comgr;
 extern crate hsa_core;
 extern crate hsa_rt;
 extern crate legionella_runtime_core as lrt_core;

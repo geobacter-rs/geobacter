@@ -14,7 +14,7 @@ ndarray = "0.12.1"
 log = "0.4.7"
 any_key = "0.1.1"
 
-#amd-comgr = { path = "../amd-comgr" }
+amd-comgr = { path = "../amd-comgr" }
 hsa-core = { path = "../hsa-core" }
 hsa-rt = { path = "../hsa-rt" }
 legionella-runtime-core = { path = "../runtime-core" }

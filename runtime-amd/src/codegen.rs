@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::env::var_os;
 use std::fs::{File, };
-use std::io::{Write, Read, };
+use std::io::{Write, Read, stderr, };
 use std::path::Path;
 use std::process::Command;
 use std::str::FromStr;
@@ -12,6 +12,9 @@ use std::sync::Arc;
 use crate::log::{info, };
 
 use crate::rustc::ty::{TyCtxt, Instance, };
+
+use amd_comgr::{set::DataSet, data::RelocatableData,
+                data::Data, action::*, };
 
 use hsa_core::platform::hsa::AmdGpu;
 use hsa_core::platform::{hsa, Platform};
@@ -28,7 +31,7 @@ use crate::intrinsics_common::CurrentPlatform;
 use crate::serde::{Serialize, Deserialize, };
 use crate::rmps::decode::{from_slice as rmps_from_slice, };
 
-use crate::{HsaAmdGpuAccel, };
+use crate::{HsaAmdGpuAccel, HsaAmdTargetDescHelper, };
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Codegenner;
@@ -155,23 +158,53 @@ impl PlatformCodegen for Codegenner {
       run_cmd(llc)?;
     }
 
-    let elf = tdir.join("elf.so");
-
-    let mut cmd = Command::new(llvm.lld());
-    cmd.current_dir(tdir)
-      .arg(obj)
-      .arg("-E")
-      .arg("-e").arg("0")
-      .arg("-O2")
-      .arg("--shared")
-      .arg("-o").arg(&elf);
-    run_cmd(cmd)?;
-
-    let exe = {
-      let mut buf = Vec::new();
-      File::open(&elf)?.read_to_end(&mut buf)?;
-      buf
+    let obj_data = {
+      let mut b = Vec::new();
+      File::open(&obj)?.read_to_end(&mut b)?;
+      b
     };
+
+    // link using amd-comgr:
+    let mut data = RelocatableData::new()?;
+    data.set_data(&obj_data)?;
+    data.set_name("obj-for-linking.o".into())?;
+    let mut set = DataSet::new()?;
+    set.add_data(&data)?;
+
+    let mut action = Action {
+      kind: ActionKind::LinkRelocToExe,
+      info: ActionInfo::new()?,
+    };
+    action.set_working_path(Some(tdir.into()))?;
+    action.set_logging(true)?;
+    // amd-comgr requires an isa, even for linking:
+    action.set_isa_name(Some(target_desc.isa_name()))?;
+    let mut out_set = DataSet::new()?;
+    match set.perform_into(&action, &mut out_set) {
+      Ok(_) => { },
+      Err(err) => {
+        if out_set.logs_len()? > 0 {
+          let stderr = stderr();
+          let mut stderr = stderr.lock();
+          writeln!(stderr, "Link error; logs follow:").expect("stderr write");
+          // dump the logs:
+          for log in out_set.log_iter()? {
+            let log = log.expect("unwrap set log data");
+            let name = log.name().expect("non-utf8 log name");
+            let data = log.data_str().expect("non-utf8 log data");
+            writeln!(stderr, "log entry `{}`:", name).expect("stderr write");
+            stderr.write_all(data.as_ref()).expect("stderr write");
+            writeln!(stderr).expect("stderr write");
+          }
+        }
+
+        return Err(err.into());
+      },
+    }
+
+    assert_eq!(out_set.executables_len()?, 1);
+    let exe = out_set.get_executable(0)?;
+    let exe = exe.data()?;
 
     {
       info!("attempting to parse HSA metadata note for {}",

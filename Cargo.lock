@@ -617,6 +617,7 @@ dependencies = [
 name = "legionella-runtime-amd"
 version = "0.1.0"
 dependencies = [
+ "amd-comgr 1.0.0",
  "any_key 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "goblin 0.0.23 (registry+https://github.com/rust-lang/crates.io-index)",
  "hsa-core 0.1.0",
