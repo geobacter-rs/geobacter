@@ -16,7 +16,7 @@ use rustc::mir::interpret::{AllocId, ConstValue, GlobalId, GlobalAlloc,
 use rustc::mir::mono::{MonoItem, };
 use rustc::ty::adjustment::{CustomCoerceUnsized, PointerCast};
 use rustc::ty::{self, TyCtxt, Instance, ParamEnv, subst::SubstsRef,
-                TypeFoldable, InstanceDef, };
+                TypeFoldable, InstanceDef, subst::InternalSubsts, };
 use rustc::util::nodemap::{FxHashSet, };
 use rustc_mir::monomorphize::{self, collector::InliningMap, };
 use rustc_data_structures::indexed_vec::Idx;
@@ -82,7 +82,8 @@ pub fn collect_items_rec<'tcx>(tcx: TyCtxt<'tcx>,
         };
         let param_env = ParamEnv::reveal_all();
         if let Ok(val) = tcx.const_eval(param_env.and(cid)) {
-          collect_const(tcx, val, instance.substs, &mut output);
+          collect_const(tcx, val, InternalSubsts::empty(),
+                        &mut output);
         }
       },
       MonoItem::Fn(instance) => {
