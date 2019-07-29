@@ -552,12 +552,14 @@ impl Accelerator for HsaAmdGpuAccel {
     let cg = CodegenComms::new(ctxt,
                                self.accel_target_desc().clone(),
                                 Default::default())?;
-    let cg = Arc::new(unsafe { cg.sync_comms() });
+    let cg_sync = Arc::new(unsafe { cg.clone().sync_comms() });
     Arc::get_mut(self)
       .expect("there should only be a single ref at this point")
-      .self_codegen = Some(cg.clone());
+      .self_codegen = Some(cg_sync.clone());
 
-    Ok(cg)
+    cg.add_accel(self);
+
+    Ok(cg_sync)
   }
 
   fn set_target_codegen(self: &mut Arc<Self>,
@@ -571,6 +573,8 @@ impl Accelerator for HsaAmdGpuAccel {
     Arc::get_mut(self)
       .expect("there should only be a single ref at this point")
       .self_codegen = Some(cg);
+
+    self.codegen().add_accel(self);
   }
 
   fn downcast_ref(this: &dyn Accelerator) -> Option<&Self>

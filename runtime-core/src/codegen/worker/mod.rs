@@ -258,38 +258,43 @@ impl<P> WorkerTranslatorData<P>
 
     'outer: loop {
       let internal_msg = 'inner: loop {
+        let msg = recv_msg
+          .take()
+          .unwrap_or_else(|| {
+            self.context.downgrade();
+            rx.recv_timeout(to)
+          });
+        let msg = match msg {
+          Ok(msg) => msg,
+          Err(RecvTimeoutError::Timeout) => {
+            break 'inner InternalMessage::Timeout;
+          },
+          Err(error) => {
+            warn!("receive error: {:?}", error);
+            return;
+          },
+        };
         let context = match self.context.upgrade() {
           Some(ctxt) => ctxt.clone(),
           None => {
             // the context can't be resurrected.
+            trace!("context died; bailing");
             return;
           },
         };
 
-        'msg: loop {
-          let msg = recv_msg
-            .take()
-            .unwrap_or_else(|| {
-              rx.recv_timeout(to)
-            });
-          let msg = match msg {
-            Ok(msg) => msg,
-            Err(RecvTimeoutError::Timeout) => {
-              break 'inner InternalMessage::Timeout;
-            },
-            Err(RecvTimeoutError::Disconnected) => {
-              return;
-            },
-          };
-
-          first_msg = false;
-          match msg {
-            Message::AddAccel(accel) => {
-              break 'inner InternalMessage::AddAccel(accel);
-            },
-            Message::StartHostQuery { rx, } => {
-              // ignore any errors
-              /*let _ = {
+        match msg {
+          Message::AddAccel(accel) => {
+            first_msg = false;
+            break 'inner InternalMessage::AddAccel(accel);
+          },
+          _ if first_msg => {
+            panic!("first message must be Message::AddAccel; \
+                    fix your Accelerator impl");
+          },
+          Message::StartHostQuery { .. } => {
+            // ignore any errors
+            /*let _ = {
                 self.host_queries(context.clone(),
                                   context.cstore(),
                                   unsafe {
@@ -304,15 +309,12 @@ impl<P> WorkerTranslatorData<P>
                                   &dep_graph,
                                   rx)
               };*/
-            },
-            Message::Codegen {
-              desc,
-              //host_codegen,
-              ret,
-            } => self.codegen_kernel(&context, desc, ret),
-          }
-
-          continue 'msg;
+          },
+          Message::Codegen {
+            desc,
+            //host_codegen,
+            ret,
+          } => self.codegen_kernel(&context, desc, ret),
         }
       };
 
@@ -333,7 +335,10 @@ impl<P> WorkerTranslatorData<P>
 
       // else wait for the next message, at which point we will reinitialize.
       match rx.recv() {
-        Err(_) => { return; },
+        Err(error) => {
+          warn!("receive error: {:?}", error);
+          return;
+        },
         Ok(msg) => {
           recv_msg = Some(Ok(msg));
         },
