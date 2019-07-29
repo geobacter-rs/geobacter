@@ -37,6 +37,8 @@ pub struct DriverData<'tcx, P>
   where P: PlatformCodegen,
 {
   pub context: Context,
+  cstore: &'tcx CStore,
+  cnums: &'tcx CNums,
   pub accels: &'tcx [Weak<P::Device>],
 
   /// DO NOT USE DIRECTLY. Use `dd.host_codegen()`
@@ -76,6 +78,8 @@ impl<'tcx, P> PlatformDriverData<'tcx, P>
   where P: PlatformCodegen,
 {
   pub(crate) fn new(context: Context,
+                    cstore: &'tcx CStore,
+                    cnums: &'tcx CNums,
                     accels: &'tcx [Weak<P::Device>],
                     host_codegen: Option<Sender<HostQueryMessage>>,
                     target_desc: &'tcx Arc<AcceleratorTargetDesc>,
@@ -86,6 +90,8 @@ impl<'tcx, P> PlatformDriverData<'tcx, P>
   {
     let dd = DriverData {
       context,
+      cstore,
+      cnums,
       accels,
       target_desc,
 
@@ -321,8 +327,6 @@ impl<'tcx, P> DriverData<'tcx, P>
 impl<'tcx, P> DefIdFromKernelId for DriverData<'tcx, P>
   where P: PlatformCodegen,
 {
-  fn get_cstore(&self) -> &CStore {
-    self.context.cstore()
-  }
-  fn cnum_map(&self) -> Option<&CNums> { Some(self.context.cnums()) }
+  fn get_cstore(&self) -> &CStore { self.cstore }
+  fn cnum_map(&self) -> Option<&CNums> { Some(self.cnums) }
 }

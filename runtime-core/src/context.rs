@@ -5,7 +5,6 @@ use std::error::Error;
 use std::fmt::Debug;
 use std::sync::{Arc, Weak, atomic::AtomicUsize, atomic::Ordering, };
 
-use rustc_metadata::cstore::CStore;
 use syntax;
 
 use indexvec::{Idx, IndexVec};
@@ -17,6 +16,7 @@ use crate::utils::{HashMap, };
 
 pub use rustc::session::config::OutputType;
 pub use crate::metadata::{context_metadata, LoadedCrateMetadata, CNums, };
+use crate::metadata::Metadata;
 
 type Translators = HashMap<
   Arc<AcceleratorTargetDesc>,
@@ -26,9 +26,7 @@ type Translators = HashMap<
 /// This structure should be used like you'd use a singleton.
 pub struct ContextData {
   syntax_globals: syntax::Globals,
-  cstore: CStore,
-  /// Built once at startup
-  cnums: CNums,
+  mapped: Vec<Metadata>,
 
   next_accel_id: AtomicUsize,
 
@@ -49,10 +47,10 @@ unsafe impl Sync for Context { }
 
 impl Context {
   pub fn new() -> Result<Context, Box<dyn Error>> {
+    crate::rustc_driver::init_rustc_env_logger();
     let LoadedCrateMetadata {
       globals,
-      cstore,
-      cnums,
+      mapped,
     } = context_metadata()?;
 
     let accelerators = IndexVec::new();
@@ -64,8 +62,7 @@ impl Context {
     };
     let data = ContextData {
       syntax_globals: globals,
-      cstore,
-      cnums,
+      mapped,
 
       next_accel_id: AtomicUsize::new(0),
 
@@ -77,13 +74,12 @@ impl Context {
     Ok(context)
   }
 
-  pub(crate) fn cstore(&self) -> &CStore {
-    &self.0.cstore
+  pub(crate) fn mapped_metadata(&self) -> &[Metadata] {
+    &self.0.mapped
   }
   pub(crate) fn syntax_globals(&self) -> &syntax::Globals {
     &self.0.syntax_globals
   }
-  pub(crate) fn cnums(&self) -> &CNums { &self.0.cnums }
 
   pub fn downgrade_ref(&self) -> WeakContext {
     WeakContext(Arc::downgrade(&self.0))

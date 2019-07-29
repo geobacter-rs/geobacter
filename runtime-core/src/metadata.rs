@@ -1,5 +1,4 @@
 
-use std::borrow::Cow;
 use std::error::Error;
 use std::io;
 use std::path::{PathBuf, Path};
@@ -20,13 +19,13 @@ use rustc_target;
 use syntax_pos::symbol::{Symbol};
 use flate2::read::DeflateDecoder;
 
-use crate::utils::{new_hash_set, new_hash_map, };
+use crate::utils::{new_hash_set, };
 
 pub use crate::lintrinsics::CNums;
 
 #[derive(Debug)]
 pub enum MetadataLoadingError {
-  Generic(Box<dyn Error>),
+  Generic(Box<dyn Error + Send + Sync + 'static>),
   Io(io::Error),
   SectionMissing,
   SymbolUtf(Utf8Error),
@@ -50,8 +49,8 @@ impl fmt::Display for MetadataLoadingError {
     f.pad(self.description())
   }
 }
-impl From<Box<dyn Error>> for MetadataLoadingError {
-  fn from(v: Box<dyn Error>) -> Self {
+impl From<Box<dyn Error + Send + Sync + 'static>> for MetadataLoadingError {
+  fn from(v: Box<dyn Error + Send + Sync + 'static>) -> Self {
     MetadataLoadingError::Generic(v)
   }
 }
@@ -119,7 +118,7 @@ impl CrateMetadataLoader {
     (cnum, name, true)
   }
 
-  pub fn build(&mut self, allmd: Vec<Metadata>,
+  pub fn build(&mut self, allmd: &[Metadata],
                cstore: &CStore)
     -> Result<CrateMetadata, String>
   {
@@ -127,7 +126,7 @@ impl CrateMetadataLoader {
     let mut out = CrateMetadata::default();
 
     self.name_to_blob.clear();
-    'outer: for mut object in allmd.into_iter() {
+    'outer: for object in allmd.iter() {
       info!("scanning object {:?}", object.src);
       // First we need to find the owning crate for this object and
       // see if it is a rustc plugin. If so, we must skip it!
@@ -138,7 +137,7 @@ impl CrateMetadataLoader {
         continue 'outer;
       }
 
-      for (symbol_name, dep_blob) in object.all.drain(..) {
+      for (symbol_name, dep_blob) in object.all.iter() {
         info!("parsing metadata from {}", symbol_name);
         let root = dep_blob.get_root();
         let name = CrateNameHash {
@@ -148,7 +147,7 @@ impl CrateMetadataLoader {
 
         let value = (object.src.clone(),
                      symbol_name.clone(),
-                     dep_blob);
+                     dep_blob.clone());
         match self.name_to_blob.entry(name) {
           Entry::Occupied(_) => { },
           Entry::Vacant(v) => {
@@ -376,6 +375,8 @@ impl Metadata {
 
     use goblin::Object;
 
+    use crate::rustc_data_structures::rayon::prelude::*;
+
     let mut src_buffer = Vec::new();
     {
       let mut src_file = File::open(src.as_path())?;
@@ -390,7 +391,7 @@ impl Metadata {
     };
 
     let mut metadata_section = None;
-    for section_header in object.section_headers {
+    for section_header in object.section_headers.iter() {
       if section_header.sh_type == 0 { continue; }
 
       let name = match object.shdr_strtab.get(section_header.sh_name) {
@@ -408,37 +409,52 @@ impl Metadata {
     let metadata_section = metadata_section.unwrap();
     let metadata_section = &src_buffer[metadata_section.file_range()];
 
-    let mut all = vec![];
     let mut owner_index = None;
-    for sym in object.syms.iter() {
-      let name = match object.strtab.get(sym.st_name) {
-        Some(Ok(name)) => name,
-        _ => continue,
-      };
+    let syms: Vec<_> = object.syms.iter()
+      .filter_map(|sym| {
+        let name = match object.strtab.get(sym.st_name) {
+          Some(Ok(name)) => name,
+          _ => return None,
+        };
 
-      if !name.starts_with("rust_metadata_") { continue; }
+        if !name.starts_with("rust_metadata_") { return None; }
 
-      let start = sym.st_value as usize;
-      let end   = (sym.st_value + sym.st_size) as usize;
+        Some((sym, name.to_string()))
+      })
+      .collect();
 
+    for (idx, &(ref sym, _)) in syms.iter().enumerate() {
+      let start = sym.st_value;
       if owner_index.is_some() {
         assert!(start != 0);
       } else if start == 0 {
-        owner_index = Some(all.len());
+        owner_index = Some(idx);
       }
+    }
 
-      let region = &metadata_section[start..end];
-      let compressed = &region[METADATA_HEADER.len()..];
+    let all_res: Vec<Result<_, MetadataLoadingError>> = syms.into_par_iter()
+      .map(|(sym, name)| {
+        let start = sym.st_value as usize;
+        let end   = (sym.st_value + sym.st_size) as usize;
 
-      let mut inflated = Vec::new();
-      let mut deflate = DeflateDecoder::new(compressed.as_ref());
-      deflate.read_to_end(&mut inflated)
-        .map_err(|e| {
-          MetadataLoadingError::Deflate(src.as_path().into(), name.to_string(),
-                                        e)
-        })?;
+        let region = &metadata_section[start..end];
+        let compressed = &region[METADATA_HEADER.len()..];
 
-      all.push((name.to_string(), SharedMetadataBlob::new(inflated)));
+        let mut inflated = Vec::new();
+        let mut deflate = DeflateDecoder::new(compressed.as_ref());
+        deflate.read_to_end(&mut inflated)
+          .map_err(|e| {
+            MetadataLoadingError::Deflate(src.as_path().into(), name.to_string(),
+                                          e)
+          })?;
+
+        Ok((name.to_string(), SharedMetadataBlob::new(inflated)))
+      })
+      .collect();
+
+    let mut all = Vec::with_capacity(all_res.len());
+    for all_res in all_res.into_iter() {
+      all.push(all_res?);
     }
 
     Ok(Metadata {
@@ -473,11 +489,19 @@ impl MetadataLoader for DummyMetadataLoader {
     Err("this should never be called".into())
   }
 }
-
+/// The compiler (specifically, miri) expects the cstore to
+/// initialize some tcx things (like allocations) during constant eval.
+/// The problem for us is/was that the cstore isn't recreated every time
+/// a kernel is recodegenned. The result is when second function is codegenned,
+/// allocations which got deserialized by the first function will be missing
+/// from the tcx.
+/// This type thus serves to
+pub struct CStoreRebuilder {
+  //krates: IndexVec<CrateNum, >
+}
 pub struct LoadedCrateMetadata {
   pub globals: syntax::Globals,
-  pub cstore:  CStore,
-  pub cnums: CNums,
+  pub mapped: Vec<Metadata>,
 }
 
 /// Loads the Rust metadata for all linked crates. This data isn't light;
@@ -491,7 +515,7 @@ pub fn context_metadata() -> Result<LoadedCrateMetadata, Box<dyn Error>> {
 
   let syntax_globals = syntax::Globals::new(Edition::Edition2018);
 
-  let (cstore, cnums) = syntax_globals.with(|| -> Result<_, Box<dyn Error>> {
+  let mapped = syntax_globals.with(|| -> Result<_, Box<dyn Error>> {
     let mapped = get_mapped_files()?;
     debug!("mapped files: {:#?}", mapped);
     let mut unique_metadata = new_hash_set();
@@ -555,40 +579,11 @@ pub fn context_metadata() -> Result<LoadedCrateMetadata, Box<dyn Error>> {
       }
     }
 
-    let md_loader = Box::new(DummyMetadataLoader);
-    let md_loader = md_loader as Box<dyn MetadataLoader + Sync>;
-    let cstore = CStore::new(md_loader);
-    let mut cnums = new_hash_map();
-    {
-      let mut loader = CrateMetadataLoader::default();
-      let CrateMetadata(meta) = loader.build(rust_mapped, &cstore)
-        .unwrap();
-      for meta in meta.into_iter() {
-        let name = CrateNameHash {
-          name: meta.name,
-          hash: meta.root.hash.as_u64(),
-        };
-        let cnum = loader.lookup_cnum(&name)
-          .unwrap();
-
-
-        let fingerprint = meta.root.disambiguator.to_fingerprint()
-          .as_value();
-        let key = (Cow::Owned(format!("{}", meta.name)),
-                   fingerprint.0,
-                   fingerprint.1);
-
-        cstore.set_crate_data(cnum, meta);
-        cnums.insert(key, cnum);
-      }
-    }
-
-    Ok((cstore, cnums))
+    Ok(rust_mapped)
   })?;
 
   Ok(LoadedCrateMetadata {
     globals: syntax_globals,
-    cstore,
-    cnums,
+    mapped,
   })
 }

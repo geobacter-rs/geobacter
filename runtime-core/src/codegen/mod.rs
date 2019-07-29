@@ -92,7 +92,7 @@ impl<'tcx, P> Deref for CodegenDesc<'tcx, P> {
 /// Typically, a description of used resources and their binding locations,
 /// runtime device requirements.
 /// Currently, this data is required to be statically allocated.
-pub trait PlatformKernelDesc: AnyHash + Any + Debug + Send + 'static { }
+pub trait PlatformKernelDesc: AnyHash + Any + Debug + Send + Sync + 'static { }
 
 /// Helper type to reduce typing.
 pub type PKernelDesc<P> = KernelDesc<<P as PlatformCodegen>::KernelDesc>;

@@ -11,6 +11,7 @@
 //!
 
 use std::any::Any;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, };
 use std::error::{Error, };
 use std::io::{self, };
@@ -23,10 +24,12 @@ use std::time::Duration;
 use rustc;
 use rustc::hir::def_id::{CrateNum, DefId};
 use rustc::middle::cstore::EncodedMetadata;
+use rustc::middle::dependency_format::Dependencies;
 use rustc::middle::exported_symbols::{SymbolExportLevel, };
 use rustc::mir::{CustomIntrinsicMirGen, };
 use rustc::ty::query::Providers;
 use crate::rustc::ty::{self, TyCtxt, subst::SubstsRef, };
+use rustc::session::Session;
 use rustc::util::common::{time, };
 use rustc::util::nodemap::DefIdMap;
 use rustc_data_structures::fx::{FxHashMap};
@@ -48,7 +51,7 @@ use tempfile::{Builder as TDBuilder, };
 
 use crate::{AcceleratorTargetDesc, context::Context,
             context::WeakContext, };
-use crate::utils::{HashMap, StableHash, } ;
+use crate::utils::{HashMap, StableHash, new_hash_map};
 
 use crate::passes::{Pass, };
 
@@ -63,6 +66,7 @@ mod util;
 use super::{PlatformCodegen, CodegenComms, PKernelDesc, };
 use super::products::*;
 use crate::codegen::{PlatformIntrinsicInsert, };
+use crate::metadata::{CrateMetadataLoader, CrateMetadata, DummyMetadataLoader, CrateNameHash};
 
 const CRATE_NAME: &'static str = "legionella-cross-codegen";
 
@@ -70,6 +74,7 @@ const CRATE_NAME: &'static str = "legionella-cross-codegen";
 // that adt's have the same layout in the shader/kernel as on the host.
 // TODO XXX only one codegen query is allowed at a time.
 // TODO codegen worker workers (ie codegen multiple functions concurrently)
+// Note: recreate the session/tyctxt on *every* codegen. It is not safe to reuse.
 
 /// Since we can't send MIR directly, or even serialized (we'd have to
 /// serialize the whole crate too), the host codegenner will be responsible
@@ -191,80 +196,39 @@ pub struct WorkerTranslatorData<P>
   pub(crate) platform: P,
   pub target_desc: Arc<AcceleratorTargetDesc>,
   pub accels: Vec<Weak<P::Device>>,
-  pub sess: rustc::session::Session,
   pub passes: Vec<Box<dyn Pass<P>>>,
-  /// Some intrinsics which don't need to be created on every codegen
-  intrinsics: IntrinsicsMap,
   cache: HashMap<PKernelDesc<P>, Arc<PCodegenResults<P>>>,
 }
 impl<P> WorkerTranslatorData<P>
   where P: PlatformCodegen,
 {
   pub fn new(ctx: &Context,
-             accel_desc: Arc<AcceleratorTargetDesc>,
+             target_desc: Arc<AcceleratorTargetDesc>,
              platform: P)
     -> io::Result<CodegenComms<P>>
   {
     use std::thread::Builder;
 
-    use crate::passes::lang_item::LangItemPass;
-    use crate::passes::compiler_builtins::CompilerBuiltinsReplacerPass;
-
-    use rustc::middle::dependency_format::Dependencies;
-
     let (tx, rx) = channel();
     let context = ctx.clone();
 
     let name = format!("codegen thread for {}",
-                       accel_desc.target.llvm_target);
+                       target_desc.target.llvm_target);
 
     let f = move || {
       info!("codegen thread for {} startup",
-            accel_desc.target.llvm_target);
+            target_desc.target.llvm_target);
 
-      let weak_context = context.downgrade_ref();
+      let mut data = WorkerTranslatorData {
+        context: MaybeWeakContext::Strong(context),
+        platform,
+        target_desc,
+        accels: vec![],
+        passes: vec![],
+        cache: Default::default(),
+      };
 
-      // XXX this keeps the context alive anyway.
-      context.syntax_globals().with(move || {
-        with_rustc_session(move |mut sess| {
-          sess.crate_types.set(sess.opts.crate_types.clone());
-          sess.recursion_limit.set(512);
-          sess.allocator_kind.set(None);
-
-          let mut deps: Dependencies = Default::default();
-          deps.insert(sess.crate_types.get()[0], vec![]);
-          sess.dependency_formats.set(deps);
-
-          sess.init_features(feature_gate::Features::new());
-
-          // TODO hash the accelerator target desc
-          let dis = self::util::compute_crate_disambiguator(&sess);
-          sess.crate_disambiguator.set(dis);
-          accel_desc.rustc_target_options(&mut sess.target.target);
-
-          let mut data = WorkerTranslatorData {
-            context: MaybeWeakContext::Weak(weak_context),
-            platform,
-            target_desc: accel_desc,
-            accels: vec![],
-            sess,
-            passes: vec![
-              Box::new(LangItemPass),
-              Box::new(CompilerBuiltinsReplacerPass),
-            ],
-            intrinsics: Default::default(),
-            cache: Default::default(),
-          };
-
-          let mut inserter = PlatformIntrinsicInserter(&mut data.intrinsics,
-                                                       PhantomData::<P>);
-          data.platform
-            .insert_intrinsics(&data.target_desc,
-                               &mut inserter);
-
-          data.thread(&rx);
-        })
-      })
+      data.thread(&rx);
     };
 
     let _ = Builder::new()
@@ -301,15 +265,6 @@ impl<P> WorkerTranslatorData<P>
             return;
           },
         };
-        let krate = create_empty_hir_crate();
-        let dep_graph = rustc::dep_graph::DepGraph::new_disabled();
-        let mut forest = rustc::hir::map::Forest::new(krate, &dep_graph);
-        let mut defs = rustc::hir::map::definitions::Definitions::default();
-        let disambiguator = self.sess.crate_disambiguator
-          .borrow()
-          .clone();
-        defs.create_root_def("jit-methods", disambiguator);
-        let defs = defs;
 
         'msg: loop {
           let msg = recv_msg
@@ -328,11 +283,6 @@ impl<P> WorkerTranslatorData<P>
           };
 
           first_msg = false;
-
-          // Recreate this every loop. You'll have to transmute to get around
-          // lifetime error false positives.
-          let mut arena = rustc::ty::AllArenas::new();
-
           match msg {
             Message::AddAccel(accel) => {
               break 'inner InternalMessage::AddAccel(accel);
@@ -359,38 +309,7 @@ impl<P> WorkerTranslatorData<P>
               desc,
               //host_codegen,
               ret,
-            } => {
-              if let Some(results) = self.cache.get(&desc) {
-                let _ = ret.send(Ok(results.clone()));
-              }
-
-              let (host_codegen, _) = channel();
-              let result = {
-                self.codegen_kernel(desc.clone(),
-                                    context.clone(),
-                                    unsafe {
-                                      ::std::mem::transmute(&mut arena)
-                                    },
-                                    unsafe {
-                                      ::std::mem::transmute(&mut forest)
-                                    },
-                                    unsafe {
-                                      ::std::mem::transmute(&defs)
-                                    },
-                                    &dep_graph,
-                                    host_codegen)
-                  .map(Arc::new)
-              };
-
-              match result {
-                Ok(ref result) => {
-                  self.cache.insert(desc, result.clone());
-                },
-                Err(_) => { },
-              }
-
-              let _ = ret.send(result);
-            },
+            } => self.codegen_kernel(&context, desc, ret),
           }
 
           continue 'msg;
@@ -422,14 +341,115 @@ impl<P> WorkerTranslatorData<P>
     }
   }
 
-  fn codegen_kernel<'a>(&'a self,
-                            desc: PKernelDesc<P>,
-                            context: Context,
-                            arenas: &mut ty::AllArenas,
-                            forest: &mut rustc::hir::map::Forest,
-                            defs: &rustc::hir::map::definitions::Definitions,
-                            dep_graph: &rustc::dep_graph::DepGraph,
-                            host_codegen: Sender<HostQueryMessage>)
+  fn initialize_sess<F, R>(&self, context: &Context, f: F) -> R
+    where F: FnOnce(Session, &CStore, &lintrinsics::CNums) -> R + Send,
+          R: Send,
+  {
+    context.syntax_globals().with(|| {
+      with_rustc_session(|mut sess| {
+        sess.crate_types.set(sess.opts.crate_types.clone());
+        sess.recursion_limit.set(512);
+        sess.allocator_kind.set(None);
+
+        let mut deps: Dependencies = Default::default();
+        deps.insert(sess.crate_types.get()[0], vec![]);
+        sess.dependency_formats.set(deps);
+
+        sess.init_features(feature_gate::Features::new());
+
+        // TODO hash the accelerator target desc
+        let dis = self::util::compute_crate_disambiguator(&sess);
+        sess.crate_disambiguator.set(dis);
+        self.target_desc.rustc_target_options(&mut sess.target.target);
+
+        // initialize the cstore for this codegen:
+        // We have to do this everytime because the CStore does some
+        // behind the scenes (vs letting the query system do it) caching
+        // which causes missing allocations the second time around.
+        // XXX fix upstream to remove that implicit assumption, that is
+        // 1 cstore per 1 tcx (1 to 1 and onto).
+        let cstore = CStore::new(Box::new(DummyMetadataLoader));
+        let mut cnums = new_hash_map();
+        {
+          let mut loader = CrateMetadataLoader::default();
+          let CrateMetadata(meta) = loader.build(context.mapped_metadata(),
+                                                 &cstore)
+            .expect("metadata error");
+          for meta in meta.into_iter() {
+            let name = CrateNameHash {
+              name: meta.name,
+              hash: meta.root.hash.as_u64(),
+            };
+            let cnum = loader.lookup_cnum(&name)
+              .unwrap();
+
+            let fingerprint = meta.root.disambiguator.to_fingerprint()
+              .as_value();
+            let key = (Cow::Owned(format!("{}", meta.name)),
+                       fingerprint.0,
+                       fingerprint.1);
+
+            cstore.set_crate_data(cnum, meta);
+            cnums.insert(key, cnum);
+          }
+        }
+
+        f(sess, &cstore, &cnums)
+      })
+    })
+  }
+  fn codegen_kernel(&mut self, context: &Context,
+                    desc: PKernelDesc<P>,
+                    ret: Sender<Result<Arc<PCodegenResults<P>>, error::Error>>)
+  {
+    if let Some(results) = self.cache.get(&desc) {
+      let _ = ret.send(Ok(results.clone()));
+    }
+
+    let result = self.initialize_sess(context,|sess, cstore, cnums, | {
+      let (host_codegen, _) = channel();
+
+      let krate = create_empty_hir_crate();
+      let dep_graph = rustc::dep_graph::DepGraph::new_disabled();
+      let mut forest = rustc::hir::map::Forest::new(krate, &dep_graph);
+      let mut defs = rustc::hir::map::definitions::Definitions::default();
+      let disambiguator = sess.crate_disambiguator
+        .borrow()
+        .clone();
+      defs.create_root_def("jit-methods", disambiguator);
+      let defs = defs;
+      let mut arenas = rustc::ty::AllArenas::new();
+      self.codegen_kernel_inner(desc.clone(),
+                                context,
+                                sess,
+                                cstore,
+                                cnums,
+                                &mut arenas,
+                                &mut forest,
+                                &defs,
+                                &dep_graph,
+                                host_codegen)
+          .map(Arc::new)
+    });
+    match result {
+      Ok(ref result) => {
+        self.cache.insert(desc, result.clone());
+      },
+      Err(_) => { },
+    }
+    let _ = ret.send(result);
+  }
+  fn codegen_kernel_inner<'a>(&'a self,
+                              desc: PKernelDesc<P>,
+                              context: &Context,
+                              sess: Session,
+                              cstore: &CStore,
+                              cnums: &CNums,
+                              arenas: &mut ty::AllArenas,
+                              forest: &mut rustc::hir::map::Forest,
+                              defs: &rustc::hir::map::definitions::Definitions,
+                              dep_graph: &rustc::dep_graph::DepGraph,
+                              host_codegen: Sender<HostQueryMessage>)
     -> Result<PCodegenResults<P>, error::Error>
   {
     use rustc::hir::def_id::{DefIndex};
@@ -440,7 +460,7 @@ impl<P> WorkerTranslatorData<P>
     let crate_name = Symbol::intern(id.crate_name);
     assert_eq!(crate_name.as_str(), id.crate_name);
 
-    let crate_num = self
+    let crate_num = cstore
       .lookup_crate_num(id)
       .ok_or_else(|| {
         error::Error::NoCrateMetadata(id)
@@ -455,7 +475,7 @@ impl<P> WorkerTranslatorData<P>
     };
     assert!(!def_id.is_local());
 
-    let codegen = get_codegen_backend(&self.sess);
+    let codegen = get_codegen_backend(&sess);
 
     // extern only providers:
     let mut local_providers = rustc::ty::query::Providers::default();
@@ -468,7 +488,7 @@ impl<P> WorkerTranslatorData<P>
     codegen.provide_extern(&mut extern_providers);
     Self::provide_extern_overrides(&mut extern_providers);
 
-    let disk_cache = rustc_incremental::load_query_result_cache(&self.sess);
+    let disk_cache = rustc_incremental::load_query_result_cache(&sess);
 
     let (tx, rx) = channel();
 
@@ -485,8 +505,7 @@ impl<P> WorkerTranslatorData<P>
       outputs: output_types(),
     };
 
-    let map_crate = rustc::hir::map::map_crate(&self.sess,
-                                               context.cstore(),
+    let map_crate = rustc::hir::map::map_crate(&sess, cstore,
                                                forest, defs);
     let resolutions = rustc::ty::Resolutions {
       trait_map: Default::default(),
@@ -497,16 +516,20 @@ impl<P> WorkerTranslatorData<P>
       glob_map: Default::default(),
     };
 
-    let mut intrinsics = self.intrinsics.clone();
+    let mut intrinsics = IntrinsicsMap::default();
     {
       let mut inserter = PlatformIntrinsicInserter(&mut intrinsics,
                                                    PhantomData::<P>);
+      self.platform
+        .insert_intrinsics(&self.target_desc, &mut inserter);
       self.platform
         .insert_kernel_intrinsics(&desc, &mut inserter);
     }
 
     let driver_data: PlatformDriverData<P> =
       PlatformDriverData::new(context.clone(),
+                              cstore,
+                              cnums,
                               &self.accels,
                               Some(host_codegen),
                               &self.target_desc,
@@ -519,8 +542,8 @@ impl<P> WorkerTranslatorData<P>
     let driver_data = Box::new(driver_data) as Box<dyn Any + Send + Sync>;
 
     let gcx = TyCtxt::create_global_ctxt(
-      &self.sess,
-      context.cstore(),
+      &sess,
+      cstore,
       local_providers,
       extern_providers,
       &arenas,
@@ -562,7 +585,7 @@ impl<P> WorkerTranslatorData<P>
       time(tcx.sess, "LLVM codegen",
            || {
              codegen.join_codegen_and_link(ongoing_codegen,
-                                           &self.sess, dep_graph,
+                                           &sess, dep_graph,
                                            &out)
                .map_err(|err| {
                  error!("codegen failed: `{:?}`!", err);
@@ -597,24 +620,6 @@ impl<P> WorkerTranslatorData<P>
     info!("codegen intermediates dir: {}", output_dir.display());
 
     Ok(results)
-  }
-}
-impl<P> DefIdFromKernelId for WorkerTranslatorData<P>
-  where P: PlatformCodegen,
-{
-  fn get_cstore(&self) -> &CStore {
-    match self.context {
-      MaybeWeakContext::Weak(_) => {
-        panic!("context is weak; no cstore available")
-      },
-      MaybeWeakContext::Strong(ref ctx) => ctx.cstore(),
-    }
-  }
-  fn cnum_map(&self) -> Option<&CNums> {
-    match self.context {
-      MaybeWeakContext::Weak(_) => { None },
-      MaybeWeakContext::Strong(ref ctx) => Some(ctx.cnums()),
-    }
   }
 }
 

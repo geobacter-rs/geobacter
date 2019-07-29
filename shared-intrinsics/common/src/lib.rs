@@ -121,6 +121,9 @@ pub trait DefIdFromKernelId {
     Some(Instance::new(id, substs))
   }
 }
+impl DefIdFromKernelId for rustc_metadata::cstore::CStore {
+  fn get_cstore(&self) -> &rustc_metadata::cstore::CStore { self }
+}
 pub trait GetDefIdFromKernelId {
   fn with_self<'tcx, F, R>(tcx: TyCtxt<'tcx>, f: F) -> R
     where F: FnOnce(&dyn DefIdFromKernelId) -> R;
