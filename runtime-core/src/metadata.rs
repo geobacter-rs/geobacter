@@ -489,16 +489,6 @@ impl MetadataLoader for DummyMetadataLoader {
     Err("this should never be called".into())
   }
 }
-/// The compiler (specifically, miri) expects the cstore to
-/// initialize some tcx things (like allocations) during constant eval.
-/// The problem for us is/was that the cstore isn't recreated every time
-/// a kernel is recodegenned. The result is when second function is codegenned,
-/// allocations which got deserialized by the first function will be missing
-/// from the tcx.
-/// This type thus serves to
-pub struct CStoreRebuilder {
-  //krates: IndexVec<CrateNum, >
-}
 pub struct LoadedCrateMetadata {
   pub globals: syntax::Globals,
   pub mapped: Vec<Metadata>,
