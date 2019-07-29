@@ -484,7 +484,7 @@ impl CustomIntrinsicMirGen for CurrentPlatform {
   }
 }
 
-/// Kill (ie `abort()`) the current workitem/thread only. This one is
+/// Kill (ie `panic!()`) the current workitem/thread only. This one is
 /// for the bootstrap driver.
 pub struct WorkItemKill;
 impl CustomIntrinsicMirGen for WorkItemKill {
@@ -493,7 +493,7 @@ impl CustomIntrinsicMirGen for WorkItemKill {
                                    _instance: ty::Instance<'tcx>,
                                    mir: &mut mir::Body<'tcx>)
   {
-    info!("mirgen intrinsic {}", self);
+    trace!("mirgen intrinsic {}", self);
     // this always redirects to a panic here (this impl is only used on
     // the host).
 
