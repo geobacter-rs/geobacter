@@ -415,7 +415,7 @@ impl<T> LegionellaCustomIntrinsicMirGen for WorkItemKill<T>
                                    _instance: ty::Instance<'tcx>,
                                    mir: &mut mir::Body<'tcx>)
   {
-    info!("mirgen intrinsic {}", self);
+    trace!("mirgen intrinsic {}", self);
 
     redirect_or_panic(tcx, mir, move || {
       let id = self.kernel_id();
