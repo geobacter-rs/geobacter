@@ -142,7 +142,7 @@ pub trait Accelerator: Debug + Any + Send + Sync + 'static {
   /// Must be implemented manually :(
   /// Just paste this into your impls:
   /// ```ignore
-  /// fn downcast_ref(this: &dyn Accelerator) -> Option<&Self>
+  /// fn downcast_arc(this: &Arc<dyn Accelerator>) -> Option<Arc<Self>>
   ///    where Self: Sized,
   /// {
   ///    use std::any::TypeId;
