@@ -150,8 +150,18 @@ impl<'tcx, P> PlatformDriverData<'tcx, P>
                              out: &OutputFilenames)
     -> Result<PCodegenResults<P>, Box<dyn Error + Send + Sync + 'static>>
   {
+    use crate::rustc::session::config::*;
+
     let mut outputs = BTreeMap::new();
     for &output_type in out.outputs.keys() {
+      match output_type {
+        OutputType::Assembly |
+        OutputType::LlvmAssembly => {
+          // skip these, they are only used for debugging.
+          continue;
+        },
+        _ => { },
+      }
       let filename = Path::new(&out.out_filestem)
         .with_extension(output_type.extension());
       let output = tmpdir.join(filename);

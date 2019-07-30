@@ -47,6 +47,13 @@ impl<P> CodegenResults<P>
     self.outputs.get(&OutputType::Bitcode)
       .map(|b| &b[..] )
   }
+  pub fn take_object(&mut self) -> Option<Vec<u8>> {
+    self.outputs.remove(&OutputType::Object)
+  }
+  pub fn object_ref(&self) -> Option<&[u8]> {
+    self.outputs.get(&OutputType::Object)
+      .map(|b| &b[..] )
+  }
   pub fn assembly_bytes_ref(&self) -> Option<&[u8]> {
     self.outputs.get(&OutputType::Assembly)
       .map(|b| &b[..] )

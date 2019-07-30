@@ -106,59 +106,64 @@ impl PlatformCodegen for Codegenner {
       entry.symbol.push_str(".kd");
     }
 
-    let bc = codegen.take_bitcode()
-      .ok_or("no object output")?;
+    let obj_data = if let Some(obj) = codegen.take_object() {
+      obj
+    } else {
+      // fallback to invoking llc manually:
+      // TODO send LLVM patches upstream so that amd-comgr is useful for this.
 
-    let linked_bc = tdir.join("linked.bc");
-    {
-      let mut out = File::create(&linked_bc)?;
-      out.write_all(&bc)?;
-    }
+      let bc = codegen.take_bitcode()
+        .ok_or("no object output")?;
 
-    // be helpful if this var isn't set:
-    if var_os("RUST_BUILD_ROOT").is_none() &&
-      var_os("LLVM_BUILD").is_none() {
-      println!("Due to some required LLVM patches, I need a build of \
+      let linked_bc = tdir.join("linked.bc");
+      {
+        let mut out = File::create(&linked_bc)?;
+        out.write_all(&bc)?;
+      }
+
+      // be helpful if this var isn't set:
+      if var_os("RUST_BUILD_ROOT").is_none() &&
+        var_os("LLVM_BUILD").is_none() {
+        println!("Due to some required LLVM patches, I need a build of \
                 Legionella's LLVM");
-      println!("You shouldn't need to build this separately; it should \
+        println!("You shouldn't need to build this separately; it should \
                 have been built with Rust");
-      println!("Set either LLVM_BUILD or RUST_BUILD_ROOT \
+        println!("Set either LLVM_BUILD or RUST_BUILD_ROOT \
                 (RUST_BUILD_ROOT takes priority)");
-      println!("XXX Temporary");
-    }
+        println!("XXX Temporary");
+      }
 
-    let llvm = LlvmBuildRoot::default();
-    let llc = llvm.llc();
-    let llc_cmd = || {
-      let mut cmd = Command::new(&llc);
-      cmd.current_dir(tdir)
-        .arg(&linked_bc)
-        .arg(format!("-mcpu={}", target_desc.target.options.cpu))
-        .arg(format!("-mattr={}", target_desc.target.options.features))
-        .arg("-relocation-model=pic");
-      cmd
-    };
+      let llvm = LlvmBuildRoot::default();
+      let llc = llvm.llc();
+      let llc_cmd = || {
+        let mut cmd = Command::new(&llc);
+        cmd.current_dir(tdir)
+          .arg(&linked_bc)
+          .arg(format!("-mcpu={}", target_desc.target.options.cpu))
+          .arg(format!("-mattr={}", target_desc.target.options.features))
+          .arg("-relocation-model=pic");
+        cmd
+      };
 
-    let obj = tdir.join("obj.o");
+      let obj = tdir.join("obj.o");
 
-    let mut llc = llc_cmd();
-    llc.arg("-filetype=obj")
-      .arg("-o").arg(&obj);
-    run_cmd(llc)?;
-
-    info!("finished running llc");
-
-    if log::log_enabled!(log::Level::Debug) {
-      // run llc again, but write asm this time
       let mut llc = llc_cmd();
-
-      llc.arg("-filetype=asm")
-        .arg("-o").arg(tdir.join("obj.S"));
-
+      llc.arg("-filetype=obj")
+        .arg("-o").arg(&obj);
       run_cmd(llc)?;
-    }
 
-    let obj_data = {
+      info!("finished running llc");
+
+      if log::log_enabled!(log::Level::Debug) {
+        // run llc again, but write asm this time
+        let mut llc = llc_cmd();
+
+        llc.arg("-filetype=asm")
+          .arg("-o").arg(tdir.join("obj.S"));
+
+        run_cmd(llc)?;
+      }
+
       let mut b = Vec::new();
       File::open(&obj)?.read_to_end(&mut b)?;
       b

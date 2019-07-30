@@ -470,9 +470,9 @@ impl<P> WorkerTranslatorData<P>
       .ok_or_else(|| {
         error::Error::NoCrateMetadata(id)
       })?;
-
+    let hash = desc.instance.stable_hash();
     info!("translating defid {:?}:{}, hash: 0x{:x}",
-          crate_num, id.index, desc.instance.stable_hash());
+          crate_num, id.index, hash);
 
     let def_id = DefId {
       krate: crate_num,
@@ -620,26 +620,26 @@ impl<P> WorkerTranslatorData<P>
       "internal platform codegen error: platform didn't insert an Exe \
        output type into the results");
 
-    info!("codegen complete {:?}:{}", crate_num, id.index);
-
     info!("codegen intermediates dir: {}", output_dir.display());
+    info!("codegen complete {:?}:{}, hash: 0x{:x}",
+          crate_num, id.index, hash);
 
     Ok(results)
   }
 }
-
+/// TODO some targets don't have LLVM target machines. Handle this.
 fn output_types() -> rustc::session::config::OutputTypes {
   use rustc::session::config::*;
 
   let output = (OutputType::Bitcode, None);
   let ir_out = (OutputType::LlvmAssembly, None);
-  //let asm = (OutputType::Assembly, None);
-  //let exe = (OutputType::Exe, None);
+  let asm = (OutputType::Assembly, None);
+  let obj = (OutputType::Object, None);
   let mut out = Vec::new();
   out.push(output);
   out.push(ir_out);
-  //out.push(asm);
-  //out.push(exe);
+  out.push(asm);
+  out.push(obj);
   OutputTypes::new(&out[..])
 }
 
