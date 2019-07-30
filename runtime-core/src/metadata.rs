@@ -374,14 +374,14 @@ impl Metadata {
     use std::io::{Read};
 
     use goblin::Object;
+    use memmap::*;
 
     use crate::rustc_data_structures::rayon::prelude::*;
 
-    let mut src_buffer = Vec::new();
-    {
-      let mut src_file = File::open(src.as_path())?;
-      src_file.read_to_end(&mut src_buffer)?;
-    }
+    let src_file = File::open(src.as_path())?;
+    let src_buffer = unsafe {
+      MmapOptions::new().map(&src_file)?
+    };
 
     let object = match Object::parse(&src_buffer)? {
       Object::Elf(elf) => elf,
