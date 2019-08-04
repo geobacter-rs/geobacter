@@ -213,8 +213,7 @@ impl<MD> FuncModule<(), MD>
     if f.instance != found.instance {
       // TODO return some Error enum instead of a string.
       let msg = format!("expected {:?}, found {:?}",
-                        f.instance.kernel_id,
-                        found.instance.kernel_id);
+                        f.instance, found.instance);
       return Err(msg);
     }
 

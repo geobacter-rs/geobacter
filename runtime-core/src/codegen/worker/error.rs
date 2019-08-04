@@ -2,13 +2,13 @@
 use std::error::Error as StdError;
 use std::{fmt, io, };
 
-use hsa_core::kernel::KernelId;
+use hsa_core::kernel::KernelInstance;
 
 #[derive(Debug)]
 pub enum Error {
-  Io(Option<KernelId>, io::Error),
-  NoCrateMetadata(KernelId),
-  Codegen(KernelId),
+  Io(Option<KernelInstance>, io::Error),
+  NoCrateMetadata(KernelInstance),
+  Codegen(KernelInstance),
   InitRoot(Box<dyn StdError + Send + Sync + 'static>),
   InitConditions(Box<dyn StdError + Send + Sync + 'static>),
   PostCodegen(Box<dyn StdError + Send + Sync + 'static>),
@@ -29,13 +29,13 @@ impl From<io::Error> for Error {
   }
 }
 
-pub trait IntoErrorWithKernelId {
+pub trait IntoErrorWithKernelInstance {
   type Output;
-  fn with_kernel_id(self, id: KernelId) -> Self::Output;
+  fn with_kernel_instance(self, id: KernelInstance) -> Self::Output;
 }
-impl<T> IntoErrorWithKernelId for Result<T, io::Error> {
+impl<T> IntoErrorWithKernelInstance for Result<T, io::Error> {
   type Output = Result<T, Error>;
-  fn with_kernel_id(self, id: KernelId) -> Self::Output {
+  fn with_kernel_instance(self, id: KernelInstance) -> Self::Output {
     self.map_err(move |e| Error::Io(Some(id), e) )
   }
 }

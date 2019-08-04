@@ -5,9 +5,6 @@ use rustc::ty::{TyCtxt, };
 use crate::codegen::worker::{DriverData, };
 use crate::codegen::PlatformCodegen;
 
-pub mod lang_item;
-pub mod compiler_builtins;
-
 pub enum PassType<P>
   where P: PlatformCodegen,
 {

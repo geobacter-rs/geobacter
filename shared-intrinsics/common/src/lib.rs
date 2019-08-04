@@ -41,19 +41,19 @@ use std::borrow::Cow;
 use std::fmt;
 use std::marker::PhantomData;
 
-use hsa_core::kernel::{KernelId, KernelInstance};
+use hsa_core::kernel::{KernelInstance};
 
-use self::rustc::hir::def_id::{DefId, DefIndex, CrateNum, };
+use self::rustc::hir::def_id::{DefId, CrateNum, };
 use self::rustc::middle::lang_items::{self, LangItem, };
 use self::rustc::mir::{self, CustomIntrinsicMirGen, Operand, Rvalue,
                        AggregateKind, LocalDecl, Place, StatementKind,
                        Constant, Statement, };
 use self::rustc::mir::interpret::{ConstValue, Scalar, Allocation, };
 use self::rustc::ty::{self, TyCtxt, layout::Size, Instance, Const, };
-use self::rustc::ty::codec::decode_substs;
 use self::rustc_data_structures::indexed_vec::Idx;
 use self::rustc_data_structures::sync::{Lrc, };
-use self::syntax_pos::{Span, DUMMY_SP, symbol::Symbol, };
+use crate::serialize::Decodable;
+use self::syntax_pos::{Span, DUMMY_SP, };
 
 use crate::rustc_intrinsics::{help::*, codec::*, };
 
@@ -69,56 +69,18 @@ pub trait DefIdFromKernelId {
     None
   }
 
-  fn lookup_crate_num(&self, kernel_id: KernelId) -> Option<CrateNum> {
-    // use this if available:
-    if let Some(map) = self.cnum_map() {
-      let crate_name = Cow::Borrowed(kernel_id.crate_name);
-      let key = (crate_name, kernel_id.crate_hash_hi,
-                 kernel_id.crate_hash_lo);
-      return map.get(&key).cloned();
-    }
-
-    let mut out = None;
-    let needed_fingerprint =
-      (kernel_id.crate_hash_hi,
-       kernel_id.crate_hash_lo);
-
-    // maybe don't intern this?
-    let cname = Symbol::intern(kernel_id.crate_name);
-    self.get_cstore().iter_crate_data(|num, data| {
-      if out.is_some() { return; }
-
-      if data.name != cname {
-        return;
-      }
-      let finger = data.root.disambiguator.to_fingerprint().as_value();
-      if needed_fingerprint == finger {
-        out = Some(num);
-      }
-    });
-
-    out
-  }
-  fn convert_kernel_id(&self, id: KernelId) -> Option<DefId> {
-    self.lookup_crate_num(id)
-      .map(|crate_num| DefId {
-        krate: crate_num,
-        index: DefIndex::from_usize(id.index as _),
-      } )
-  }
   fn convert_kernel_instance<'tcx>(&self, tcx: TyCtxt<'tcx>,
                                    instance: KernelInstance)
     -> Option<Instance<'tcx>>
   {
-    let id = self.convert_kernel_id(instance.kernel_id)?;
+    trace!("converting kernel instance for {}", instance.name().unwrap());
 
     // now decode the substs into `tcx`.
     let mut alloc_state = None;
-    let mut decoder = LegionellaDecoder::new(tcx, instance.substs,
+    let mut decoder = LegionellaDecoder::new(tcx, instance.instance,
                                              &mut alloc_state);
 
-    let substs = decode_substs(&mut decoder).ok()?;
-    Some(Instance::new(id, substs))
+    Instance::decode(&mut decoder).ok()
   }
 }
 impl DefIdFromKernelId for rustc_metadata::cstore::CStore {
@@ -388,7 +350,7 @@ pub fn redirect_or_panic<'tcx, F>(tcx: TyCtxt<'tcx>,
 }
 
 pub trait PlatformImplDetail: Send + Sync + 'static {
-  fn kernel_id() -> KernelId;
+  fn kernel_instance() -> KernelInstance;
 }
 
 /// Kill (ie `abort()`) the current workitem/thread only.
@@ -397,8 +359,8 @@ pub struct WorkItemKill<T>(PhantomData<T>)
 impl<T> WorkItemKill<T>
   where T: PlatformImplDetail,
 {
-  fn kernel_id(&self) -> KernelId {
-    T::kernel_id()
+  fn kernel_instance(&self) -> KernelInstance {
+    T::kernel_instance()
   }
 }
 impl<T> Default for WorkItemKill<T>
@@ -421,17 +383,10 @@ impl<T> LegionellaCustomIntrinsicMirGen for WorkItemKill<T>
     trace!("mirgen intrinsic {}", self);
 
     redirect_or_panic(tcx, mir, move || {
-      let id = self.kernel_id();
-
-      let def_id = kid_did.convert_kernel_id(id)
+      let id = self.kernel_instance();
+      let instance = kid_did.convert_kernel_instance(tcx, id)
         .expect("failed to convert kernel id to def id");
-      let def = ty::InstanceDef::Intrinsic(def_id);
-      let substs = tcx.intern_substs(&[]);
-
-      Some(Instance {
-        def,
-        substs,
-      })
+      Some(instance)
     });
   }
 
@@ -459,12 +414,12 @@ impl<T> fmt::Display for WorkItemKill<T>
 }
 pub struct HostKillDetail;
 impl PlatformImplDetail for HostKillDetail {
-  fn kernel_id() -> KernelId {
+  fn kernel_instance() -> KernelInstance {
     fn host_kill() -> ! {
       panic!("__legionella_kill");
     }
 
-    KernelInstance::get(&host_kill).kernel_id
+    KernelInstance::get(&host_kill)
   }
 }
 pub type WorkItemHostKill = WorkItemKill<HostKillDetail>;

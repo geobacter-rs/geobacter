@@ -229,9 +229,6 @@ impl KernelInstance {
   fn inner_ret_ty<'tcx>(&self, tcx: TyCtxt<'tcx>) -> ty::Ty<'tcx> {
     tcx.mk_tup([
       tcx.mk_static_str(),
-      tcx.types.u64,
-      tcx.types.u64,
-      tcx.types.u64,
       tcx.mk_imm_ref(tcx.lifetimes.re_static,
                      tcx.mk_slice(tcx.types.u8))
     ].into_iter())
@@ -266,36 +263,26 @@ impl CustomIntrinsicMirGen for KernelInstance {
     let instance = extract_opt_fn_instance(tcx, instance, local_ty);
 
     let slice = build_compiler_opt(tcx, instance, |tcx, instance| {
-      let def_id = instance.def_id();
-      let crate_name = tcx.crate_name(def_id.krate);
-      let disambiguator = tcx.crate_disambiguator(def_id.krate);
-      let (d_hi, d_lo) = disambiguator.to_fingerprint().as_value();
+      let name = tcx.def_path_str(instance.def_id());
+      let name = static_str_const_value(tcx, &*name.as_str());
 
-      let crate_name = static_str_const_value(tcx, &*crate_name.as_str());
-      let d_hi = tcx.mk_u64_cv(d_hi);
-      let d_lo = tcx.mk_u64_cv(d_lo);
-      let id = tcx.mk_u64_cv(def_id.index.as_usize() as u64);
-
-      let substs = LegionellaEncoder::with(tcx, |encoder| {
-        instance.substs.encode(encoder)
-          .expect("actual encode kernel substs");
-
+      let instance = LegionellaEncoder::with(tcx, |encoder| {
+        instance.encode(encoder).expect("actual encode kernel instance");
         Ok(())
-      })
-        .expect("encode kernel substs");
-      let substs_len = substs.len();
-      let alloc = Allocation::from_byte_aligned_bytes(substs);
+      }).expect("encode kernel instance");
+
+      let instance_len = instance.len();
+      let alloc = Allocation::from_byte_aligned_bytes(instance);
       let alloc = tcx.intern_const_alloc(alloc);
       tcx.alloc_map.lock().create_memory_alloc(alloc);
-      let substs = ConstValue::Slice {
+      let instance = ConstValue::Slice {
         data: alloc,
         start: 0,
-        end: substs_len,
+        end: instance_len,
       };
 
-      static_tuple_const_value(tcx, "kernel_id_for",
-                               vec![crate_name, d_hi, d_lo, id,
-                               substs].into_iter(),
+      static_tuple_const_value(tcx, "kernel_instance",
+                               vec![name, instance].into_iter(),
                                self.inner_ret_ty(tcx))
     });
     let rvalue = const_value_rvalue(tcx, slice,

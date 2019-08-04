@@ -18,7 +18,7 @@ use syntax_pos::symbol::{InternedString, };
 
 use crossbeam::sync::WaitGroup;
 
-use hsa_core::kernel::{KernelId, KernelInstance};
+use hsa_core::kernel::{KernelInstance, };
 
 use lintrinsics::{DefIdFromKernelId, };
 
@@ -252,12 +252,6 @@ impl<'tcx, P> DriverData<'tcx, P>
   }
 
   pub fn passes(&self) -> &[Box<dyn Pass<P>>] { self.passes.as_ref() }
-  pub fn as_def_id(&self, id: KernelId) -> Result<DefId, String> {
-    self.convert_kernel_id(id)
-      .ok_or_else(|| {
-        format!("crate metadata missing for `{}`", id.crate_name)
-      })
-  }
   pub fn replace_def_id(&self, tcx: TyCtxt<'tcx>,
                         id: DefId) -> DefId {
     let replaced = {

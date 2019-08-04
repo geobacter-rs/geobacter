@@ -1,40 +1,28 @@
 
+use std::fmt;
 use std::sync::atomic::AtomicUsize;
 
-/// roughly corresponds to a DefId in `rustc`.
-#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
-pub struct KernelId {
-  pub crate_name: &'static str,
-  pub crate_hash_hi: u64,
-  pub crate_hash_lo: u64,
-  pub index: u64,
-}
 /// roughly corresponds to a `ty::Instance` in `rustc`.
-#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
+#[derive(Clone, Copy, Eq, PartialEq, Hash)]
 pub struct KernelInstance {
-  pub kernel_id: KernelId,
-  pub substs: &'static [u8],
+  /// A debug friendly name
+  name: &'static str,
+  /// The serialized `ty::Instance<'tcx>`.
+  pub instance: &'static [u8],
 }
 impl KernelInstance {
   pub fn get_opt<F, Args, Ret>(f: &F) -> Option<Self>
     where F: OptionalFn<Args, Output=Ret>,
   {
-    let def_id = unsafe {
+    let instance = unsafe {
       intrinsics::kernel_instance(f)
     };
 
-    def_id.get(0)
-      .map(|def_id| {
-        let id = KernelId {
-          crate_name: def_id.0,
-          crate_hash_hi: def_id.1,
-          crate_hash_lo: def_id.2,
-          index: def_id.3,
-        };
-
+    instance.get(0)
+      .map(|(name, instance)| {
         KernelInstance {
-          kernel_id: id,
-          substs: def_id.4,
+          name,
+          instance,
         }
       })
   }
@@ -42,6 +30,22 @@ impl KernelInstance {
     where F: Fn<Args, Output=Ret> + OptionalFn<Args, Output=Ret>,
   {
     Self::get_opt(f).unwrap()
+  }
+
+  /// At some point in the future, we may not always create this const data
+  pub fn name(&self) -> Option<&'static str> {
+    if self.name.len() != 0 {
+      Some(self.name)
+    } else {
+      None
+    }
+  }
+}
+impl fmt::Debug for KernelInstance {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    f.debug_tuple("KernelInstance")
+      .field(&self.name)
+      .finish()
   }
 }
 
@@ -51,6 +55,8 @@ pub trait OptionalFn<Args> {
 
   fn is_some(&self) -> bool;
   fn is_none(&self) -> bool { !self.is_some() }
+
+  fn kernel_instance(&self) -> Option<KernelInstance>;
 }
 impl OptionalFn<()> for () {
   type Output = ();
@@ -59,6 +65,8 @@ impl OptionalFn<()> for () {
   }
 
   fn is_some(&self) -> bool { false }
+
+  fn kernel_instance(&self) -> Option<KernelInstance> { None }
 }
 impl<F, Args> OptionalFn<Args> for F
   where F: Fn<Args>,
@@ -69,6 +77,10 @@ impl<F, Args> OptionalFn<Args> for F
   }
 
   fn is_some(&self) -> bool { true }
+
+  fn kernel_instance(&self) -> Option<KernelInstance> {
+    KernelInstance::get_opt(self)
+  }
 }
 
 mod intrinsics {
@@ -76,7 +88,7 @@ mod intrinsics {
 
   extern "rust-intrinsic" {
     pub fn kernel_instance<'upvar, F, Args, Ret>(f: &'upvar F)
-      -> &'static [(&'static str, u64, u64, u64, &'static [u8])]
+      -> &'static [(&'static str, &'static [u8])]
       where F: OptionalFn<Args, Output=Ret>;
     pub fn kernel_context_data_id<'upvar, F, Args, Ret>(f: &'upvar F)
       -> &'static usize

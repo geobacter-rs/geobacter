@@ -55,7 +55,7 @@ use crate::utils::{HashMap, StableHash, new_hash_map};
 
 use crate::passes::{Pass, };
 
-use self::error::IntoErrorWithKernelId;
+use self::error::IntoErrorWithKernelInstance;
 pub use self::driver_data::{DriverData, PlatformDriverData, };
 
 mod collector;
@@ -415,7 +415,8 @@ impl<P> WorkerTranslatorData<P>
       let (host_codegen, _) = channel();
 
       let krate = create_empty_hir_crate();
-      let dep_graph = rustc::dep_graph::DepGraph::new_disabled();
+      let dep_graph = rustc::dep_graph::DepGraph::new(Default::default(),
+                                                      Default::default());
       let mut forest = rustc::hir::map::Forest::new(krate, &dep_graph);
       let mut defs = rustc::hir::map::definitions::Definitions::default();
       let disambiguator = sess.crate_disambiguator
@@ -457,28 +458,12 @@ impl<P> WorkerTranslatorData<P>
                               host_codegen: Sender<HostQueryMessage>)
     -> Result<PCodegenResults<P>, error::Error>
   {
-    use rustc::hir::def_id::{DefIndex};
     use self::util::get_codegen_backend;
 
-    let id = desc.instance.kernel_id;
-
-    let crate_name = Symbol::intern(id.crate_name);
-    assert_eq!(crate_name.as_str(), id.crate_name);
-
-    let crate_num = cstore
-      .lookup_crate_num(id)
-      .ok_or_else(|| {
-        error::Error::NoCrateMetadata(id)
-      })?;
+    let instance = desc.instance;
     let hash = desc.instance.stable_hash();
-    info!("translating defid {:?}:{}, hash: 0x{:x}",
-          crate_num, id.index, hash);
-
-    let def_id = DefId {
-      krate: crate_num,
-      index: DefIndex::from_usize(id.index as usize),
-    };
-    assert!(!def_id.is_local());
+    info!("translating {:?}, hash: 0x{:x}",
+          desc.instance, hash);
 
     let codegen = get_codegen_backend(&sess);
 
@@ -500,7 +485,7 @@ impl<P> WorkerTranslatorData<P>
     let tmpdir = TDBuilder::new()
       .prefix("legionella-runtime-codegen-")
       .tempdir()
-      .with_kernel_id(id)?;
+      .with_kernel_instance(desc.instance)?;
 
     let out = rustc::session::config::OutputFilenames {
       out_directory: tmpdir.path().into(),
@@ -594,7 +579,7 @@ impl<P> WorkerTranslatorData<P>
                                            &out)
                .map_err(|err| {
                  error!("codegen failed: `{:?}`!", err);
-                 error::Error::Codegen(id)
+                 error::Error::Codegen(instance)
                })
            })?;
 
@@ -621,8 +606,8 @@ impl<P> WorkerTranslatorData<P>
        output type into the results");
 
     info!("codegen intermediates dir: {}", output_dir.display());
-    info!("codegen complete {:?}:{}, hash: 0x{:x}",
-          crate_num, id.index, hash);
+    info!("codegen complete {:?}, hash: 0x{:x}",
+          instance, hash);
 
     Ok(results)
   }
@@ -663,6 +648,8 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
 
   let mut opts = Options::default();
   opts.crate_types.push(CrateType::Cdylib);
+  // We need to have the tcx build the def_path_hash_to_def_id map:
+  opts.debugging_opts.query_dep_graph = true;
   opts.output_types = output_types();
   opts.optimize = OptLevel::No;
   opts.optimize = OptLevel::Aggressive;

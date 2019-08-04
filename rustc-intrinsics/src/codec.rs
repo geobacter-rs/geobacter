@@ -11,6 +11,7 @@
 use std::mem;
 
 use crate::rustc::hir::def_id::{CrateNum, LOCAL_CRATE, DefId, DefIndex, };
+use crate::rustc::hir::map::definitions::DefPathHash;
 use crate::rustc::mir::interpret::{AllocId, specialized_encode_alloc_id,
                                    AllocDecodingState, AllocDecodingSession, };
 use crate::rustc::session::CrateDisambiguator;
@@ -19,7 +20,7 @@ use crate::rustc::ty::codec as ty_codec;
 use crate::rustc::ty::codec::{TyEncoder, TyDecoder, };
 use crate::rustc_data_structures::fingerprint::Fingerprint;
 use crate::rustc_data_structures::fx::{FxHashMap, };
-use crate::rustc_data_structures::indexed_vec::{Idx, IndexVec, };
+use crate::rustc_data_structures::indexed_vec::{IndexVec, };
 
 use crate::rustc_serialize::{Decodable, Decoder, Encodable, Encoder, opaque,
                              SpecializedDecoder, SpecializedEncoder,
@@ -128,17 +129,22 @@ impl<'a, 'tcx> SpecializedDecoder<AllocId> for LegionellaDecoder<'a, 'tcx> {
 impl<'a, 'tcx> SpecializedDecoder<DefIndex> for LegionellaDecoder<'a, 'tcx> {
   #[inline]
   fn specialized_decode(&mut self) -> Result<DefIndex, Self::Error> {
-    let idx = u32::decode(self)?;
-    Ok(DefIndex::new(idx as _))
+    bug!("Trying to decode DefIndex outside the context of a DefId")
   }
 }
 impl<'a, 'tcx> SpecializedDecoder<DefId> for LegionellaDecoder<'a, 'tcx> {
   #[inline]
   fn specialized_decode(&mut self) -> Result<DefId, Self::Error> {
-    Ok(DefId {
-      krate: CrateNum::decode(self)?,
-      index: DefIndex::decode(self)?,
-    })
+    // Load the DefPathHash which is was we encoded the DefId as.
+    let def_path_hash = DefPathHash::decode(self)?;
+
+    // Using the DefPathHash, we can lookup the new DefId
+    Ok(self.tcx().def_path_hash_to_def_id.as_ref().unwrap()[&def_path_hash])
+  }
+}
+impl<'a, 'tcx> SpecializedDecoder<Fingerprint> for LegionellaDecoder<'a, 'tcx> {
+  fn specialized_decode(&mut self) -> Result<Fingerprint, Self::Error> {
+    Fingerprint::decode_opaque(&mut self.opaque)
   }
 }
 
@@ -346,22 +352,17 @@ impl<'a, 'tcx, E> SpecializedEncoder<DefId> for LegionellaEncoder<'a, 'tcx, E>
   where E: ty_codec::TyEncoder + 'a,
 {
   #[inline]
-  fn specialized_encode(&mut self, def_id: &DefId) -> Result<(), Self::Error> {
-    let DefId {
-      krate,
-      index,
-    } = *def_id;
-
-    krate.encode(self)?;
-    index.encode(self)
+  fn specialized_encode(&mut self, id: &DefId) -> Result<(), Self::Error> {
+    let def_path_hash = self.tcx.def_path_hash(*id);
+    def_path_hash.encode(self)
   }
 }
 
 impl<'a, 'tcx, E> SpecializedEncoder<DefIndex> for LegionellaEncoder<'a, 'tcx, E>
   where E: ty_codec::TyEncoder + 'a,
 {
-  fn specialized_encode(&mut self, def_index: &DefIndex) -> Result<(), Self::Error> {
-    self.emit_u32(def_index.as_u32())
+  fn specialized_encode(&mut self, _def_index: &DefIndex) -> Result<(), Self::Error> {
+    bug!("Encoding DefIndex without context.")
   }
 }
 impl<'a, 'tcx, E> SpecializedEncoder<Ty<'tcx>> for LegionellaEncoder<'a, 'tcx, E>

@@ -30,10 +30,10 @@ extern crate legionella_intrinsics_common as common;
 
 use std::fmt;
 
-use hsa_core::kernel::{KernelId, OptionalFn, KernelInstance};
+use hsa_core::kernel::{OptionalFn, KernelInstance, };
 
 use crate::rustc::mir::{self, CustomIntrinsicMirGen, };
-use crate::rustc::ty::{self, TyCtxt, Instance, InstanceDef, };
+use crate::rustc::ty::{self, TyCtxt, Instance, };
 use crate::rustc_data_structures::sync::{Lrc, };
 
 use crate::common::{DefIdFromKernelId, LegionellaCustomIntrinsicMirGen,
@@ -55,14 +55,6 @@ pub fn insert_all_intrinsics<F, U>(marker: &U, mut into: F)
   into(k, v);
   let (k, v) = LegionellaMirGen::new(WaveBarrier, marker);
   into(k, v);
-}
-
-// Note: there are no generic bounds for these intrinsics, so
-// we don't need the full instance
-fn kernel_id_for<F, Args, Ret>(f: &F) -> KernelId
-  where F: Fn<Args, Output=Ret> + OptionalFn<Args, Output=Ret>,
-{
-  KernelInstance::get(f).kernel_id
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -123,45 +115,52 @@ impl AxisId {
 
     out
   }
-  fn kernel_id(&self) -> KernelId {
-    match self {
+  fn kernel_instance(&self) -> KernelInstance {
+    let o = match self {
       &AxisId {
         block: BlockLevel::Item,
         dim: Dim::X,
       } => {
-        kernel_id_for(&amdgcn_intrinsics::amdgcn_workitem_id_x)
+        amdgcn_intrinsics::amdgcn_workitem_id_x
+          .kernel_instance()
       },
       &AxisId {
         block: BlockLevel::Item,
         dim: Dim::Y,
       } => {
-        kernel_id_for(&amdgcn_intrinsics::amdgcn_workitem_id_y)
+        amdgcn_intrinsics::amdgcn_workitem_id_y
+          .kernel_instance()
       },
       &AxisId {
         block: BlockLevel::Item,
         dim: Dim::Z,
       } => {
-        kernel_id_for(&amdgcn_intrinsics::amdgcn_workitem_id_z)
+        amdgcn_intrinsics::amdgcn_workitem_id_z
+          .kernel_instance()
       },
       &AxisId {
         block: BlockLevel::Group,
         dim: Dim::X,
       } => {
-        kernel_id_for(&amdgcn_intrinsics::amdgcn_workgroup_id_x)
+        amdgcn_intrinsics::amdgcn_workgroup_id_x
+          .kernel_instance()
       },
       &AxisId {
         block: BlockLevel::Group,
         dim: Dim::Y,
       } => {
-        kernel_id_for(&amdgcn_intrinsics::amdgcn_workgroup_id_y)
+        amdgcn_intrinsics::amdgcn_workgroup_id_y
+          .kernel_instance()
       },
       &AxisId {
         block: BlockLevel::Group,
         dim: Dim::Z,
       } => {
-        kernel_id_for(&amdgcn_intrinsics::amdgcn_workgroup_id_z)
+        amdgcn_intrinsics::amdgcn_workgroup_id_z
+          .kernel_instance()
       },
-    }
+    };
+    o.unwrap()
   }
   fn instance<'tcx>(&self,
                     kid_did: &dyn DefIdFromKernelId,
@@ -174,17 +173,10 @@ impl AxisId {
       _ => { return None; },
     };
 
-    let id = self.kernel_id();
-    let def_id = kid_did.convert_kernel_id(id)
-      .expect("failed to convert kernel id to def id");
-
-    let def = InstanceDef::Intrinsic(def_id);
-    let substs = tcx.intern_substs(&[]);
-
-    Some(Instance {
-      def,
-      substs,
-    })
+    let id = self.kernel_instance();
+    let instance = kid_did.convert_kernel_instance(tcx, id)
+      .expect("failed to convert kernel instance to rustc instance");
+    Some(instance)
   }
 }
 impl LegionellaCustomIntrinsicMirGen for AxisId {
@@ -238,8 +230,10 @@ impl DispatchPtr {
   // incorrect type.
   // When referenced in a function like this, the wrapper function isn't
   // codegenned.
-  fn amdgcn_kernel_id(&self) -> KernelId {
-    kernel_id_for(&amdgcn_intrinsics::amdgcn_dispatch_ptr)
+  fn amdgcn_kernel_instance(&self) -> KernelInstance {
+    amdgcn_intrinsics::amdgcn_dispatch_ptr
+      .kernel_instance()
+      .unwrap()
   }
 }
 
@@ -260,17 +254,10 @@ impl LegionellaCustomIntrinsicMirGen for DispatchPtr {
         _ => { return None; },
       };
 
-      let id = self.amdgcn_kernel_id();
-
-      let def_id = kid_did.convert_kernel_id(id)
-        .expect("failed to convert kernel id to def id");
-      let def = InstanceDef::Intrinsic(def_id);
-      let substs = tcx.intern_substs(&[]);
-
-      Some(Instance {
-        def,
-        substs,
-      })
+      let id = self.amdgcn_kernel_instance();
+      let instance = kid_did.convert_kernel_instance(tcx, id)
+        .expect("failed to convert kernel instance to rustc instance");
+      Some(instance)
     });
   }
 
@@ -297,8 +284,10 @@ impl fmt::Display for DispatchPtr {
 
 pub struct Barrier;
 impl Barrier {
-  fn kernel_id(&self) -> KernelId {
-    kernel_id_for(&amdgcn_intrinsics::amdgcn_barrier)
+  fn kernel_instance(&self) -> KernelInstance {
+    amdgcn_intrinsics::amdgcn_barrier
+      .kernel_instance()
+      .unwrap()
   }
 }
 impl LegionellaCustomIntrinsicMirGen for Barrier {
@@ -318,17 +307,10 @@ impl LegionellaCustomIntrinsicMirGen for Barrier {
         _ => { return None; },
       };
 
-      let id = self.kernel_id();
-
-      let def_id = kid_did.convert_kernel_id(id)
-        .expect("failed to convert kernel id to def id");
-      let def = InstanceDef::Intrinsic(def_id);
-      let substs = tcx.intern_substs(&[]);
-
-      Some(Instance {
-        def,
-        substs,
-      })
+      let id = self.kernel_instance();
+      let instance = kid_did.convert_kernel_instance(tcx, id)
+        .expect("failed to convert kernel instance to rustc instance");
+      Some(instance)
     });
   }
 
@@ -354,8 +336,10 @@ impl fmt::Display for Barrier {
 }
 pub struct WaveBarrier;
 impl WaveBarrier {
-  fn kernel_id(&self) -> KernelId {
-    kernel_id_for(&amdgcn_intrinsics::amdgcn_wave_barrier)
+  fn kernel_instance(&self) -> KernelInstance {
+    amdgcn_intrinsics::amdgcn_wave_barrier
+      .kernel_instance()
+      .unwrap()
   }
 }
 impl LegionellaCustomIntrinsicMirGen for WaveBarrier {
@@ -375,17 +359,10 @@ impl LegionellaCustomIntrinsicMirGen for WaveBarrier {
         _ => { return None; },
       };
 
-      let id = self.kernel_id();
-
-      let def_id = kid_did.convert_kernel_id(id)
-        .expect("failed to convert kernel id to def id");
-      let def = InstanceDef::Intrinsic(def_id);
-      let substs = tcx.intern_substs(&[]);
-
-      Some(Instance {
-        def,
-        substs,
-      })
+      let id = self.kernel_instance();
+      let instance = kid_did.convert_kernel_instance(tcx, id)
+        .expect("failed to convert kernel instance to rustc instance");
+      Some(instance)
     });
   }
 
@@ -412,12 +389,13 @@ impl fmt::Display for WaveBarrier {
 
 pub struct AmdGcnKillDetail;
 impl common::PlatformImplDetail for AmdGcnKillDetail {
-  fn kernel_id() -> KernelId {
+  fn kernel_instance() -> KernelInstance {
     fn kill() -> ! {
       // the real intrinsic needs a single argument.
       amdgcn_intrinsics::amdgcn_kill(false);
     }
-    kernel_id_for(&kill)
+    kill.kernel_instance()
+      .unwrap()
   }
 }
 
