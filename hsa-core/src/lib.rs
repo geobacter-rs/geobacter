@@ -19,6 +19,7 @@ extern crate legionella_shared_defs as shared_defs;
 #[macro_use]
 pub mod macros;
 
+pub mod intrinsics;
 pub mod kernel;
 pub mod platform;
 pub mod ptr;

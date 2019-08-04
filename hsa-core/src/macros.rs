@@ -11,7 +11,7 @@ macro_rules! host_unreachable {
       unreachable!();
     } else {
       #[allow(unused_unsafe)]
-      unsafe { ::std::intrinsics::abort() };
+      unsafe { $crate::intrinsics::__legionella_kill() };
     }
   });
   ($msg:expr) => ({
@@ -19,7 +19,7 @@ macro_rules! host_unreachable {
       unreachable!($msg);
     } else {
       #[allow(unused_unsafe)]
-      unsafe { ::std::intrinsics::abort() };
+      unsafe { $crate::intrinsics::__legionella_kill() };
     }
   });
   ($msg:expr,) => ({
@@ -27,7 +27,7 @@ macro_rules! host_unreachable {
       unreachable!($msg,);
     } else {
       #[allow(unused_unsafe)]
-      unsafe { ::std::intrinsics::abort() };
+      unsafe { $crate::intrinsics::__legionella_kill() };
     }
   });
   ($fmt:expr, $($arg:tt)*) => ({
@@ -35,7 +35,7 @@ macro_rules! host_unreachable {
       unreachable!($fmt, $($arg)*);
     } else {
       #[allow(unused_unsafe)]
-      unsafe { ::std::intrinsics::abort() };
+      unsafe { $crate::intrinsics::__legionella_kill() };
     }
   });
 }
@@ -46,7 +46,7 @@ macro_rules! host_unimplemented {
       unimplemented!();
     } else {
       #[allow(unused_unsafe)]
-      unsafe { ::std::intrinsics::abort() };
+      unsafe { $crate::intrinsics::__legionella_kill() };
     }
   });
   ($msg:expr) => ({
@@ -54,7 +54,7 @@ macro_rules! host_unimplemented {
       unimplemented!($msg);
     } else {
       #[allow(unused_unsafe)]
-      unsafe { ::std::intrinsics::abort() };
+      unsafe { $crate::intrinsics::__legionella_kill() };
     }
   });
   ($msg:expr,) => ({
@@ -62,7 +62,7 @@ macro_rules! host_unimplemented {
       unimplemented!($msg,);
     } else {
       #[allow(unused_unsafe)]
-      unsafe { ::std::intrinsics::abort() };
+      unsafe { $crate::intrinsics::__legionella_kill() };
     }
   });
   ($fmt:expr, $($arg:tt)*) => ({
@@ -70,7 +70,7 @@ macro_rules! host_unimplemented {
       unimplemented!($fmt, $($arg)*);
     } else {
       #[allow(unused_unsafe)]
-      unsafe { ::std::intrinsics::abort() };
+      unsafe { $crate::intrinsics::__legionella_kill() };
     }
   });
 }
@@ -83,7 +83,7 @@ macro_rules! host_assert {
       // $cond is false
       if !$crate::platform::is_host() {
         #[allow(unused_unsafe)]
-        unsafe { ::std::intrinsics::abort() };
+        unsafe { $crate::intrinsics::__legionella_kill() };
       }
       false
     });
@@ -93,7 +93,7 @@ macro_rules! host_assert {
       // $cond is false
       if !$crate::platform::is_host() {
         #[allow(unused_unsafe)]
-        unsafe { ::std::intrinsics::abort() };
+        unsafe { $crate::intrinsics::__legionella_kill() };
       }
       false
     });
@@ -104,7 +104,7 @@ macro_rules! host_assert {
       if !$crate::platform::is_host() {
         // no printing :(
         #[allow(unused_unsafe)]
-        unsafe { ::std::intrinsics::abort() };
+        unsafe { $crate::intrinsics::__legionella_kill() };
       }
       false
     }, $($arg)+);
@@ -116,13 +116,19 @@ macro_rules! host_assert_eq {
   ($left:expr, $right:expr) => ({
     match (&$left, &$right) {
       (left_val, right_val) => {
-        if !(*left_val == *right_val) && $crate::platform::is_host() {
-          // The reborrows below are intentional. Without them, the stack slot for the
-          // borrow is initialized even before the values are compared, leading to a
-          // noticeable slow down.
-          panic!(r#"assertion failed: `(left == right)`
+        if !(*left_val == *right_val) {
+          if $crate::platform::is_host() {
+            // The reborrows below are intentional. Without them, the stack slot for the
+            // borrow is initialized even before the values are compared, leading to a
+            // noticeable slow down.
+            panic!(r#"assertion failed: `(left == right)`
   left: `{:?}`,
- right: `{:?}`"#, &*left_val, &*right_val)
+ right: `{:?}`"#, &*left_val, &*right_val);
+          } else {
+            // no printing :(
+            #[allow(unused_unsafe)]
+            unsafe { $crate::intrinsics::__legionella_kill() };
+          }
         }
       }
     }
@@ -133,14 +139,20 @@ macro_rules! host_assert_eq {
   ($left:expr, $right:expr, $($arg:tt)+) => ({
     match (&$left, &$right) {
       (left_val, right_val) => {
-        if !(*left_val == *right_val) && $crate::platform::is_host() {
-          // The reborrows below are intentional. Without them, the stack slot for the
-          // borrow is initialized even before the values are compared, leading to a
-          // noticeable slow down.
-          panic!(r#"assertion failed: `(left == right)`
+        if !(*left_val == *right_val) {
+          if $crate::platform::is_host() {
+            // The reborrows below are intentional. Without them, the stack slot for the
+            // borrow is initialized even before the values are compared, leading to a
+            // noticeable slow down.
+            panic!(r#"assertion failed: `(left == right)`
   left: `{:?}`,
  right: `{:?}`"#, &*left_val, &*right_val,
-                 format_args!($($arg)+))
+                   format_args!($($arg)+));
+          } else {
+            // no printing :(
+            #[allow(unused_unsafe)]
+            unsafe { $crate::intrinsics::__legionella_kill() };
+          }
         }
       }
     }
@@ -152,13 +164,19 @@ macro_rules! host_assert_ne {
   ($left:expr, $right:expr) => ({
     match (&$left, &$right) {
       (left_val, right_val) => {
-        if *left_val == *right_val && $crate::platform::is_host() {
-          // The reborrows below are intentional. Without them, the stack slot for the
-          // borrow is initialized even before the values are compared, leading to a
-          // noticeable slow down.
-          panic!(r#"assertion failed: `(left != right)`
+        if *left_val == *right_val {
+          if $crate::platform::is_host() {
+            // The reborrows below are intentional. Without them, the stack slot for the
+            // borrow is initialized even before the values are compared, leading to a
+            // noticeable slow down.
+            panic!(r#"assertion failed: `(left != right)`
   left: `{:?}`,
  right: `{:?}`"#, &*left_val, &*right_val)
+          } else {
+            // no printing :(
+            #[allow(unused_unsafe)]
+            unsafe { $crate::intrinsics::__legionella_kill() };
+          }
         }
       }
     }
@@ -169,14 +187,20 @@ macro_rules! host_assert_ne {
   ($left:expr, $right:expr, $($arg:tt)+) => ({
     match (&$left, &$right) {
       (left_val, right_val) => {
-        if *left_val == *right_val && $crate::platform::is_host() {
-          // The reborrows below are intentional. Without them, the stack slot for the
-          // borrow is initialized even before the values are compared, leading to a
-          // noticeable slow down.
-          panic!(r#"assertion failed: `(left != right)`
+        if *left_val == *right_val {
+          if $crate::platform::is_host() {
+            // The reborrows below are intentional. Without them, the stack slot for the
+            // borrow is initialized even before the values are compared, leading to a
+            // noticeable slow down.
+            panic!(r#"assertion failed: `(left != right)`
   left: `{:?}`,
  right: `{:?}`"#, &*left_val, &*right_val,
-                 format_args!($($arg)+))
+                   format_args!($($arg)+));
+          } else {
+            // no printing :(
+            #[allow(unused_unsafe)]
+            unsafe { $crate::intrinsics::__legionella_kill() };
+          }
         }
       }
     }
