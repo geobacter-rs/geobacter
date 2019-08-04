@@ -57,6 +57,8 @@ impl PlatformCodegen for Codegenner {
       into.insert(intr);
     }
     into.insert(DispatchPtr);
+    into.insert(Barrier);
+    into.insert(WaveBarrier);
     let i: intrinsics_common::WorkItemKill<intrinsics::AmdGcnKillDetail> = Default::default();
     into.insert(i);
   }
