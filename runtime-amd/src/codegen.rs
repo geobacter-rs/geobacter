@@ -148,7 +148,7 @@ impl PlatformCodegen for Codegenner {
         cmd
       };
 
-      let obj = tdir.join("obj.o");
+      let obj = tdir.join("codegen.o");
 
       let mut llc = llc_cmd();
       llc.arg("-filetype=obj")
