@@ -5,7 +5,7 @@
 use std::cmp;
 use std::fmt;
 use std::hash::*;
-use std::marker::{PhantomData, };
+use std::marker::{PhantomData, Unsize, };
 use std::mem::transmute;
 use std::ops::*;
 use std::ptr::{NonNull as StdNonNull, slice_from_raw_parts,
@@ -160,6 +160,16 @@ impl<T> Ptr<T>
     Ptr {
       host: self.host.add(count),
       accel: self.accel.add(count),
+    }
+  }
+
+  pub fn coerce_unsized<U>(self) -> Ptr<U>
+    where T: Unsize<U>,
+          U: ?Sized,
+  {
+    Ptr {
+      host: self.host as *const _,
+      accel: self.accel as *const _,
     }
   }
 }
