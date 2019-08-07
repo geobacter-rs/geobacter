@@ -13,122 +13,22 @@ use std::slice::{from_raw_parts, from_raw_parts_mut, SliceIndex,
                  Iter, IterMut, };
 
 use crate::ptr::{SlicePtr, Ptr, NonNull, };
-use ref_::{Mut, RefTy, AccelRefRaw, AccelRefRaw2};
+use ref_::{Mut, AccelRefRaw};
 
 // TODO use <*const T x 2> to compute the slice offsets.
 
-pub trait SliceTy<'a>: RefTy<'a> {
-  type ElementTy: Sized;
-}
-impl<'a, T> SliceTy<'a> for &'a [T]
-  where T: Sized + 'a,
-{
-  type ElementTy = T;
-}
-impl<'a, T> SliceTy<'a> for &'a mut [T]
-  where T: Sized + 'a,
-{
-  type ElementTy = T;
-}
-
-pub type AccelRefSlice<'a, T> = AccelRefRaw<'a, &'a [T]>;
-pub type AccelMutSlice<'a, T> = AccelRefRaw<'a, &'a mut [T]>;
-
-/*impl<'a, T> AccelSliceRaw<'a, &'a [T]>
-  where T: Sized + 'a,
-{ }
-
-impl<'a, T> Copy for AccelSliceRaw<'a, &'a [T]>
-  where T: SliceTy<'a> + Copy,
-{ }
-impl<'a, T> Clone for AccelSliceRaw<'a, &'a [T]>
-  where T: SliceTy<'a> + Copy,
-{
-  fn clone(&self) -> Self { *self }
-}
-impl<'a, T> fmt::Debug for AccelSliceRaw<'a, &'a [T]>
-  where T: SliceTy<'a> + fmt::Debug,
-{
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    fmt::Debug::fmt(&self.0, f)
-  }
-}
-impl<'a, T> Eq for AccelSliceRaw<'a, &'a [T]>
-  where T: SliceTy<'a> + Eq,
-{ }
-impl<'a, 'b, T, U> PartialEq<AccelSliceRaw<'a, &'a [U]>> for AccelSliceRaw<'a, &'a [T]>
-  where T: SliceTy<'a> + PartialEq<U>,
-        U: SliceTy<'b>
-{
-  fn eq(&self, rhs: &AccelSliceRaw<'a, &'a [U]>) -> bool { self.0 == rhs.0 }
-}
-impl<'a, T> Ord for AccelSliceRaw<'a, &'a [T]>
-  where T: SliceTy<'a> + Ord,
-{
-  fn cmp(&self, rhs: &Self) -> cmp::Ordering {
-    self.0.cmp(&rhs.0)
-  }
-}
-impl<'a, 'b, T, U> PartialOrd<AccelSliceRaw<'a, &'a [U]>> for AccelSliceRaw<'a, &'a [T]>
-  where T: SliceTy<'a> + PartialOrd<U>,
-        U: SliceTy<'b>
-{
-  fn partial_cmp(&self, rhs: &AccelSliceRaw<'a, &'a [U]>) -> Option<cmp::Ordering> {
-    self.0.partial_cmp(&rhs.0)
-  }
-}
-impl<'a, T> fmt::Pointer for AccelSliceRaw<'a, &'a [T]>
-  where T: SliceTy<'a> + fmt::Pointer,
-{
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    fmt::Pointer::fmt(&self.0, f)
-  }
-}*/
-/// XXX this still marginally unsafe: we don't check that the pointer
-/// is actually accessible by the running processor, ie the pointer could
-/// be accessible from a different accelerator.
-/// TODO add intrinsic to get the running accelerator id.
-/// Even if such intrinsic existed,
-/// `size_of::<&[T]>() == size_of::<AccelRefRaw<&[T]>>()` must hold.
-/*impl<'a, T> Deref for AccelSliceRaw<'a, &'a [T]>
-  where &'a [T]: SliceTy<'a>,
-{
-  type Target = [T];
-  fn deref(&self) -> &[T] {
-    assert!(!is_host());
-    self.0
-  }
-}
-impl<'a, T> Deref for AccelSliceRaw<'a, &'a mut [T]>
-  where &'a mut [T]: SliceTy<'a>,
-{
-  type Target = [T];
-  fn deref(&self) -> &[T] {
-    assert!(!is_host());
-    self.0
-  }
-}
-impl<'a, T> DerefMut for AccelSliceRaw<'a, &'a mut [T]>
-  where &'a mut [T]: SliceTy<'a>,
-{
-  fn deref_mut(&mut self) -> &mut [T] {
-    assert!(!is_host());
-    self.0
-  }
-}*/
-
-impl<T, I> Index<I> for AccelRefRaw2<[T]>
+impl<T, I> Index<I> for AccelRefRaw<[T]>
   where T: Sized,
         I: SliceIndex<[T]>,
 {
-  type Output = AccelRefRaw2<I::Output>;
+  type Output = AccelRefRaw<I::Output>;
   fn index(&self, index: I) -> &Self::Output {
     unsafe {
       transmute(Index::index(&**self, index))
     }
   }
 }
-impl<T, I> IndexMut<I> for AccelRefRaw2<[T]>
+impl<T, I> IndexMut<I> for AccelRefRaw<[T]>
   where T: Sized,
         I: SliceIndex<[T]>,
 {

@@ -13,9 +13,8 @@ use std::ptr::{NonNull as StdNonNull, slice_from_raw_parts,
 use std::slice::{from_raw_parts, SliceIndex, };
 
 use crate::platform::is_host;
-use crate::ref_::{Ref, Mut};
+use crate::ref_::{Ref, Mut, AccelRefRaw, };
 use crate::slice::{SliceRef, SliceMut};
-use ref_::AccelRefRaw2;
 
 pub trait PtrTy
   where Self: fmt::Debug + fmt::Pointer,
@@ -262,10 +261,10 @@ impl<T> AccelNonNull<T>
   }
   pub fn is_null(self) -> bool { false }
   pub const fn as_ptr(self) -> *mut T { self.0.as_ptr() }
-  pub unsafe fn as_ref<'a>(self) -> &'a AccelRefRaw2<T> {
+  pub unsafe fn as_ref<'a>(self) -> &'a AccelRefRaw<T> {
     transmute(self.0.as_ref())
   }
-  pub unsafe fn as_mut<'a>(mut self) -> &'a mut AccelRefRaw2<T> {
+  pub unsafe fn as_mut<'a>(mut self) -> &'a mut AccelRefRaw<T> {
     transmute(self.0.as_mut())
   }
   pub const fn cast<U>(self) -> AccelNonNull<U>
@@ -292,10 +291,10 @@ impl<T> AccelUnique<T>
   }
   pub fn is_null(self) -> bool { false }
   pub const fn as_ptr(self) -> *mut T { self.0.as_ptr() }
-  pub unsafe fn as_ref(&self) -> &AccelRefRaw2<T> {
+  pub unsafe fn as_ref(&self) -> &AccelRefRaw<T> {
     transmute(self.0.as_ref())
   }
-  pub unsafe fn as_mut(&mut self) -> &mut AccelRefRaw2<T> {
+  pub unsafe fn as_mut(&mut self) -> &mut AccelRefRaw<T> {
     transmute(self.0.as_mut())
   }
 }
