@@ -157,15 +157,13 @@ impl PlatformCodegen for Codegenner {
 
       info!("finished running llc");
 
-      if log::log_enabled!(log::Level::Debug) {
-        // run llc again, but write asm this time
-        let mut llc = llc_cmd();
+      // run llc again, but write asm this time
+      let mut llc = llc_cmd();
 
-        llc.arg("-filetype=asm")
-          .arg("-o").arg(tdir.join("obj.S"));
+      llc.arg("-filetype=asm")
+        .arg("-o").arg(tdir.join("codegen.s"));
 
-        run_cmd(llc)?;
-      }
+      run_cmd(llc)?;
 
       let mut b = Vec::new();
       File::open(&obj)?.read_to_end(&mut b)?;
