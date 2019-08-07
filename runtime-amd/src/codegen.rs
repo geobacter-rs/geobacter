@@ -143,7 +143,8 @@ impl PlatformCodegen for Codegenner {
           .arg(&linked_bc)
           .arg(format!("-mcpu={}", target_desc.target.options.cpu))
           .arg(format!("-mattr={}", target_desc.target.options.features))
-          .arg("-relocation-model=pic");
+          .arg("-relocation-model=pic")
+          .arg("-O3");
         cmd
       };
 
