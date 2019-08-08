@@ -47,6 +47,8 @@ unsafe impl Sync for Context { }
 
 impl Context {
   pub fn new() -> Result<Context, Box<dyn Error>> {
+    crate::utils::env::initialize();
+
     crate::rustc_driver::init_rustc_env_logger();
     let LoadedCrateMetadata {
       globals,

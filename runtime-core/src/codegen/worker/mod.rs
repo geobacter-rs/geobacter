@@ -67,6 +67,7 @@ use super::{PlatformCodegen, CodegenComms, PKernelDesc, };
 use super::products::*;
 use crate::codegen::{PlatformIntrinsicInsert, };
 use crate::metadata::{CrateMetadataLoader, CrateMetadata, DummyMetadataLoader, CrateNameHash};
+use crate::utils::env::{use_llc, print_opt_remarks};
 
 const CRATE_NAME: &'static str = "legionella-cross-codegen";
 
@@ -492,7 +493,7 @@ impl<P> WorkerTranslatorData<P>
       out_filestem: "codegen.elf".into(),
       single_output_file: None,
       extra: "".into(),
-      outputs: output_types(),
+      outputs: sess.opts.output_types.clone(),
     };
 
     let map_crate = rustc::hir::map::map_crate(&sess, cstore,
@@ -612,21 +613,6 @@ impl<P> WorkerTranslatorData<P>
     Ok(results)
   }
 }
-/// TODO some targets don't have LLVM target machines. Handle this.
-fn output_types() -> rustc::session::config::OutputTypes {
-  use rustc::session::config::*;
-
-  let output = (OutputType::Bitcode, None);
-  let ir_out = (OutputType::LlvmAssembly, None);
-  let asm = (OutputType::Assembly, None);
-  let obj = (OutputType::Object, None);
-  let mut out = Vec::new();
-  out.push(output);
-  out.push(ir_out);
-  out.push(asm);
-  out.push(obj);
-  OutputTypes::new(&out[..])
-}
 
 pub fn with_rustc_session<F, R>(f: F) -> R
   where F: FnOnce(rustc::session::Session) -> R + sync::Send,
@@ -650,13 +636,35 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
   opts.crate_types.push(CrateType::Cdylib);
   // We need to have the tcx build the def_path_hash_to_def_id map:
   opts.debugging_opts.query_dep_graph = true;
-  opts.output_types = output_types();
   opts.optimize = OptLevel::No;
   opts.optimize = OptLevel::Aggressive;
+
+  let output = (OutputType::Bitcode, None);
+  let ir_out = (OutputType::LlvmAssembly, None);
+  let mut out = Vec::new();
+  out.push(output);
+  out.push(ir_out);
+
+  if opts.optimize == OptLevel::Aggressive && !use_llc() {
+    // prevent LLVM from taking us down if we're not optimizing:
+    let asm = (OutputType::Assembly, None);
+    let obj = (OutputType::Object, None);
+    out.push(asm);
+    out.push(obj);
+  }
+  opts.output_types = OutputTypes::new(&out);
+
+  let print_remarks = print_opt_remarks();
+  if print_remarks {
+    opts.debuginfo = DebugInfo::Limited;
+  }
   opts.cg.lto = LtoCli::No;
   opts.cg.panic = Some(PanicStrategy::Abort);
   opts.cg.incremental = None;
   opts.cg.overflow_checks = Some(false);
+  if print_remarks {
+    opts.cg.remark = Passes::All;
+  }
   opts.cli_forced_codegen_units = Some(1);
   opts.incremental = None;
   opts.debugging_opts.verify_llvm_ir = false;
@@ -666,7 +674,7 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
   opts.cg.no_prepopulate_passes = false;
   if opts.cg.no_prepopulate_passes {
     opts.cg.passes.push("name-anon-globals".into());
-  } else {
+  } else if opts.optimize != OptLevel::No {
     // Should we run this unconditionally?
     opts.cg.passes.push("wholeprogramdevirt".into());
     opts.cg.passes.push("speculative-execution".into());
@@ -674,6 +682,9 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
   opts.debugging_opts.print_llvm_passes = false;
   opts.cg.llvm_args.push("-expensive-combines".into());
   opts.cg.llvm_args.push("-spec-exec-only-if-divergent-target".into());
+  opts.cg.llvm_args.push("-amdgpu-early-inline-all".into());
+  opts.cg.llvm_args.push("-amdgpu-prelink".into());
+  opts.cg.llvm_args.push("-sroa-strict-inbounds".into());
   opts.debugging_opts.polly =
     opts.optimize == OptLevel::Aggressive;
   opts.cg.llvm_args.push("-polly-run-inliner".into());

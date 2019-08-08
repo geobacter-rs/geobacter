@@ -8,6 +8,8 @@ use std::sync::mpsc::Sender;
 
 pub use lintrinsics::hash::*;
 
+pub mod env;
+
 pub trait CreateIfNotExists: AsRef<Path> {
   fn create_if_not_exists(&self) -> io::Result<()> {
     let p = self.as_ref();
