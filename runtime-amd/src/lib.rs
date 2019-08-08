@@ -1,21 +1,12 @@
 
 //! A runtime crate for AMDGPUs.
 //!
-//! Note: for due to `hsa-runtime`, your AMDGPU must support the
-//! full profile. `hsa-runtime` forces the profile to full if a
-//! special note section isn't found/valid and we don't yet
-//! generate it for you. There is no fundamental reason you can't
-//! use the base profile with Legionella (the patch to `hsa-runtime`
-//! is just removing three lines), though ensuring the correct
-//! host/agent pointers are used is more painful vs the full profile.
-//!
-//! TODO XXX TODO We should do checking and enforcement of device
-//! profiles. The full profile allows host pointers to be used all
-//! willy-nilly, but the base profile requires explicit page locking
-//! and correct agent local pointers.
+//! Includes WIP support for management of device resources via signals
 //!
 //! TODO Use the `hsaKmt` API directly. The HSA runtime does some
-//! global(!) locking which we could avoid because Rust is awesome.
+//! global(!) locking which we could avoid because Rust is awesome. Since
+//! HSA is pretty much AMD only, might as well go AMD only and program
+//! their GPUs more directly.
 //!
 
 #![feature(rustc_private)]
