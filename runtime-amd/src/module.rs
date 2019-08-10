@@ -317,7 +317,7 @@ impl<F, Dim, S, MD> Invoc<F, Dim, S, MD>
                                                         args_pool: P)
     -> Result<InvocCompletion<P, A, Q, S, CS>, CallError>
     where F: Fn<A, Output = ()>,
-          A: Sized + Unpin,
+          A: Copy + Sized + Unpin,
           P: Deref<Target = ArgsPool>,
           Q: Deref<Target = T>,
           T: IQueue<K>,
@@ -340,7 +340,7 @@ impl<F, Dim, S, MD> Invoc<F, Dim, S, MD>
                                                             args_pool: P)
     -> Result<InvocCompletion<P, A, Q, S, CS>, CallError>
     where F: Fn<A, Output = ()>,
-          A: Sized + Unpin,
+          A: Copy + Sized + Unpin,
           P: Deref<Target = ArgsPool>,
           Q: Deref<Target = T>,
           T: IQueue<K>,
