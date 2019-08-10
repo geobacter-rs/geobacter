@@ -658,6 +658,8 @@ impl<P, A, Q, DS, S> InvocCompletion<P, A, Q, DS, S>
 {
   /// Execute a device side device -> host copy after this dispatch
   /// completes. `completion` becomes the new invoc completion signal.
+  /// You need to initialize `completion` such that it's initial value reflects
+  /// every request.
   pub unsafe fn async_copy_to_host<S2, T>(self,
                                           device: &HsaAmdGpuAccel,
                                           accel: MemoryPoolPtr<T>,
@@ -672,6 +674,8 @@ impl<P, A, Q, DS, S> InvocCompletion<P, A, Q, DS, S>
   }
   /// Execute a device side device -> host copy after this dispatch
   /// completes. `completion` becomes the new invoc completion signal.
+  /// You need to initialize `completion` such that it's initial value reflects
+  /// every request.
   pub unsafe fn async_copies_to_host<S2, T>(mut self,
                                             device: &HsaAmdGpuAccel,
                                             ptrs: impl Iterator<Item = (MemoryPoolPtr<T>,
