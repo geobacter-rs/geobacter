@@ -660,11 +660,12 @@ impl<P, A, Q, DS, S> InvocCompletion<P, A, Q, DS, S>
   /// completes. `completion` becomes the new invoc completion signal.
   pub unsafe fn async_copy_to_host<S2, T>(self,
                                           device: &HsaAmdGpuAccel,
-                                          accel: MemoryPoolPtr<[T]>,
-                                          host: MemoryPoolPtr<[T]>,
+                                          accel: MemoryPoolPtr<T>,
+                                          host: MemoryPoolPtr<T>,
                                           completion: S2)
     -> Result<InvocCompletion<P, A, Q, DS, S2>, Box<dyn Error>>
     where S2: SignalHandle,
+          T: ?Sized,
   {
     self.async_copies_to_host(device, Some((accel, host)).into_iter(),
                               completion)
@@ -673,11 +674,12 @@ impl<P, A, Q, DS, S> InvocCompletion<P, A, Q, DS, S>
   /// completes. `completion` becomes the new invoc completion signal.
   pub unsafe fn async_copies_to_host<S2, T>(mut self,
                                             device: &HsaAmdGpuAccel,
-                                            ptrs: impl Iterator<Item = (MemoryPoolPtr<[T]>,
-                                                                        MemoryPoolPtr<[T]>)>,
+                                            ptrs: impl Iterator<Item = (MemoryPoolPtr<T>,
+                                                                        MemoryPoolPtr<T>)>,
                                             completion: S2)
     -> Result<InvocCompletion<P, A, Q, DS, S2>, Box<dyn Error>>
     where S2: SignalHandle,
+          T: ?Sized,
   {
     let InvocCompletionInner {
       storage,
