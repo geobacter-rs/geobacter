@@ -149,7 +149,7 @@ pub fn main() {
           .expect("HsaAmdGpuAccel::async_copy_into");
       }
 
-      let mut invoc: Invoc<_, _, _, DeviceSignal> =
+      let mut invoc: Invoc<_, _, DeviceSignal> =
         Invoc::new(&accel, vector_foreach)
           .expect("Invoc::new");
       invoc.add_dep(async_copy_signal);

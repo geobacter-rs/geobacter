@@ -284,7 +284,7 @@ pub struct KernelDesc {
 }
 impl KernelDesc {
   pub fn new<F, Args, Ret>(_f: &F) -> Self
-    where F: Fn<Args, Output = Ret>,
+    where F: Fn<Args, Output = Ret> + ?Sized,
   {
     KernelDesc { }
   }

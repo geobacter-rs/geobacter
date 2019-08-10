@@ -37,16 +37,20 @@ use hsa_rt::ext::amd::MemoryPoolPtr;
 use hsa_rt::signal::SignalRef;
 
 #[derive(Clone, Copy)]
-pub struct Function<F> {
+pub struct Function<F>
+  where F: ?Sized,
+{
   instance: KernelInstance,
   context_data: ModuleContextData,
   /// Keep this at the end:
   f: F,
 }
 
-impl<F> Function<F> {
+impl<F> Function<F>
+  where F: ?Sized,
+{
   pub fn new<Args, Ret>(f: F) -> Self
-    where F: Fn<Args, Output = Ret>,
+    where F: Fn<Args, Output = Ret> + Sized,
   {
     Function {
       instance: KernelInstance::get(&f),
@@ -63,10 +67,15 @@ impl<F> Function<F> {
     }
   }
 }
+impl<F1, F2> CoerceUnsized<Function<F2>> for Function<F1>
+  where F1: CoerceUnsized<F2> + ?Sized,
+        F2: ?Sized,
+{ }
 
 #[derive(Clone, Copy)]
 pub struct FuncModule<F, MD = Arc<HsaModuleData>>
-  where MD: Deref<Target = HsaModuleData>,
+  where F: ?Sized,
+        MD: Deref<Target = HsaModuleData>,
 {
   /// XXX this isn't actually used for checking anything
   /// This is because only the device queue is used for dispatching;
@@ -86,10 +95,12 @@ pub struct FuncModule<F, MD = Arc<HsaModuleData>>
   /// Keep this at the end:
   f: Function<F>,
 }
-impl<F> FuncModule<F> {
+impl<F> FuncModule<F>
+  where F: ?Sized,
+{
   pub fn new<Args, Ret>(accel: &Arc<HsaAmdGpuAccel>, f: F)
     -> Result<Self, Box<dyn Error>>
-    where F: Fn<Args, Output=Ret>,
+    where F: Fn<Args, Output = Ret> + Sized,
   {
     let f = Function::new(f);
     let context_data = f.context_data
@@ -160,74 +171,12 @@ impl<F> FuncModule<F> {
   pub unsafe fn no_release_fence(&mut self) {
     self.set_release_fence(FenceScope::None);
   }
-
-  /// Use this if you'd like to keep thread local handles to codegen results for
-  /// quick invocations, particularly if only a single device is used per thread.
-  pub fn erase_f(self) -> FuncModule<()> {
-    let FuncModule {
-      expected_accel,
-      module_data,
-      dynamic_group_size,
-      dynamic_private_size,
-      begin_fence,
-      end_fence,
-      f,
-    } = self;
-
-    FuncModule {
-      expected_accel,
-      module_data,
-      dynamic_group_size,
-      dynamic_private_size,
-      begin_fence,
-      end_fence,
-      f: Function {
-        instance: f.instance,
-        context_data: f.context_data,
-        f: (),
-      },
-    }
-  }
 }
-
-impl<MD> FuncModule<(), MD>
-  where MD: Deref<Target = HsaModuleData>,
-{
-  /// Safe because we enforce (via the compiler generated kernel instance)
-  /// that `F` matches the original.
-  pub fn unerase_f<F, Args, Ret>(&self, f: F)
-    -> Result<FuncModule<F, &HsaModuleData>, String>
-    where F: Fn<Args, Output = Ret> + Sized,
-  {
-    let found = Function::new(f);
-
-    let FuncModule {
-      expected_accel,
-      module_data,
-      dynamic_group_size,
-      dynamic_private_size,
-      begin_fence,
-      end_fence,
-      f,
-    } = self;
-    if f.instance != found.instance {
-      // TODO return some Error enum instead of a string.
-      let msg = format!("expected {:?}, found {:?}",
-                        f.instance, found.instance);
-      return Err(msg);
-    }
-
-    Ok(FuncModule {
-      expected_accel: *expected_accel,
-      module_data: &**module_data,
-      dynamic_group_size: *dynamic_group_size,
-      dynamic_private_size: *dynamic_private_size,
-      begin_fence: *begin_fence,
-      end_fence: *end_fence,
-      f: found,
-    })
-  }
-}
+impl<F1, F2, MD> CoerceUnsized<FuncModule<F2, MD>> for FuncModule<F1, MD>
+  where F1: CoerceUnsized<F2> + ?Sized,
+        F2: ?Sized,
+        MD: Deref<Target = HsaModuleData>,
+{ }
 
 #[derive(Debug)]
 pub enum CallError {
@@ -248,21 +197,29 @@ impl From<QueueError> for CallError {
 }
 
 /// A trait so downstream crates don't need ndarray to use generic dims.
-pub trait LaunchDims: nd::IntoDimension + Clone { }
+pub trait LaunchDims: nd::IntoDimension + Clone {
+  fn default_unit() -> Self;
+}
 // HSA/AMDGPUs only support up to 3d, so that's all we're going to support here.
-impl LaunchDims for (usize, ) { }
-impl LaunchDims for (usize, usize, ) { }
-impl LaunchDims for (usize, usize, usize, ) { }
+impl LaunchDims for (usize, ) {
+  fn default_unit() -> Self { (1, ) }
+}
+impl LaunchDims for (usize, usize, ) {
+  fn default_unit() -> Self { (1, 1, ) }
+}
+impl LaunchDims for (usize, usize, usize, ) {
+  fn default_unit() -> Self { (1, 1, 1, ) }
+}
 
 #[derive(Clone)]
-pub struct Invoc<F, WGDim, GridDim, S = DeviceSignal, MD = Arc<HsaModuleData>>
-  where MD: Deref<Target = HsaModuleData>,
-        WGDim: LaunchDims,
-        GridDim: LaunchDims,
+pub struct Invoc<F, Dim, S = DeviceSignal, MD = Arc<HsaModuleData>>
+  where F: ?Sized,
+        MD: Deref<Target = HsaModuleData>,
+        Dim: LaunchDims,
         S: DeviceConsumable,
 {
-  pub workgroup_dim: WGDim,
-  pub grid_dim: GridDim,
+  pub workgroup_dim: Dim,
+  pub grid_dim: Dim,
 
   deps: Vec<S>,
 
@@ -270,28 +227,26 @@ pub struct Invoc<F, WGDim, GridDim, S = DeviceSignal, MD = Arc<HsaModuleData>>
   fmod: FuncModule<F, MD>,
 }
 
-impl<F, WGDim, GridDim, S> Invoc<F, WGDim, GridDim, S, Arc<HsaModuleData>>
-  where WGDim: LaunchDims,
-        GridDim: LaunchDims,
+impl<F, Dim, S> Invoc<F, Dim, S, Arc<HsaModuleData>>
+  where F: ?Sized,
+        Dim: LaunchDims,
         S: DeviceConsumable,
 {
   pub fn new<Args>(accel: &Arc<HsaAmdGpuAccel>, f: F)
     -> Result<Self, Box<dyn Error>>
     where F: Fn<Args, Output=()> + Sized,
           Args: Sized,
-          WGDim: Default,
-          GridDim: Default,
   {
     let fmod = FuncModule::new(accel, f)?;
     Ok(Invoc {
-      workgroup_dim: Default::default(),
-      grid_dim: Default::default(),
+      workgroup_dim: Dim::default_unit(),
+      grid_dim: Dim::default_unit(),
       deps: Vec::new(),
       fmod,
     })
   }
   pub fn new_dims<Args>(accel: &Arc<HsaAmdGpuAccel>,
-                        f: F, wg: WGDim, grid: GridDim)
+                        f: F, wg: Dim, grid: Dim)
     -> Result<Self, Box<dyn Error>>
     where F: Fn<Args, Output=()> + Sized,
           Args: Sized,
@@ -306,14 +261,14 @@ impl<F, WGDim, GridDim, S> Invoc<F, WGDim, GridDim, S, Arc<HsaModuleData>>
   }
 }
 
-impl<F, WGDim, GridDim, S, MD> Invoc<F, WGDim, GridDim, S, MD>
-  where MD: Deref<Target = HsaModuleData>,
-        WGDim: LaunchDims,
-        GridDim: LaunchDims,
+impl<F, Dim, S, MD> Invoc<F, Dim, S, MD>
+  where F: ?Sized,
+        MD: Deref<Target = HsaModuleData>,
+        Dim: LaunchDims,
         S: DeviceConsumable,
 {
   pub fn from<A>(fmod: FuncModule<F, MD>,
-                 wg: WGDim, grid: GridDim) -> Self
+                 wg: Dim, grid: Dim) -> Self
     where F: Fn<A, Output = ()> + Sized,
           A: Sized,
   {
@@ -326,14 +281,14 @@ impl<F, WGDim, GridDim, S, MD> Invoc<F, WGDim, GridDim, S, MD>
   }
 
 
-  pub fn workgroup_dims(&mut self, dim: WGDim) -> &mut Self
-    where WGDim: LaunchDims + Copy,
+  pub fn workgroup_dims(&mut self, dim: Dim) -> &mut Self
+    where Dim: LaunchDims + Copy,
   {
     self.workgroup_dim = dim;
     self
   }
-  pub fn grid_dims(&mut self, dim: GridDim) -> &mut Self
-    where GridDim: LaunchDims + Copy,
+  pub fn grid_dims(&mut self, dim: Dim) -> &mut Self
+    where Dim: LaunchDims + Copy,
   {
     self.grid_dim = dim;
     self
@@ -467,19 +422,19 @@ impl<F, WGDim, GridDim, S, MD> Invoc<F, WGDim, GridDim, S, MD>
     Ok(InvocCompletion(Some(inner)))
   }
 }
-impl<F, WGDim, GridDim, S, MD> Deref for Invoc<F, WGDim, GridDim, S, MD>
-  where MD: Deref<Target = HsaModuleData>,
+impl<F, WGDim, S, MD> Deref for Invoc<F, WGDim, S, MD>
+  where F: ?Sized,
+        MD: Deref<Target = HsaModuleData>,
         WGDim: LaunchDims,
-        GridDim: LaunchDims,
         S: DeviceConsumable,
 {
   type Target = FuncModule<F, MD>;
   fn deref(&self) -> &FuncModule<F, MD> { &self.fmod }
 }
-impl<F, WGDim, GridDim, S, MD> DerefMut for Invoc<F, WGDim, GridDim, S, MD>
-  where MD: Deref<Target = HsaModuleData>,
+impl<F, WGDim, S, MD> DerefMut for Invoc<F, WGDim, S, MD>
+  where F: ?Sized,
+        MD: Deref<Target = HsaModuleData>,
         WGDim: LaunchDims,
-        GridDim: LaunchDims,
         S: DeviceConsumable,
 {
   fn deref_mut(&mut self) -> &mut FuncModule<F, MD> { &mut self.fmod }
