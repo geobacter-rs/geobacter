@@ -666,7 +666,7 @@ pub struct DispatchPacket<'a, WGDim, GridDim, KernArg>
   pub scaquire_scope: FenceScope,
   pub screlease_scope: FenceScope,
   pub kernel_object: u64,
-  pub kernel_args: &'a mut KernArg,
+  pub kernel_args: &'a KernArg,
   pub completion_signal: Option<&'a SignalRef>,
 }
 

@@ -32,7 +32,7 @@ use crate::lrt_core::context::{ModuleContextData, PlatformModuleData, };
 
 use crate::HsaAmdGpuAccel;
 use crate::codegen::{Codegenner, KernelDesc, CodegenDesc};
-use crate::signal::{DeviceConsumable, DeviceSignal, HostConsumable, SignalHandle};
+use crate::signal::{DeviceConsumable, DeviceSignal, HostConsumable, SignalHandle, DepSignal};
 use hsa_rt::ext::amd::MemoryPoolPtr;
 use hsa_rt::signal::SignalRef;
 
@@ -232,10 +232,10 @@ impl<F, Dim, S> Invoc<F, Dim, S, Arc<HsaModuleData>>
         Dim: LaunchDims,
         S: DeviceConsumable,
 {
-  pub fn new<Args>(accel: &Arc<HsaAmdGpuAccel>, f: F)
+  pub fn new<A>(accel: &Arc<HsaAmdGpuAccel>, f: F)
     -> Result<Self, Box<dyn Error>>
-    where F: Fn<Args, Output=()> + Sized,
-          Args: Sized,
+    where F: for<'a> Fn(&'a A) + Sized,
+          A: Sized,
   {
     let fmod = FuncModule::new(accel, f)?;
     Ok(Invoc {
@@ -245,11 +245,11 @@ impl<F, Dim, S> Invoc<F, Dim, S, Arc<HsaModuleData>>
       fmod,
     })
   }
-  pub fn new_dims<Args>(accel: &Arc<HsaAmdGpuAccel>,
-                        f: F, wg: Dim, grid: Dim)
+  pub fn new_dims<A>(accel: &Arc<HsaAmdGpuAccel>,
+                     f: F, wg: Dim, grid: Dim)
     -> Result<Self, Box<dyn Error>>
-    where F: Fn<Args, Output=()> + Sized,
-          Args: Sized,
+    where F: for<'a> Fn(&'a A) + Sized,
+          A: Sized,
   {
     let fmod = FuncModule::new(accel, f)?;
     Ok(Invoc {
@@ -269,7 +269,7 @@ impl<F, Dim, S, MD> Invoc<F, Dim, S, MD>
 {
   pub fn from<A>(fmod: FuncModule<F, MD>,
                  wg: Dim, grid: Dim) -> Self
-    where F: Fn<A, Output = ()> + Sized,
+    where F: for<'a> Fn(&'a A) + Sized,
           A: Sized,
   {
     Invoc {
@@ -316,8 +316,8 @@ impl<F, Dim, S, MD> Invoc<F, Dim, S, MD>
                                                         completion: CS,
                                                         args_pool: P)
     -> Result<InvocCompletion<P, A, Q, S, CS>, CallError>
-    where F: Fn<A, Output = ()>,
-          A: Copy + Sized + Unpin,
+    where F: for<'a> Fn(&'a A),
+          A: Sized + Unpin,
           P: Deref<Target = ArgsPool>,
           Q: Deref<Target = T>,
           T: IQueue<K>,
@@ -339,8 +339,8 @@ impl<F, Dim, S, MD> Invoc<F, Dim, S, MD>
                                                             completion: &mut Option<CS>,
                                                             args_pool: P)
     -> Result<InvocCompletion<P, A, Q, S, CS>, CallError>
-    where F: Fn<A, Output = ()>,
-          A: Copy + Sized + Unpin,
+    where F: for<'a> Fn(&'a A),
+          A: Sized + Unpin,
           P: Deref<Target = ArgsPool>,
           Q: Deref<Target = T>,
           T: IQueue<K>,
@@ -349,10 +349,15 @@ impl<F, Dim, S, MD> Invoc<F, Dim, S, MD>
   {
     let kernel = &*self.fmod.module_data;
 
-    assert_eq!(kernel.desc.kernarg_segment_size, size_of::<A>());
+    assert_eq!(kernel.desc.kernarg_segment_size, size_of::<(&A,)>());
 
     let kernargs = args_pool.alloc::<A>();
     if kernargs.is_none() {
+      return Err(CallError::Oom);
+    }
+    // now alloc the kernargs ref:
+    let kernargs_ref = args_pool.alloc::<(&A, )>();
+    if kernargs_ref.is_none() {
       return Err(CallError::Oom);
     }
 
@@ -380,9 +385,12 @@ impl<F, Dim, S, MD> Invoc<F, Dim, S, MD>
       }
     }
 
-    let mut kernargs = kernargs.unwrap();
+    let kernargs = kernargs.unwrap();
     ::std::ptr::write(kernargs.as_ptr(),
                       args.take().unwrap());
+    let kernargs_ref = kernargs_ref.unwrap();
+    ::std::ptr::write(kernargs_ref.as_ptr(),
+                      (kernargs.as_ref(), ));
     // Ensure the writes to the kernel args are all the way to memory:
     atomic::fence(Ordering::SeqCst);
 
@@ -402,7 +410,7 @@ impl<F, Dim, S, MD> Invoc<F, Dim, S, MD>
         screlease_scope: fmod.end_fence.clone(),
         ordered: c.is_none(),
         kernel_object: kernel.kernel_object.get(),
-        kernel_args: kernargs.as_mut(),
+        kernel_args: kernargs_ref.as_ref(),
         completion_signal: c,
       };
 
