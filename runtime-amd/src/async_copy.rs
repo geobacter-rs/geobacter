@@ -183,6 +183,7 @@ impl<T, Src, Dst, DS, CS> DepSignal for AsyncCopy<T, Src, Dst, DS, CS>
   {
     f(&self.dest_data)
   }
+  unsafe fn peek_mut_resource(&mut self) -> &mut Self::Resource { &mut self.dest_data }
   unsafe fn unwrap_resource(self) -> Self::Resource {
     self.dest_data
   }

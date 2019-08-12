@@ -768,7 +768,35 @@ impl<P, A, Q, DS, S> HostConsumable for InvocCompletion<P, A, Q, DS, S>
         A: ?Sized,
 {
 }
+impl<P, A, Q, DS, S> DepSignal for InvocCompletion<P, A, Q, DS, S>
+  where P: Deref<Target = ArgsPool>,
+        DS: SignalHandle,
+        S: SignalHandle,
+        A: Unpin,
+{
+  type Resource = A;
 
+  unsafe fn peek_resource<F, R>(&self, f: F) -> R
+    where F: FnOnce(&Self::Resource) -> R,
+  {
+    f(self.inner().args.as_ref())
+  }
+  unsafe fn peek_mut_resource(&mut self) -> &mut Self::Resource {
+    self.0.as_mut().unwrap().args.as_mut()
+  }
+  unsafe fn unwrap_resource(mut self) -> Self::Resource {
+    use std::mem::MaybeUninit;
+    use std::ptr::copy_nonoverlapping;
+
+    let inner = self.0.take().expect("already dropped?");
+
+    let mut out = MaybeUninit::uninit();
+    copy_nonoverlapping(out.as_mut_ptr(),
+                        inner.args.as_ptr(),
+                        1);
+    out.assume_init()
+  }
+}
 impl<P, A, Q, DS, S> Drop for InvocCompletion<P, A, Q, DS, S>
   where P: Deref<Target = ArgsPool>,
         DS: SignalHandle,
@@ -797,7 +825,7 @@ impl<P, A, Q, DS, S> Drop for InvocCompletion<P, A, Q, DS, S>
       if !*waited && !::std::thread::panicking() {
         // fail loudly
         panic!("InvocCompletion w/ device completion signal \
-                uncomsumed (ie not used as a dep in another dispatch)!");
+                unconsumed (ie not used as a dep in another dispatch)!");
       } else {
         log::warn!("host panic has probably caused some leaked data! \
                     Program execution is undefined now!");

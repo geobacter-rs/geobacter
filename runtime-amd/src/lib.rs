@@ -694,15 +694,15 @@ impl HsaAmdGpuAccel {
     desc.kernel_abi = Abi::AmdGpuKernel;
 
     // we get the triple and gpu "cpu" from the name of the isa:
-    let (llvm_target, cpu) = {
+    let cpu = {
       let triple = &desc.isa_name();
       let idx = triple.rfind('-')
         .expect("expected at least one hyphen in the AMDGPU ISA name");
       assert_ne!(idx, triple.len(),
                  "AMDGPU ISA target triple has no cpu model, or something else weird");
-      (triple[..idx + 1].into(), triple[idx + 1..].into())
+      triple[idx + 1..].into()
     };
-    desc.target.llvm_target = llvm_target;
+    desc.target.llvm_target = "amdgcn-amd-amdhsa-amdgiz".into();
     desc.target.options.cpu = cpu;
 
     desc.target.options.features = "+dpp,+s-memrealtime".into();

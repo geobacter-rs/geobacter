@@ -186,7 +186,7 @@ pub trait DepSignal {
 
   unsafe fn peek_resource<F, R>(&self, f: F) -> R
     where F: FnOnce(&Self::Resource) -> R;
-  // unsafe fn peek_mut_resource(&mut self) -> &mut Self::Resource;
+  unsafe fn peek_mut_resource(&mut self) -> &mut Self::Resource;
   unsafe fn unwrap_resource(self) -> Self::Resource;
 
   /// Note: panics if the signal goes < 0
@@ -216,6 +216,10 @@ impl DepSignal for DeviceSignal {
   {
     f(&())
   }
+  unsafe fn peek_mut_resource(&mut self) -> &mut Self::Resource {
+    static mut S: () = ();
+    &mut S
+  }
 
   unsafe fn unwrap_resource(self) -> Self::Resource {
     ()
@@ -229,6 +233,10 @@ impl DepSignal for HostSignal {
   {
     f(&())
   }
+  unsafe fn peek_mut_resource(&mut self) -> &mut Self::Resource {
+    static mut S: () = ();
+    &mut S
+  }
 
   unsafe fn unwrap_resource(self) -> Self::Resource {
     ()
@@ -241,6 +249,10 @@ impl DepSignal for GlobalSignal {
     where F: FnOnce(&Self::Resource) -> R,
   {
     f(&())
+  }
+  unsafe fn peek_mut_resource(&mut self) -> &mut Self::Resource {
+    static mut S: () = ();
+    &mut S
   }
 
   unsafe fn unwrap_resource(self) -> Self::Resource {
@@ -271,6 +283,7 @@ impl<D, F, R> DepSignal for MapDepSignal<D, F>
   {
     unimplemented!();
   }
+  unsafe fn peek_mut_resource(&mut self) -> &mut Self::Resource { unimplemented!() }
   unsafe fn unwrap_resource(self) -> R {
     let dep = self.0.unwrap_resource();
     (self.1)(dep)
