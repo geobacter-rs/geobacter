@@ -164,6 +164,25 @@ pub struct RawPoolBox<T>(Unique<T>, MemoryPool)
 impl<T> RawPoolBox<T>
   where T: ?Sized,
 {
+  pub unsafe fn new_uninit(pool: MemoryPool)
+    -> Result<Self, HsaError>
+    where T: Sized,
+  {
+    let layout = Layout::new::<T>();
+
+    let pool_aligment = pool.alloc_alignment()?
+      .unwrap_or_default();
+    if pool_aligment < layout.align() {
+      return Err(HsaError::IncompatibleArguments);
+    }
+
+    let bytes = layout.size();
+    let ptr: StdNonNull<T> = pool.alloc_in_pool(bytes)?
+      .as_ptr()
+      .cast();
+    let ptr = Unique::new_unchecked(ptr.as_ptr());
+    Ok(RawPoolBox(ptr, pool))
+  }
   pub fn as_ptr(&self) -> *mut T {
     self.0.as_ptr()
   }

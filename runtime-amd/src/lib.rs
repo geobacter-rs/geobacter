@@ -430,6 +430,16 @@ impl HsaAmdGpuAccel {
                                           count)?;
     Ok(LocallyAccessiblePoolBox::from_raw_box_unchecked(rb))
   }
+  pub fn alloc_host_visible<T>(&self, v: T) -> Result<LocallyAccessiblePoolBox<T>, HsaError>
+    where T: Sized,
+  {
+    let rb = unsafe { RawPoolBox::new_uninit(self.host_lock_pool.clone())? };
+    let mut lapb: LocallyAccessiblePoolBox<T> = unsafe {
+      LocallyAccessiblePoolBox::from_raw_box_unchecked(rb)
+    };
+    unsafe { lapb.overwrite(v); }
+    Ok(lapb)
+  }
 
   /// Lock memory and give this device access. This memory is not able to be used
   /// for any async copies, sadly, due to HSA runtime limitations.
