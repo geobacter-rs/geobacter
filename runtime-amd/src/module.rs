@@ -36,46 +36,40 @@ use crate::signal::{DeviceConsumable, DeviceSignal, HostConsumable, SignalHandle
 use hsa_rt::ext::amd::MemoryPoolPtr;
 use hsa_rt::signal::SignalRef;
 
+/// Closures are *explicitly not supported*, so we don't keep the function
+/// around as a member or as a type param.
+/// This struct used to have an `F` param, but it was realized that this
+/// prevented selecting a kernel based on, eg, an enum and then using it
+/// as a value (where `F` wasn't specific to the function anymore).
+/// Closures have never been supported, so I decided to just drop `F`.
 #[derive(Clone, Copy)]
-pub struct Function<F>
-  where F: ?Sized,
-{
+pub struct Function {
   instance: KernelInstance,
   context_data: ModuleContextData,
-  /// Keep this at the end:
-  f: F,
+  desc: KernelDesc,
 }
 
-impl<F> Function<F>
-  where F: ?Sized,
-{
-  pub fn new<Args, Ret>(f: F) -> Self
+impl Function {
+  pub fn new<F, Args, Ret>(f: F) -> Self
     where F: Fn<Args, Output = Ret> + Sized,
   {
     Function {
       instance: KernelInstance::get(&f),
       context_data: ModuleContextData::get(&f),
-      f,
+      desc: KernelDesc::new(&f),
     }
   }
-  pub fn desc<Args, Ret>(&self) -> PKernelDesc<Codegenner>
-    where F: Fn<Args, Output = Ret>,
-  {
+  pub fn desc(&self) -> PKernelDesc<Codegenner> {
     core_codegen::KernelDesc {
       instance: self.instance.clone(),
-      platform_desc: KernelDesc::new(&self.f),
+      platform_desc: self.desc.clone(),
     }
   }
 }
-impl<F1, F2> CoerceUnsized<Function<F2>> for Function<F1>
-  where F1: CoerceUnsized<F2> + ?Sized,
-        F2: ?Sized,
-{ }
 
 #[derive(Clone, Copy)]
-pub struct FuncModule<F, MD = Arc<HsaModuleData>>
-  where F: ?Sized,
-        MD: Deref<Target = HsaModuleData>,
+pub struct FuncModule<Arg, MD = Arc<HsaModuleData>>
+  where MD: Deref<Target = HsaModuleData>,
 {
   /// XXX this isn't actually used for checking anything
   /// This is because only the device queue is used for dispatching;
@@ -92,15 +86,14 @@ pub struct FuncModule<F, MD = Arc<HsaModuleData>>
   begin_fence: FenceScope,
   end_fence: FenceScope,
 
-  /// Keep this at the end:
-  f: Function<F>,
+  f: Function,
+  /// To ensure we are only called with this argument type.
+  _arg: PhantomData<*const Arg>,
 }
-impl<F> FuncModule<F>
-  where F: ?Sized,
-{
-  pub fn new<Args, Ret>(accel: &Arc<HsaAmdGpuAccel>, f: F)
+impl<Arg> FuncModule<Arg> {
+  pub fn new<F>(accel: &Arc<HsaAmdGpuAccel>, f: F)
     -> Result<Self, Box<dyn Error>>
-    where F: Fn<Args, Output = Ret> + Sized,
+    where F: for<'a> Fn(&'a Arg) + Sized,
   {
     let f = Function::new(f);
     let context_data = f.context_data
@@ -117,6 +110,7 @@ impl<F> FuncModule<F>
       begin_fence: FenceScope::System,
       end_fence: FenceScope::System,
       f,
+      _arg: PhantomData,
     })
   }
 
@@ -172,11 +166,6 @@ impl<F> FuncModule<F>
     self.set_release_fence(FenceScope::None);
   }
 }
-impl<F1, F2, MD> CoerceUnsized<FuncModule<F2, MD>> for FuncModule<F1, MD>
-  where F1: CoerceUnsized<F2> + ?Sized,
-        F2: ?Sized,
-        MD: Deref<Target = HsaModuleData>,
-{ }
 
 #[derive(Debug)]
 pub enum CallError {
@@ -212,8 +201,8 @@ impl LaunchDims for (usize, usize, usize, ) {
 }
 
 #[derive(Clone)]
-pub struct Invoc<F, Dim, S = DeviceSignal, MD = Arc<HsaModuleData>>
-  where F: ?Sized,
+pub struct Invoc<Arg, Dim, S = DeviceSignal, MD = Arc<HsaModuleData>>
+  where Arg: Sized + Unpin,
         MD: Deref<Target = HsaModuleData>,
         Dim: LaunchDims,
         S: DeviceConsumable,
@@ -223,19 +212,17 @@ pub struct Invoc<F, Dim, S = DeviceSignal, MD = Arc<HsaModuleData>>
 
   deps: Vec<S>,
 
-  /// Keep this at the end:
-  fmod: FuncModule<F, MD>,
+  fmod: FuncModule<Arg, MD>,
 }
 
-impl<F, Dim, S> Invoc<F, Dim, S, Arc<HsaModuleData>>
-  where F: ?Sized,
+impl<Arg, Dim, S> Invoc<Arg, Dim, S, Arc<HsaModuleData>>
+  where Arg: Sized + Unpin,
         Dim: LaunchDims,
         S: DeviceConsumable,
 {
-  pub fn new<A>(accel: &Arc<HsaAmdGpuAccel>, f: F)
+  pub fn new<F>(accel: &Arc<HsaAmdGpuAccel>, f: F)
     -> Result<Self, Box<dyn Error>>
-    where F: for<'a> Fn(&'a A) + Sized,
-          A: Sized,
+    where F: for<'a> Fn(&'a Arg) + Sized,
   {
     let fmod = FuncModule::new(accel, f)?;
     Ok(Invoc {
@@ -245,11 +232,10 @@ impl<F, Dim, S> Invoc<F, Dim, S, Arc<HsaModuleData>>
       fmod,
     })
   }
-  pub fn new_dims<A>(accel: &Arc<HsaAmdGpuAccel>,
+  pub fn new_dims<F>(accel: &Arc<HsaAmdGpuAccel>,
                      f: F, wg: Dim, grid: Dim)
     -> Result<Self, Box<dyn Error>>
-    where F: for<'a> Fn(&'a A) + Sized,
-          A: Sized,
+    where F: for<'a> Fn(&'a Arg) + Sized,
   {
     let fmod = FuncModule::new(accel, f)?;
     Ok(Invoc {
@@ -261,16 +247,14 @@ impl<F, Dim, S> Invoc<F, Dim, S, Arc<HsaModuleData>>
   }
 }
 
-impl<F, Dim, S, MD> Invoc<F, Dim, S, MD>
-  where F: ?Sized,
+impl<Arg, Dim, S, MD> Invoc<Arg, Dim, S, MD>
+  where Arg: Sized + Unpin,
         MD: Deref<Target = HsaModuleData>,
         Dim: LaunchDims,
         S: DeviceConsumable,
 {
-  pub fn from<A>(fmod: FuncModule<F, MD>,
-                 wg: Dim, grid: Dim) -> Self
-    where F: for<'a> Fn(&'a A) + Sized,
-          A: Sized,
+  pub fn from(fmod: FuncModule<Arg, MD>,
+              wg: Dim, grid: Dim) -> Self
   {
     Invoc {
       workgroup_dim: wg,
@@ -310,15 +294,13 @@ impl<F, Dim, S, MD> Invoc<F, Dim, S, MD>
   /// `completion` must already have the correct value set, eg set to `1`.
   /// This function does no argument checking to ensure, eg, you're not passing
   /// anything by mutable reference or something with drop code by value.
-  pub unsafe fn unchecked_call_async<P, A, Q, T, K, CS>(&mut self,
-                                                        args: A,
-                                                        queue: Q,
-                                                        completion: CS,
-                                                        args_pool: P)
-    -> Result<InvocCompletion<P, A, Q, S, CS>, CallError>
-    where F: for<'a> Fn(&'a A),
-          A: Sized + Unpin,
-          P: Deref<Target = ArgsPool>,
+  pub unsafe fn unchecked_call_async<P, Q, T, K, CS>(&mut self,
+                                                     args: Arg,
+                                                     queue: Q,
+                                                     completion: CS,
+                                                     args_pool: P)
+    -> Result<InvocCompletion<P, Arg, Q, S, CS>, CallError>
+    where P: Deref<Target = ArgsPool>,
           Q: Deref<Target = T>,
           T: IQueue<K>,
           K: QueueKind,
@@ -333,15 +315,13 @@ impl<F, Dim, S, MD> Invoc<F, Dim, S, MD>
   /// Kernarg allocation can fail, so this function allows you re-call without having
   /// to also recreate the arguments (since we move).
   /// If allocation fails, the provided arguments will still be `Some()`.
-  pub unsafe fn try_unchecked_call_async<P, A, Q, T, K, CS>(&mut self,
-                                                            args: &mut Option<A>,
-                                                            queue: &mut Option<Q>,
-                                                            completion: &mut Option<CS>,
-                                                            args_pool: P)
-    -> Result<InvocCompletion<P, A, Q, S, CS>, CallError>
-    where F: for<'a> Fn(&'a A),
-          A: Sized + Unpin,
-          P: Deref<Target = ArgsPool>,
+  pub unsafe fn try_unchecked_call_async<P, Q, T, K, CS>(&mut self,
+                                                         args: &mut Option<Arg>,
+                                                         queue: &mut Option<Q>,
+                                                         completion: &mut Option<CS>,
+                                                         args_pool: P)
+    -> Result<InvocCompletion<P, Arg, Q, S, CS>, CallError>
+    where P: Deref<Target = ArgsPool>,
           Q: Deref<Target = T>,
           T: IQueue<K>,
           K: QueueKind,
@@ -349,14 +329,14 @@ impl<F, Dim, S, MD> Invoc<F, Dim, S, MD>
   {
     let kernel = &*self.fmod.module_data;
 
-    assert_eq!(kernel.desc.kernarg_segment_size, size_of::<(&A,)>());
+    assert_eq!(kernel.desc.kernarg_segment_size, size_of::<(&Arg,)>());
 
-    let kernargs = args_pool.alloc::<A>();
+    let kernargs = args_pool.alloc::<Arg>();
     if kernargs.is_none() {
       return Err(CallError::Oom);
     }
     // now alloc the kernargs ref:
-    let kernargs_ref = args_pool.alloc::<(&A, )>();
+    let kernargs_ref = args_pool.alloc::<(&Arg, )>();
     if kernargs_ref.is_none() {
       return Err(CallError::Oom);
     }
@@ -430,22 +410,22 @@ impl<F, Dim, S, MD> Invoc<F, Dim, S, MD>
     Ok(InvocCompletion(Some(inner)))
   }
 }
-impl<F, WGDim, S, MD> Deref for Invoc<F, WGDim, S, MD>
-  where F: ?Sized,
+impl<Arg, WGDim, S, MD> Deref for Invoc<Arg, WGDim, S, MD>
+  where Arg: Sized + Unpin,
         MD: Deref<Target = HsaModuleData>,
         WGDim: LaunchDims,
         S: DeviceConsumable,
 {
-  type Target = FuncModule<F, MD>;
-  fn deref(&self) -> &FuncModule<F, MD> { &self.fmod }
+  type Target = FuncModule<Arg, MD>;
+  fn deref(&self) -> &FuncModule<Arg, MD> { &self.fmod }
 }
-impl<F, WGDim, S, MD> DerefMut for Invoc<F, WGDim, S, MD>
-  where F: ?Sized,
+impl<Arg, WGDim, S, MD> DerefMut for Invoc<Arg, WGDim, S, MD>
+  where Arg: Sized + Unpin,
         MD: Deref<Target = HsaModuleData>,
         WGDim: LaunchDims,
         S: DeviceConsumable,
 {
-  fn deref_mut(&mut self) -> &mut FuncModule<F, MD> { &mut self.fmod }
+  fn deref_mut(&mut self) -> &mut FuncModule<Arg, MD> { &mut self.fmod }
 }
 
 /// Use this to invoc in a loop without allocating every iteration
