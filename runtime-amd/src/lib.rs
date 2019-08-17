@@ -26,6 +26,7 @@ extern crate ndarray as nd;
 extern crate serde;
 extern crate rmp_serde as rmps;
 
+extern crate syntax;
 extern crate rustc;
 extern crate rustc_target;
 

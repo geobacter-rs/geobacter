@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use crate::log::{info, };
 
+use crate::rustc::hir::{def_id::DefId, CodegenFnAttrs, };
 use crate::rustc::ty::{TyCtxt, Instance, };
 
 use amd_comgr::{set::DataSet, data::RelocatableData,
@@ -274,6 +275,22 @@ impl PlatformCodegen for Codegenner {
     codegen.put_exe(exe);
 
     Ok(())
+  }
+
+  fn codegen_fn_attrs<'tcx>(&self,
+                            _tcx: TyCtxt<'tcx>,
+                            dd: &DriverData<'tcx, Self>,
+                            id: DefId,
+                            attrs: &mut CodegenFnAttrs)
+  {
+    use syntax::attr::InlineAttr;
+
+    if dd.is_root(id) { return; }
+
+    // we need to force `#[inline(always)]`, because sometimes even the AMDGPU
+    // specific pass doesn't inline everything, which will cause us to abort in
+    // LLVM
+    attrs.inline = InlineAttr::Always;
   }
 }
 
