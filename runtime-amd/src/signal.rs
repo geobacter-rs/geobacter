@@ -22,7 +22,7 @@ pub trait SignalHandle {
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable>;
 }
 impl<'a, T> SignalHandle for &'a T
-  where T: SignalHandle,
+  where T: SignalHandle + ?Sized,
 {
   fn signal_ref(&self) -> &SignalRef { (**self).signal_ref() }
   unsafe fn mark_consumed(&self) { (**self).mark_consumed() }
@@ -92,6 +92,13 @@ impl SignalHandle for GlobalSignal {
 /// A signal which may be waited on by accelerator devices.
 pub trait DeviceConsumable: SignalHandle {
   fn usable_on_device(&self, id: AcceleratorId) -> bool;
+}
+impl<'a, T> DeviceConsumable for &'a T
+  where T: DeviceConsumable + ?Sized,
+{
+  default fn usable_on_device(&self, id: AcceleratorId) -> bool {
+    (&**self).usable_on_device(id)
+  }
 }
 
 impl DeviceConsumable for DeviceSignal {
