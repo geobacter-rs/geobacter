@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 use crate::num_traits::cast::{cast, NumCast, };
 
-use crate::syntax::attr::{mk_attr_id, mk_attr_outer, };
+use crate::syntax::attr::{mk_attr_outer, };
 use crate::syntax::ast::{self, NestedMetaItem, MetaItem, MetaItemKind, };
 use crate::syntax_pos::{Span, symbol::sym, Symbol, };
 use crate::rustc::hir::{def_id::DefId, };
@@ -229,12 +229,11 @@ pub fn legionella_cfg_attrs<'tcx, T>(tcx: TyCtxt<'tcx>,
         let expr = ConditionalExpr::parse_from_attrs(tcx, cond);
         if let Some(expr) = expr {
           if expr.eval(&|cond| root_conditions.iter().any(|root_cond| root_cond == cond )) {
-            let id = mk_attr_id();
             let sp = list[1].span();
 
             let attr = match list[1] {
               NestedMetaItem::MetaItem(ref item) => {
-                mk_attr_outer(sp, id, item.clone())
+                mk_attr_outer(item.clone())
               },
               _ => {
                 let msg = "expected a meta item";

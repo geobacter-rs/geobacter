@@ -226,7 +226,6 @@ pub fn redirect_or_panic<'tcx, F>(tcx: TyCtxt<'tcx>,
     });
     let v = Constant {
       span: source_info.span,
-      ty: tcx.mk_static_str(),
       literal: v,
       user_ty: None,
     };
@@ -248,7 +247,6 @@ pub fn redirect_or_panic<'tcx, F>(tcx: TyCtxt<'tcx>,
     });
     let v = Constant {
       span: source_info.span,
-      ty: tcx.types.u32,
       literal: v,
       user_ty: None,
     };

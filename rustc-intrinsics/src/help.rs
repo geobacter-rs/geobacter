@@ -91,7 +91,6 @@ pub trait LegionellaTyCtxtHelp<'tcx>: Copy {
                  c: ty::Const<'tcx>) -> Operand<'tcx> {
     let v = Constant {
       span: src.span,
-      ty: c.ty,
       literal: self.as_tcx().mk_const(c),
       user_ty: None,
     };
@@ -140,7 +139,6 @@ pub trait LegionellaTyCtxtHelp<'tcx>: Copy {
     });
     let v = Constant {
       span: source_info.span,
-      ty: tcx.mk_static_str(),
       literal: v,
       user_ty: None,
     };
@@ -159,7 +157,6 @@ pub trait LegionellaTyCtxtHelp<'tcx>: Copy {
     });
     let v = Constant {
       span: source_info.span,
-      ty: tcx.types.u64,
       literal: v,
       user_ty: None,
     };
@@ -246,7 +243,6 @@ pub fn const_value_rvalue<'tcx>(tcx: TyCtxt<'tcx>,
   });
   let constant = Constant {
     span: source_info.span,
-    ty,
     literal: constant,
     user_ty: None,
   };

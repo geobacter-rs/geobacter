@@ -357,7 +357,6 @@ impl CustomIntrinsicMirGen for KernelContextDataId {
     });
     let constant = Constant {
       span: source_info.span,
-      ty: self.output(tcx),
       literal: constant,
       user_ty: None,
     };
@@ -517,7 +516,6 @@ impl CustomIntrinsicMirGen for WorkItemKill {
       });
       let v = Constant {
         span: source_info.span,
-        ty: tcx.mk_static_str(),
         literal: v,
         user_ty: None,
       };
@@ -539,7 +537,6 @@ impl CustomIntrinsicMirGen for WorkItemKill {
       });
       let v = Constant {
         span: source_info.span,
-        ty: tcx.types.u32,
         literal: v,
         user_ty: None,
       };
