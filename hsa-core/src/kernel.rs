@@ -1,9 +1,11 @@
 
 use std::fmt;
+use std::hash::*;
+use std::ops::*;
 use std::sync::atomic::AtomicUsize;
 
 /// roughly corresponds to a `ty::Instance` in `rustc`.
-#[derive(Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy)]
 pub struct KernelInstance {
   /// A debug friendly name
   name: &'static str,
@@ -46,6 +48,19 @@ impl fmt::Debug for KernelInstance {
     f.debug_tuple("KernelInstance")
       .field(&self.name)
       .finish()
+  }
+}
+impl Eq for KernelInstance { }
+impl PartialEq for KernelInstance {
+  fn eq(&self, rhs: &Self) -> bool {
+    self.instance.eq(rhs.instance)
+  }
+}
+impl Hash for KernelInstance {
+  fn hash<H>(&self, hasher: &mut H)
+    where H: Hasher,
+  {
+    self.instance.hash(hasher)
   }
 }
 
