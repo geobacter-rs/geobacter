@@ -278,14 +278,16 @@ impl PlatformCodegen for Codegenner {
   }
 
   fn codegen_fn_attrs<'tcx>(&self,
-                            _tcx: TyCtxt<'tcx>,
+                            tcx: TyCtxt<'tcx>,
                             dd: &DriverData<'tcx, Self>,
                             id: DefId,
                             attrs: &mut CodegenFnAttrs)
   {
     use syntax::attr::InlineAttr;
+    use rustc::session::config::*;
 
     if dd.is_root(id) { return; }
+    if tcx.sess.opts.optimize != OptLevel::Aggressive { return; }
 
     // we need to force `#[inline(always)]`, because sometimes even the AMDGPU
     // specific pass doesn't inline everything, which will cause us to abort in
