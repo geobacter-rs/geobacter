@@ -96,6 +96,8 @@ pub fn spawn_thread_pool<F, R>(threads: Option<usize>, f: F) -> R
 
   let config = ThreadPoolBuilder::new()
     .num_threads(Session::threads_from_count(threads))
+    // give us a huge stack:
+    .stack_size(32 * 1024 * 1024)
     .deadlock_handler(|| unsafe { ty::query::handle_deadlock() });
 
   let with_pool = move |pool: &ThreadPool| {
