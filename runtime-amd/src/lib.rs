@@ -73,8 +73,10 @@ use crate::module::HsaModuleData;
 
 pub use lrt_core::AcceleratorId;
 pub use lrt_core::context::Context;
-use crate::signal::{HostSignal, DeviceSignal, DeviceConsumable, SignalHandle};
+
+use crate::async_copy::CopyDataObject;
 use crate::boxed::{RawPoolBox, LocallyAccessiblePoolBox};
+use crate::signal::{HostSignal, DeviceSignal, DeviceConsumable, SignalHandle};
 
 pub mod async_copy;
 pub mod boxed;
@@ -268,13 +270,27 @@ impl HsaAmdGpuAccel {
   /// then the result is undefined.
   ///
   /// The HSA runtime internally uses a device queue to implement waiting on `deps`.
-  pub unsafe fn unchecked_async_copy_into<CS>(&self, from: MemoryPoolPtr<[u8]>,
-                                              into: MemoryPoolPtr<[u8]>,
-                                              deps: &[&dyn DeviceConsumable],
-                                              completion: &CS)
+  pub unsafe fn unchecked_async_copy_into<T, U, R, CS>(&self,
+                                                       from: T,
+                                                       into: U,
+                                                       deps: &[&dyn DeviceConsumable],
+                                                       completion: &CS)
     -> Result<(), Box<dyn Error>>
-    where CS: SignalHandle,
+    where T: CopyDataObject<R>,
+          U: CopyDataObject<R>,
+          R: ?Sized + Unpin,
+          CS: SignalHandle,
   {
+    let from = from.pool_copy_region();
+    let into = into.pool_copy_region();
+    if from.is_none() || into.is_none() {
+      // nothing to do
+      completion.signal_ref().subtract_screlease(1);
+      return Ok(());
+    }
+    let from = from.unwrap();
+    let into = into.unwrap();
+
     // check that `into` is in our pool.
     match into.pool().agent_access(self.agent())? {
       AgentAccess::DefaultAllowed => {},
@@ -311,13 +327,27 @@ impl HsaAmdGpuAccel {
 
     Ok(())
   }
-  pub unsafe fn unchecked_async_copy_from<CS>(&self, from: MemoryPoolPtr<[u8]>,
-                                              into: MemoryPoolPtr<[u8]>,
-                                              deps: &[&dyn DeviceConsumable],
-                                              completion: &CS)
+  pub unsafe fn unchecked_async_copy_from<T, U, R, CS>(&self,
+                                                       from: T,
+                                                       into: U,
+                                                       deps: &[&dyn DeviceConsumable],
+                                                       completion: &CS)
     -> Result<(), Box<dyn Error>>
-    where CS: SignalHandle,
+    where T: CopyDataObject<R>,
+          U: CopyDataObject<R>,
+          R: ?Sized + Unpin,
+          CS: SignalHandle,
   {
+    let from = from.pool_copy_region();
+    let into = into.pool_copy_region();
+    if from.is_none() || into.is_none() {
+      // nothing to do
+      completion.signal_ref().subtract_screlease(1);
+      return Ok(());
+    }
+    let from = from.unwrap();
+    let into = into.unwrap();
+
     match into.pool().agent_access(self.agent())? {
       AgentAccess::DefaultAllowed => {},
       AgentAccess::DefaultDisallowed => {
@@ -351,20 +381,34 @@ impl HsaAmdGpuAccel {
 
     Ok(())
   }
-  pub unsafe fn unchecked_async_copy_from_p2p<CS>(&self, from: MemoryPoolPtr<[u8]>,
-                                                  into_dev: &HsaAmdGpuAccel,
-                                                  into: MemoryPoolPtr<[u8]>,
-                                                  deps: &[&dyn DeviceConsumable],
-                                                  completion: &CS)
+  pub unsafe fn unchecked_async_copy_from_p2p<T, U, R, CS>(&self,
+                                                           from: T,
+                                                           into_dev: &HsaAmdGpuAccel,
+                                                           into: U,
+                                                           deps: &[&dyn DeviceConsumable],
+                                                           completion: &CS)
     -> Result<(), Box<dyn Error>>
-    where CS: SignalHandle,
+    where T: CopyDataObject<R>,
+          U: CopyDataObject<R>,
+          R: ?Sized + Unpin,
+          CS: SignalHandle,
   {
+    let from = from.pool_copy_region();
+    let into = into.pool_copy_region();
+    if from.is_none() || into.is_none() {
+      // nothing to do
+      completion.signal_ref().subtract_screlease(1);
+      return Ok(());
+    }
+    let from = from.unwrap();
+    let into = into.unwrap();
+
     // check that `into` is in our pool.
     match into.pool().agent_access(self.agent())? {
       AgentAccess::DefaultAllowed => {},
       AgentAccess::DefaultDisallowed => {
-        // give access:
-        into.grant_agent_access(self.agent())?;
+        // we assume the user has granted us access. We'll error in `async_copy` if
+        // not.
       },
       access => {
         return Err(format!("destination pool is not accessible by this device: {:?}",
@@ -375,8 +419,8 @@ impl HsaAmdGpuAccel {
     match from.pool().agent_access(self.agent())? {
       AgentAccess::DefaultAllowed => {},
       AgentAccess::DefaultDisallowed => {
-        // give access:
-        from.grant_agent_access(self.agent())?;
+        // we assume the user has granted us access. We'll error in `async_copy` if
+        // not
       },
       access => {
         return Err(format!("source pool is not accessible by this device: {:?}",
