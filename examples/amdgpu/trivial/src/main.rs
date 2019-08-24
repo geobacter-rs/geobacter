@@ -38,7 +38,7 @@ const ITERATIONS: usize = 16;
 const WG_SIZE: usize = 8;
 
 /// This is the kernel that is run on the GPU
-pub fn vector_foreach(args: Args) {
+pub fn vector_foreach(args: &Args) {
   if let Some(tensor) = args.tensor_view() {
     let value = args.value;
 
@@ -177,8 +177,9 @@ pub fn main() {
 
       println!("dispatching...");
       let wait = time("dispatching", || unsafe {
-        invoc.unchecked_call_async((args, ), &queue,
-                                   kernel_signal, &args_pool)
+        invoc.unchecked_call_async(args, &queue,
+                                   kernel_signal,
+                                   &args_pool)
           .expect("Invoc::call_async")
       });
 
