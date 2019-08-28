@@ -3,6 +3,7 @@ use std::alloc::Layout;
 use std::convert::TryFrom;
 use std::fmt;
 use std::intrinsics::type_name;
+use std::iter::*;
 use std::mem::{size_of_val, forget, transmute_copy, };
 use std::marker::Unsize;
 use std::ops::*;
@@ -355,6 +356,25 @@ impl<T> LocallyAccessiblePoolBox<[T]>
     forget(self);
 
     b
+  }
+
+  pub fn from_iter<I>(accel: &HsaAmdGpuAccel, iter: I)
+    -> Result<Self, HsaError>
+    where I: ExactSizeIterator<Item = T>,
+  {
+    let count = iter.len();
+    let rb = unsafe {
+      RawPoolBox::new_uninit_slice(accel.host_pool().clone(), count)?
+    };
+    let mut this = unsafe {
+      Self::from_raw_box_unchecked(rb)
+    };
+
+    for (dst, v) in this.iter_mut().zip(iter) {
+      unsafe { write(dst, v); }
+    }
+
+    Ok(this)
   }
 }
 impl<T> LocallyAccessiblePoolBox<T>
