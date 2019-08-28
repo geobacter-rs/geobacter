@@ -1,5 +1,7 @@
 
 use std::ops::{Deref, };
+use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::atomic::{fence, Ordering, };
 
 use hsa_rt::error::Error as HsaError;
@@ -22,6 +24,24 @@ pub trait SignalHandle {
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable>;
 }
 impl<'a, T> SignalHandle for &'a T
+  where T: SignalHandle + ?Sized,
+{
+  fn signal_ref(&self) -> &SignalRef { (**self).signal_ref() }
+  unsafe fn mark_consumed(&self) { (**self).mark_consumed() }
+  fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
+    (**self).as_host_consumable()
+  }
+}
+impl<T> SignalHandle for Rc<T>
+  where T: SignalHandle + ?Sized,
+{
+  fn signal_ref(&self) -> &SignalRef { (**self).signal_ref() }
+  unsafe fn mark_consumed(&self) { (**self).mark_consumed() }
+  fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
+    (**self).as_host_consumable()
+  }
+}
+impl<T> SignalHandle for Arc<T>
   where T: SignalHandle + ?Sized,
 {
   fn signal_ref(&self) -> &SignalRef { (**self).signal_ref() }
@@ -97,6 +117,20 @@ impl<'a, T> DeviceConsumable for &'a T
   where T: DeviceConsumable + ?Sized,
 {
   default fn usable_on_device(&self, id: AcceleratorId) -> bool {
+    (&**self).usable_on_device(id)
+  }
+}
+impl<T> DeviceConsumable for Rc<T>
+  where T: DeviceConsumable + ?Sized,
+{
+  fn usable_on_device(&self, id: AcceleratorId) -> bool {
+    (&**self).usable_on_device(id)
+  }
+}
+impl<T> DeviceConsumable for Arc<T>
+  where T: DeviceConsumable + ?Sized,
+{
+  fn usable_on_device(&self, id: AcceleratorId) -> bool {
     (&**self).usable_on_device(id)
   }
 }
@@ -183,8 +217,15 @@ pub trait HostConsumable: SignalHandle {
 
 impl HostConsumable for HostSignal { }
 impl HostConsumable for GlobalSignal { }
-impl<'a> HostConsumable for &'a HostSignal { }
-impl<'a> HostConsumable for &'a GlobalSignal { }
+impl<'a, T> HostConsumable for &'a T
+  where T: HostConsumable + ?Sized,
+{ }
+impl<T> HostConsumable for Rc<T>
+  where T: HostConsumable + ?Sized,
+{ }
+impl<T> HostConsumable for Arc<T>
+  where T: HostConsumable + ?Sized,
+{ }
 
 /// A type which owns data which cannot be safely used until the
 /// associated signals is complete.
