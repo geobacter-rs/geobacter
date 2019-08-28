@@ -345,7 +345,7 @@ impl<T> LocallyAccessiblePoolBox<T>
   }
 }
 impl<T> LocallyAccessiblePoolBox<[T]>
-  where T: Sized + Copy,
+  where T: Sized,
 {
   /// Don't need to run drop for `T` cause `Copy`.
   pub fn into_raw_box(self) -> RawPoolBox<[T]> {
