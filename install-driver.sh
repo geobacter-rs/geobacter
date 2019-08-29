@@ -18,11 +18,11 @@ cp "${FRAMEWORK_DIR}/target/release/bootstrap-rustc-driver" "$(dirname ${ORIGINA
 chrpath -r '$ORIGIN/../lib' "$(dirname ${ORIGINAL_RUSTC})/bootstrap-rustc"
 export RUSTC_WRAPPER="$(dirname ${ORIGINAL_RUSTC})/bootstrap-rustc"
 cargo build --release --manifest-path ${FRAMEWORK_DIR}/rustc-driver/Cargo.toml || exit $?
-chrpath -r '$ORIGIN/../lib' "${FRAMEWORK_DIR}/target/release/legionella-rustc-driver"
+chrpath -r '$ORIGIN/../lib' "${FRAMEWORK_DIR}/target/release/geobacter-rustc-driver"
 # install the driver. We move the original to `unmodified-rustc` to
 # avoid having to set LD_LIBRARY_PATH.
 
 mv ${ORIGINAL_RUSTC} ${UNMODIFIED_RUSTC}
-cp "${FRAMEWORK_DIR}/target/release/legionella-rustc-driver" ${ORIGINAL_RUSTC}
+cp "${FRAMEWORK_DIR}/target/release/geobacter-rustc-driver" ${ORIGINAL_RUSTC}
 # check that it runs:
 ${ORIGINAL_RUSTC} --version || exit $?

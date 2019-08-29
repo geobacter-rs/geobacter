@@ -2,12 +2,12 @@
 use crate::DispatchPacket;
 
 extern "rust-intrinsic" {
-  fn __legionella_workitem_x_id() -> u32;
-  fn __legionella_workitem_y_id() -> u32;
-  fn __legionella_workitem_z_id() -> u32;
-  fn __legionella_workgroup_x_id() -> u32;
-  fn __legionella_workgroup_y_id() -> u32;
-  fn __legionella_workgroup_z_id() -> u32;
+  fn __geobacter_workitem_x_id() -> u32;
+  fn __geobacter_workitem_y_id() -> u32;
+  fn __geobacter_workitem_z_id() -> u32;
+  fn __geobacter_workgroup_x_id() -> u32;
+  fn __geobacter_workgroup_y_id() -> u32;
+  fn __geobacter_workgroup_z_id() -> u32;
 }
 
 pub trait WorkType<T> { }
@@ -44,17 +44,17 @@ impl WorkItemAxis for AxisDim {
 }
 impl WorkItemAxis for AxisDimX {
   fn workitem_id(&self) -> usize {
-    unsafe { __legionella_workitem_x_id() as usize }
+    unsafe { __geobacter_workitem_x_id() as usize }
   }
 }
 impl WorkItemAxis for AxisDimY {
   fn workitem_id(&self) -> usize {
-    unsafe { __legionella_workitem_y_id() as usize }
+    unsafe { __geobacter_workitem_y_id() as usize }
   }
 }
 impl WorkItemAxis for AxisDimZ {
   fn workitem_id(&self) -> usize {
-    unsafe { __legionella_workitem_z_id() as usize }
+    unsafe { __geobacter_workitem_z_id() as usize }
   }
 }
 
@@ -80,7 +80,7 @@ impl WorkGroupAxis for AxisDim {
 }
 impl WorkGroupAxis for AxisDimX {
   fn workgroup_id(&self) -> usize {
-    unsafe { __legionella_workgroup_x_id() as usize }
+    unsafe { __geobacter_workgroup_x_id() as usize }
   }
   fn workgroup_size(&self, p: DispatchPacket) -> usize {
     p.0.workgroup_size_x as usize
@@ -88,7 +88,7 @@ impl WorkGroupAxis for AxisDimX {
 }
 impl WorkGroupAxis for AxisDimY {
   fn workgroup_id(&self) -> usize {
-    unsafe { __legionella_workgroup_y_id() as usize }
+    unsafe { __geobacter_workgroup_y_id() as usize }
   }
   fn workgroup_size(&self, p: DispatchPacket) -> usize {
     p.0.workgroup_size_y as usize
@@ -96,7 +96,7 @@ impl WorkGroupAxis for AxisDimY {
 }
 impl WorkGroupAxis for AxisDimZ {
   fn workgroup_id(&self) -> usize {
-    unsafe { __legionella_workgroup_z_id() as usize }
+    unsafe { __geobacter_workgroup_z_id() as usize }
   }
   fn workgroup_size(&self, p: DispatchPacket) -> usize {
     p.0.workgroup_size_z as usize

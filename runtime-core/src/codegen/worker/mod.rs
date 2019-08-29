@@ -43,9 +43,9 @@ use syntax_pos::symbol::{Symbol, InternedString, };
 
 use crossbeam::sync::WaitGroup;
 
-use lintrinsics::{DefIdFromKernelId, GetDefIdFromKernelId,
-                  LegionellaCustomIntrinsicMirGen,
-                  LegionellaMirGen, CNums, };
+use gintrinsics::{DefIdFromKernelId, GetDefIdFromKernelId,
+                  GeobacterCustomIntrinsicMirGen,
+                  GeobacterMirGen, CNums, };
 
 use tempfile::{Builder as TDBuilder, };
 
@@ -69,7 +69,7 @@ use crate::codegen::{PlatformIntrinsicInsert, };
 use crate::metadata::{CrateMetadataLoader, CrateMetadata, DummyMetadataLoader, CrateNameHash};
 use crate::utils::env::{use_llc, print_opt_remarks};
 
-const CRATE_NAME: &'static str = "legionella-cross-codegen";
+const CRATE_NAME: &'static str = "geobacter-cross-codegen";
 
 // TODO we need to create a talk to a "host codegen" so that we can ensure
 // that adt's have the same layout in the shader/kernel as on the host.
@@ -144,11 +144,11 @@ impl<'a, P> PlatformIntrinsicInsert for PlatformIntrinsicInserter<'a, P>
   where P: PlatformCodegen,
 {
   fn insert_name<T>(&mut self, name: &str, intrinsic: T)
-    where T: LegionellaCustomIntrinsicMirGen
+    where T: GeobacterCustomIntrinsicMirGen
   {
     let k = Symbol::intern(name).as_interned_str();
     let marker: DefIdFromKernelIdGetter<P> = DefIdFromKernelIdGetter::default();
-    let v = LegionellaMirGen::wrap(intrinsic, &marker);
+    let v = GeobacterMirGen::wrap(intrinsic, &marker);
     self.0.insert(k, v);
   }
 }
@@ -348,7 +348,7 @@ impl<P> WorkerTranslatorData<P>
   }
 
   fn initialize_sess<F, R>(&self, context: &Context, f: F) -> R
-    where F: FnOnce(Session, &CStore, &lintrinsics::CNums) -> R + Send,
+    where F: FnOnce(Session, &CStore, &gintrinsics::CNums) -> R + Send,
           R: Send,
   {
     context.syntax_globals().with(|| {
@@ -484,7 +484,7 @@ impl<P> WorkerTranslatorData<P>
     let (tx, rx) = channel();
 
     let tmpdir = TDBuilder::new()
-      .prefix("legionella-runtime-codegen-")
+      .prefix("geobacter-runtime-codegen-")
       .tempdir()
       .with_kernel_instance(desc.instance)?;
 
@@ -685,6 +685,8 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
   opts.cg.llvm_args.push("-amdgpu-early-inline-all".into());
   opts.cg.llvm_args.push("-amdgpu-prelink".into());
   opts.cg.llvm_args.push("-sroa-strict-inbounds".into());
+  opts.cg.llvm_args.push("-enable-interleaved-mem-accesses".into());
+  opts.cg.llvm_args.push("-enable-masked-interleaved-mem-accesses".into());
   opts.debugging_opts.polly =
     opts.optimize == OptLevel::Aggressive;
   opts.cg.llvm_args.push("-polly-run-inliner".into());
@@ -752,7 +754,7 @@ impl<P> WorkerTranslatorData<P>
         let mut providers = Providers::default();
         rustc_metadata::cstore::provide_extern(&mut providers);
 
-        let stubber = lintrinsics::stubbing::Stubber::default();
+        let stubber = gintrinsics::stubbing::Stubber::default();
         let def_id = PlatformDriverData::<P>::with(tcx, |tcx, pd| {
           stubber.stub_def_id(tcx, pd.dd(), def_id)
         });
@@ -763,7 +765,7 @@ impl<P> WorkerTranslatorData<P>
         let mut providers = Providers::default();
         rustc_metadata::cstore::provide_extern(&mut providers);
 
-        let stubber = lintrinsics::stubbing::Stubber::default();
+        let stubber = gintrinsics::stubbing::Stubber::default();
         let def_id = PlatformDriverData::<P>::with(tcx, |tcx, pd| {
           stubber.stub_def_id(tcx, pd.dd(), def_id)
         });
@@ -774,7 +776,7 @@ impl<P> WorkerTranslatorData<P>
         let mut providers = Providers::default();
         rustc_codegen_utils::symbol_names::provide(&mut providers);
 
-        let stubber = lintrinsics::stubbing::Stubber::default();
+        let stubber = gintrinsics::stubbing::Stubber::default();
         let instance = PlatformDriverData::<P>::with(tcx, |tcx, pd| {
           stubber.map_instance(tcx, pd.dd(), instance)
         });

@@ -5,7 +5,7 @@
 #![feature(core_intrinsics)]
 
 extern crate ndarray as nd;
-extern crate hsa_core;
+extern crate geobacter_core;
 extern crate hsa_rt;
 extern crate hsa_rt_sys;
 extern crate runtime;
@@ -13,14 +13,12 @@ extern crate runtime;
 extern crate log;
 extern crate env_logger;
 extern crate rand;
-extern crate legionella_std;
+extern crate geobacter_std;
 extern crate rustc_driver;
 extern crate lodepng;
 
 use std::mem::{size_of, };
 use std::time::Instant;
-
-use hsa_core::unit::*;
 
 use hsa_rt::{ext::HostLockedAgentMemory, };
 use hsa_rt::agent::{DeviceType, };
@@ -28,7 +26,7 @@ use hsa_rt::agent::{DeviceType, };
 use runtime::context::{Context, };
 use runtime::module::Invoc;
 
-use legionella_std::{dispatch_packet, };
+use geobacter_std::{dispatch_packet, };
 
 use lodepng::{encode32_file, RGBA, };
 

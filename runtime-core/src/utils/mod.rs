@@ -6,7 +6,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 
-pub use lintrinsics::hash::*;
+pub use gintrinsics::hash::*;
 
 pub mod env;
 

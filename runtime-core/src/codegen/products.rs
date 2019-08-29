@@ -10,7 +10,7 @@ use any_key::AnyHash;
 
 use rustc::session::config::{OutputType, };
 
-use hsa_core::kernel::{KernelInstance, };
+use geobacter_core::kernel::{KernelInstance, };
 
 use super::{PlatformCodegen, };
 

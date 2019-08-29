@@ -1,16 +1,16 @@
 
-//! This is the full Legionella Rustc driver.
+//! This is the full Geobacter Rustc driver.
 //! It includes intrinsics which themselves depend on intrinsics
-//! present in `hsa-core`.
+//! present in `geobacter-core`.
 
 #![feature(rustc_private)]
 
-extern crate legionella_intrinsics_common as common;
-extern crate legionella_amdgpu_intrinsics as amdgpu;
-extern crate legionella_vk_intrinsics as vk;
+extern crate geobacter_intrinsics_common as common;
+extern crate geobacter_amdgpu_intrinsics as amdgpu;
+extern crate geobacter_vk_intrinsics as vk;
 extern crate rustc_intrinsics;
 
-extern crate hsa_core;
+extern crate geobacter_core;
 extern crate rustc;
 extern crate rustc_codegen_utils;
 extern crate rustc_data_structures;

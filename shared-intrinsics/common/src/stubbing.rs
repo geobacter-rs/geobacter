@@ -14,7 +14,7 @@ use crate::rustc::hir::def_id::DefId;
 use crate::rustc::ty::{TyCtxt, Instance, InstanceDef, };
 use crate::rustc_data_structures::fx::{FxHashMap};
 
-use crate::hsa_core::kernel::{KernelInstance, };
+use crate::geobacter_core::kernel::{KernelInstance, };
 
 use self::stubs::*;
 use crate::{DefIdFromKernelId, };
@@ -57,7 +57,7 @@ impl Stubber {
   {
     let path = tcx.def_path_str(did);
 
-    if path.starts_with("legionella_intrinsics_common::stubbing") {
+    if path.starts_with("geobacter_intrinsics_common::stubbing") {
       // this is one of our stubs.
       return did;
     }
@@ -190,10 +190,10 @@ mod stubs {
 
   unsafe fn abort() -> ! {
     extern "rust-intrinsic" {
-      fn __legionella_kill() -> !;
+      fn __geobacter_kill() -> !;
     }
 
-    __legionella_kill();
+    __geobacter_kill();
   }
 
   // ALLOC

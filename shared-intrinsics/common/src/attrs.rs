@@ -170,19 +170,19 @@ pub fn u32_from<T>(tcx: TyCtxt<'_>, span: Span, value: T)
   out
 }
 
-pub fn legionella_attrs<F>(tcx: TyCtxt<'_>, did: DefId,
-                           mut f: F)
+pub fn geobacter_attrs<F>(tcx: TyCtxt<'_>, did: DefId,
+                          mut f: F)
   where F: FnMut(&NestedMetaItem),
 {
   let attrs = tcx.get_attrs(did);
   for attr in attrs.iter() {
-    if !attr.check_name(Symbol::intern("legionella")) { continue; }
+    if !attr.check_name(Symbol::intern("geobacter")) { continue; }
 
     let list = match attr.meta_item_list() {
       Some(list) => list,
       None => {
-        let msg = "#[legionella] attribute must be of the form \
-                         #[legionella(..)]";
+        let msg = "#[geobacter] attribute must be of the form \
+                   #[geobacter(..)]";
         tcx.sess.span_err(attr.span, &msg);
         continue;
       }
@@ -194,22 +194,22 @@ pub fn legionella_attrs<F>(tcx: TyCtxt<'_>, did: DefId,
   }
 }
 
-/// Processes `legionella_attr` attributes, which are similar to `cfg_attr`,
-/// returning the attributes which either aren't `legionella_attr` or
+/// Processes `geobacter_attr` attributes, which are similar to `cfg_attr`,
+/// returning the attributes which either aren't `geobacter_attr` or
 /// have at least one condition which passes.
 /// This function accepts a list of attributes instead of a DefId because
 /// the list of attributes will probably need to originate from the unmodified
 /// providers.
-pub fn legionella_cfg_attrs<'tcx, T>(tcx: TyCtxt<'tcx>,
-                                     previous: &[ast::Attribute],
-                                     root_conditions: &[T])
+pub fn geobacter_cfg_attrs<'tcx, T>(tcx: TyCtxt<'tcx>,
+                                    previous: &[ast::Attribute],
+                                    root_conditions: &[T])
   -> Lrc<[ast::Attribute]>
   where T: ConditionItem,
 {
   let mut out = Vec::with_capacity(previous.len());
 
   for item in previous.iter() {
-    if !item.check_name(Symbol::intern("legionella_attr")) {
+    if !item.check_name(Symbol::intern("geobacter_attr")) {
       out.push(item.clone());
       continue;
     }
@@ -247,8 +247,8 @@ pub fn legionella_cfg_attrs<'tcx, T>(tcx: TyCtxt<'tcx>,
         }
       },
       _ => {
-        let msg = "#[legionella_attr(condition, attribute)] expects two elements: \
-                         an `cfg_attr`-esk condition and an attribute";
+        let msg = "#[geobacter_attr(condition, attribute)] expects two elements: \
+                   an `cfg_attr`-esk condition and an attribute";
         tcx.sess.span_err(item.span, &msg);
       },
     }

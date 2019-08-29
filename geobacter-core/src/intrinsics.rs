@@ -1,5 +1,5 @@
 
 extern "rust-intrinsic" {
   /// Kills the current workitem/thread.
-  pub fn __legionella_kill() -> !;
+  pub fn __geobacter_kill() -> !;
 }

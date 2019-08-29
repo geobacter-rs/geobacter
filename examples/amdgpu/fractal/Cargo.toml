@@ -12,8 +12,8 @@ log = "0.4.7"
 ndarray = "0.12.1"
 rand = "0.5.5"
 lodepng = "2.0.0"
-hsa-core = { path = "../../../hsa-core" }
+geobacter-core = { path = "../../../geobacter-core" }
+geobacter-runtime-core = { path = "../../../runtime-core" }
+geobacter-runtime-amd = { path = "../../../runtime-amd" }
+geobacter-amdgpu-std = { path = "../../../amdgpu-std" }
 hsa-rt = { path = "../../../hsa-rt" }
-legionella-runtime-core = { path = "../../../runtime-core" }
-legionella-runtime-amd = { path = "../../../runtime-amd" }
-legionella-amdgpu-std = { path = "../../../legionella-amdgpu-std" }

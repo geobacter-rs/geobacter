@@ -2,9 +2,9 @@
 //! Check that a single generic function instantiated with
 //! different types don't share the same kernel instance.
 
-extern crate hsa_core;
+extern crate geobacter_core;
 
-use hsa_core::kernel::*;
+use geobacter_core::kernel::*;
 
 fn test<T>(_arg: T) { }
 

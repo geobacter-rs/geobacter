@@ -5,7 +5,7 @@
 #![feature(intrinsics)]
 #![feature(unboxed_closures)]
 
-// Note: don't try to depend on `legionella_std` or the amdgpu runtime crate.
+// Note: don't try to depend on `geobacter_std` or the amdgpu runtime crate.
 
 // TODO move the workitem id stuff into the common intrinsics crate, as
 // they will be provided in some form by every platform.
@@ -24,20 +24,20 @@ extern crate syntax_pos;
 #[macro_use]
 extern crate log;
 
-extern crate hsa_core;
+extern crate geobacter_core;
 extern crate rustc_intrinsics;
-extern crate legionella_intrinsics_common as common;
+extern crate geobacter_intrinsics_common as common;
 
 use std::fmt;
 
-use hsa_core::kernel::{OptionalFn, KernelInstance, };
+use geobacter_core::kernel::{OptionalFn, KernelInstance, };
 
 use crate::rustc::mir::{self, CustomIntrinsicMirGen, };
 use crate::rustc::ty::{self, TyCtxt, Instance, };
 use crate::rustc_data_structures::sync::{Lrc, };
 
-use crate::common::{DefIdFromKernelId, LegionellaCustomIntrinsicMirGen,
-                    stubbing, GetDefIdFromKernelId, LegionellaMirGen, };
+use crate::common::{DefIdFromKernelId, GeobacterCustomIntrinsicMirGen,
+                    stubbing, GetDefIdFromKernelId, GeobacterMirGen, };
 
 pub mod attrs;
 
@@ -46,14 +46,14 @@ pub fn insert_all_intrinsics<F, U>(marker: &U, mut into: F)
         U: GetDefIdFromKernelId + Send + Sync + 'static,
 {
   for intr in AxisId::permutations() {
-    let (k, v) = LegionellaMirGen::new(intr, marker);
+    let (k, v) = GeobacterMirGen::new(intr, marker);
     into(k, v);
   }
-  let (k, v) = LegionellaMirGen::new(DispatchPtr, marker);
+  let (k, v) = GeobacterMirGen::new(DispatchPtr, marker);
   into(k, v);
-  let (k, v) = LegionellaMirGen::new(Barrier, marker);
+  let (k, v) = GeobacterMirGen::new(Barrier, marker);
   into(k, v);
-  let (k, v) = LegionellaMirGen::new(WaveBarrier, marker);
+  let (k, v) = GeobacterMirGen::new(WaveBarrier, marker);
   into(k, v);
 }
 
@@ -179,7 +179,7 @@ impl AxisId {
     Some(instance)
   }
 }
-impl LegionellaCustomIntrinsicMirGen for AxisId {
+impl GeobacterCustomIntrinsicMirGen for AxisId {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
                                    kid_did: &dyn DefIdFromKernelId,
@@ -212,7 +212,7 @@ impl LegionellaCustomIntrinsicMirGen for AxisId {
 
 impl fmt::Display for AxisId {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "__legionella_{}_{}_id", self.block, self.dim)
+    write!(f, "__geobacter_{}_{}_id", self.block, self.dim)
   }
 }
 
@@ -237,7 +237,7 @@ impl DispatchPtr {
   }
 }
 
-impl LegionellaCustomIntrinsicMirGen for DispatchPtr {
+impl GeobacterCustomIntrinsicMirGen for DispatchPtr {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
                                    kid_did: &dyn DefIdFromKernelId,
@@ -278,7 +278,7 @@ impl LegionellaCustomIntrinsicMirGen for DispatchPtr {
 
 impl fmt::Display for DispatchPtr {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "__legionella_dispatch_ptr")
+    write!(f, "__geobacter_dispatch_ptr")
   }
 }
 
@@ -290,7 +290,7 @@ impl Barrier {
       .unwrap()
   }
 }
-impl LegionellaCustomIntrinsicMirGen for Barrier {
+impl GeobacterCustomIntrinsicMirGen for Barrier {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
                                    kid_did: &dyn DefIdFromKernelId,
@@ -331,7 +331,7 @@ impl LegionellaCustomIntrinsicMirGen for Barrier {
 
 impl fmt::Display for Barrier {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "__legionella_amdgpu_barrier")
+    write!(f, "__geobacter_amdgpu_barrier")
   }
 }
 pub struct WaveBarrier;
@@ -342,7 +342,7 @@ impl WaveBarrier {
       .unwrap()
   }
 }
-impl LegionellaCustomIntrinsicMirGen for WaveBarrier {
+impl GeobacterCustomIntrinsicMirGen for WaveBarrier {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
                                    kid_did: &dyn DefIdFromKernelId,
@@ -383,7 +383,7 @@ impl LegionellaCustomIntrinsicMirGen for WaveBarrier {
 
 impl fmt::Display for WaveBarrier {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "__legionella_amdgpu_wave_barrier")
+    write!(f, "__geobacter_amdgpu_wave_barrier")
   }
 }
 

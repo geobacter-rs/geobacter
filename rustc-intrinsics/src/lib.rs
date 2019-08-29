@@ -1,4 +1,4 @@
-//! The "full" Legionella compile time driver.
+//! The "full" Geobacter compile time driver.
 //!
 //! A lot of code here is pretty much just copied from the Rust compiler source.
 //! We have to modify the driver process in a way which isn't exposed at all in
@@ -43,7 +43,7 @@ extern crate log;
 #[cfg(unix)]
 extern crate libc;
 
-extern crate legionella_shared_defs as shared_defs;
+extern crate geobacter_shared_defs as shared_defs;
 
 use std::cell::Cell;
 use std::fmt;
@@ -70,7 +70,7 @@ use crate::syntax::feature_gate::{AttributeType, };
 use self::syntax_pos::{Span, DUMMY_SP, };
 use self::syntax_pos::symbol::{Symbol, };
 
-use crate::codec::LegionellaEncoder;
+use crate::codec::GeobacterEncoder;
 use crate::driver::{report_ices_to_stderr_if_any,
                     EXIT_SUCCESS, EXIT_FAILURE,
                     DefaultCallbacks, };
@@ -182,19 +182,19 @@ impl Default for Generators {
 static mut GENERATORS: Option<&'static Generators> = None;
 pub fn generators() -> &'static Generators {
   unsafe {
-    GENERATORS.expect("Legionella intrinsic generators isn't in scope!")
+    GENERATORS.expect("Geobacter intrinsic generators isn't in scope!")
   }
 }
 
-fn whitelist_legionella_attr(sess: &Session) {
+fn whitelist_geobacter_attr(sess: &Session) {
   let mut plugin_attributes = sess.plugin_attributes
     .borrow_mut();
 
   plugin_attributes
-    .push((Symbol::intern("legionella"),
+    .push((Symbol::intern("geobacter"),
            AttributeType::Whitelisted));
   plugin_attributes
-    .push((Symbol::intern("legionella_attr"),
+    .push((Symbol::intern("geobacter_attr"),
            AttributeType::Whitelisted));
 }
 
@@ -266,7 +266,7 @@ impl CustomIntrinsicMirGen for KernelInstance {
       let name = tcx.def_path_str(instance.def_id());
       let name = static_str_const_value(tcx, &*name.as_str());
 
-      let instance = LegionellaEncoder::with(tcx, |encoder| {
+      let instance = GeobacterEncoder::with(tcx, |encoder| {
         instance.encode(encoder).expect("actual encode kernel instance");
         Ok(())
       }).expect("encode kernel instance");
@@ -407,7 +407,7 @@ impl CurrentPlatform {
 }
 impl fmt::Display for CurrentPlatform {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "__legionella_current_platform")
+    write!(f, "__geobacter_current_platform")
   }
 }
 impl CustomIntrinsicMirGen for CurrentPlatform {
@@ -560,7 +560,7 @@ impl CustomIntrinsicMirGen for WorkItemKill {
       let lang_item = lang_items::PanicFnLangItem;
 
       let expr = static_str_operand(tcx, source_info.clone(),
-                                    "__legionella_kill called");
+                                    "__geobacter_kill called");
       let file = static_str_operand(tcx, source_info.clone(),
                                     "TODO panic file");
       let line = mk_u32(0); // TODO
@@ -649,6 +649,6 @@ impl CustomIntrinsicMirGen for WorkItemKill {
 
 impl fmt::Display for WorkItemKill {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "__legionella_kill")
+    write!(f, "__geobacter_kill")
   }
 }

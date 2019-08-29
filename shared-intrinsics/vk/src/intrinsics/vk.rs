@@ -21,13 +21,13 @@ use crate::rustc_data_structures::fx::{FxHashSet, };
 use crate::rustc_data_structures::sync::{Lrc, };
 use crate::syntax_pos::{DUMMY_SP, symbol::Symbol, };
 
-use crate::common::{DefIdFromKernelId, LegionellaCustomIntrinsicMirGen,
-                    GetDefIdFromKernelId, LegionellaMirGen, stubbing,
+use crate::common::{DefIdFromKernelId, GeobacterCustomIntrinsicMirGen,
+                    GetDefIdFromKernelId, GeobacterMirGen, stubbing,
                     collector::collect_items_rec, };
 
-use crate::lcore::*;
-use crate::lcore::ss::{CompilerDescriptorImageDims, CompilerDescriptorDescTyKind, };
-use crate::attrs::{legionella_root_attrs, legionella_global_attrs,
+use crate::gvk_core::*;
+use crate::gvk_core::ss::{CompilerDescriptorImageDims, CompilerDescriptorDescTyKind, };
+use crate::attrs::{geobacter_root_attrs, geobacter_global_attrs,
                    require_descriptor_set_binding_nums, };
 
 use crate::rustc_intrinsics::help::*;
@@ -36,26 +36,26 @@ pub fn insert_all_intrinsics<F, U>(marker: &U, mut into: F)
   where F: FnMut(String, Lrc<dyn CustomIntrinsicMirGen>),
         U: GetDefIdFromKernelId + Send + Sync + 'static,
 {
-  let (k, v) = LegionellaMirGen::new(ComputePipelineLayoutDesc,
-                                     marker);
+  let (k, v) = GeobacterMirGen::new(ComputePipelineLayoutDesc,
+                                    marker);
   into(k, v);
-  let (k, v) = LegionellaMirGen::new(ComputePipelineRequiredCapabilities,
-                                     marker);
+  let (k, v) = GeobacterMirGen::new(ComputePipelineRequiredCapabilities,
+                                    marker);
   into(k, v);
-  let (k, v) = LegionellaMirGen::new(ComputePipelineRequiredExtensions,
-                                     marker);
+  let (k, v) = GeobacterMirGen::new(ComputePipelineRequiredExtensions,
+                                    marker);
   into(k, v);
-  let (k, v) = LegionellaMirGen::new(ComputeDescriptorSetBinding,
-                                     marker);
+  let (k, v) = GeobacterMirGen::new(ComputeDescriptorSetBinding,
+                                    marker);
   into(k, v);
-  let (k, v) = LegionellaMirGen::new(GraphicsPipelineLayoutDesc,
-                                     marker);
+  let (k, v) = GeobacterMirGen::new(GraphicsPipelineLayoutDesc,
+                                    marker);
   into(k, v);
-  let (k, v) = LegionellaMirGen::new(GraphicsPipelineRequiredCapabilities,
-                                     marker);
+  let (k, v) = GeobacterMirGen::new(GraphicsPipelineRequiredCapabilities,
+                                    marker);
   into(k, v);
-  let (k, v) = LegionellaMirGen::new(GraphicsPipelineRequiredExtensions,
-                                     marker);
+  let (k, v) = GeobacterMirGen::new(GraphicsPipelineRequiredExtensions,
+                                    marker);
   into(k, v);
 }
 
@@ -76,41 +76,41 @@ pub struct GraphicsPipelineRequiredExtensions;
 
 impl fmt::Display for ComputePipelineLayoutDesc {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "__legionella_compute_pipeline_layout_desc")
+    write!(f, "__geobacter_compute_pipeline_layout_desc")
   }
 }
 impl fmt::Display for ComputePipelineRequiredCapabilities {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "__legionella_compute_pipeline_required_capabilities")
+    write!(f, "__geobacter_compute_pipeline_required_capabilities")
   }
 }
 impl fmt::Display for ComputePipelineRequiredExtensions {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "__legionella_compute_pipeline_required_extensions")
+    write!(f, "__geobacter_compute_pipeline_required_extensions")
   }
 }
 impl fmt::Display for ComputeDescriptorSetBinding {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "__legionella_compute_descriptor_set_binding")
+    write!(f, "__geobacter_compute_descriptor_set_binding")
   }
 }
 impl fmt::Display for GraphicsPipelineLayoutDesc {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "__legionella_graphics_pipeline_layout_desc")
+    write!(f, "__geobacter_graphics_pipeline_layout_desc")
   }
 }
 impl fmt::Display for GraphicsPipelineRequiredCapabilities {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "__legionella_graphics_pipeline_required_capabilities")
+    write!(f, "__geobacter_graphics_pipeline_required_capabilities")
   }
 }
 impl fmt::Display for GraphicsPipelineRequiredExtensions {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "__legionella_graphics_pipeline_required_extensions")
+    write!(f, "__geobacter_graphics_pipeline_required_extensions")
   }
 }
 
-impl LegionellaCustomIntrinsicMirGen for ComputePipelineLayoutDesc {
+impl GeobacterCustomIntrinsicMirGen for ComputePipelineLayoutDesc {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    stubber: &stubbing::Stubber,
                                    kid_did: &dyn DefIdFromKernelId,
@@ -150,7 +150,7 @@ impl LegionellaCustomIntrinsicMirGen for ComputePipelineLayoutDesc {
 
     visited.remove(&mono_root);
 
-    let _root_attrs = legionella_root_attrs(tcx, did,
+    let _root_attrs = geobacter_root_attrs(tcx, did,
                                             ExecutionModel::GLCompute,
                                             false);
 
@@ -165,7 +165,7 @@ impl LegionellaCustomIntrinsicMirGen for ComputePipelineLayoutDesc {
         },
       };
 
-      let attrs = legionella_global_attrs(tcx,
+      let attrs = geobacter_global_attrs(tcx,
                                           ExecutionModel::GLCompute,
                                           instance, false);
 
@@ -263,7 +263,7 @@ impl LegionellaCustomIntrinsicMirGen for ComputePipelineLayoutDesc {
     desc_set_bindings_desc_ty(tcx)
   }
 }
-impl LegionellaCustomIntrinsicMirGen for ComputePipelineRequiredCapabilities {
+impl GeobacterCustomIntrinsicMirGen for ComputePipelineRequiredCapabilities {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
                                    _kid_did: &dyn DefIdFromKernelId,
@@ -292,7 +292,7 @@ impl LegionellaCustomIntrinsicMirGen for ComputePipelineRequiredCapabilities {
 
     let did = kernel.def_id();
 
-    let root_attrs = legionella_root_attrs(tcx, did,
+    let root_attrs = geobacter_root_attrs(tcx, did,
                                            ExecutionModel::GLCompute,
                                            false);
 
@@ -344,7 +344,7 @@ impl LegionellaCustomIntrinsicMirGen for ComputePipelineRequiredCapabilities {
     mk_static_slice(tcx, tcx.types.u32)
   }
 }
-impl LegionellaCustomIntrinsicMirGen for ComputePipelineRequiredExtensions {
+impl GeobacterCustomIntrinsicMirGen for ComputePipelineRequiredExtensions {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
                                    _kid_did: &dyn DefIdFromKernelId,
@@ -372,7 +372,7 @@ impl LegionellaCustomIntrinsicMirGen for ComputePipelineRequiredExtensions {
 
     let did = kernel.def_id();
 
-    let root_attrs = legionella_root_attrs(tcx, did,
+    let root_attrs = geobacter_root_attrs(tcx, did,
                                            ExecutionModel::GLCompute,
                                            false);
 
@@ -424,7 +424,7 @@ impl LegionellaCustomIntrinsicMirGen for ComputePipelineRequiredExtensions {
     mk_static_slice(tcx, tcx.mk_static_str())
   }
 }
-impl LegionellaCustomIntrinsicMirGen for ComputeDescriptorSetBinding {
+impl GeobacterCustomIntrinsicMirGen for ComputeDescriptorSetBinding {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
                                    _kid_did: &dyn DefIdFromKernelId,
@@ -495,7 +495,7 @@ impl LegionellaCustomIntrinsicMirGen for ComputeDescriptorSetBinding {
   }
 }
 
-impl LegionellaCustomIntrinsicMirGen for GraphicsPipelineLayoutDesc {
+impl GeobacterCustomIntrinsicMirGen for GraphicsPipelineLayoutDesc {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
                                    _kid_did: &dyn DefIdFromKernelId,
@@ -560,7 +560,7 @@ impl LegionellaCustomIntrinsicMirGen for GraphicsPipelineLayoutDesc {
     // respected
     visited.remove(&mono_root);
 
-    let root_attrs = legionella_root_attrs(tcx, did,
+    let root_attrs = geobacter_root_attrs(tcx, did,
                                            self.0,
                                            true);
 
@@ -568,10 +568,10 @@ impl LegionellaCustomIntrinsicMirGen for GraphicsPipelineLayoutDesc {
       let (mono_did, mono_attrs) = match mono {
         MonoItem::Fn(inst) => {
           let did = inst.def_id();
-          (did, legionella_global_attrs(tcx, did, true))
+          (did, geobacter_global_attrs(tcx, did, true))
         },
         MonoItem::Static(mono_did) => {
-          (mono_did, legionella_global_attrs(tcx, mono_did, true))
+          (mono_did, geobacter_global_attrs(tcx, mono_did, true))
         },
         MonoItem::GlobalAsm(..) => {
           bug!("unexpected `{:?}`", mono);
@@ -614,7 +614,7 @@ impl LegionellaCustomIntrinsicMirGen for GraphicsPipelineLayoutDesc {
     desc_set_bindings_desc_ty(tcx)
   }
 }
-impl LegionellaCustomIntrinsicMirGen for GraphicsPipelineRequiredCapabilities {
+impl GeobacterCustomIntrinsicMirGen for GraphicsPipelineRequiredCapabilities {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
                                    _kid_did: &dyn DefIdFromKernelId,
@@ -680,7 +680,7 @@ impl LegionellaCustomIntrinsicMirGen for GraphicsPipelineRequiredCapabilities {
     // respected
     visited.remove(&mono_root);
 
-    let root_attrs = legionella_root_attrs(tcx, did,
+    let root_attrs = geobacter_root_attrs(tcx, did,
                                            self.0,
                                            true);
 
@@ -688,10 +688,10 @@ impl LegionellaCustomIntrinsicMirGen for GraphicsPipelineRequiredCapabilities {
       let (mono_did, mono_attrs) = match mono {
         MonoItem::Fn(inst) => {
           let did = inst.def_id();
-          (did, legionella_global_attrs(tcx, did, true))
+          (did, geobacter_global_attrs(tcx, did, true))
         },
         MonoItem::Static(mono_did) => {
-          (mono_did, legionella_global_attrs(tcx, mono_did, true))
+          (mono_did, geobacter_global_attrs(tcx, mono_did, true))
         },
         MonoItem::GlobalAsm(..) => {
           bug!("unexpected `{:?}`", mono);
@@ -735,7 +735,7 @@ impl LegionellaCustomIntrinsicMirGen for GraphicsPipelineRequiredCapabilities {
     mk_static_slice(tcx, tcx.types.u32)
   }
 }
-impl LegionellaCustomIntrinsicMirGen for GraphicsPipelineRequiredExtensions {
+impl GeobacterCustomIntrinsicMirGen for GraphicsPipelineRequiredExtensions {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
                                    _kid_did: &dyn DefIdFromKernelId,
@@ -801,7 +801,7 @@ impl LegionellaCustomIntrinsicMirGen for GraphicsPipelineRequiredExtensions {
     // respected
     visited.remove(&mono_root);
 
-    let root_attrs = legionella_root_attrs(tcx, did,
+    let root_attrs = geobacter_root_attrs(tcx, did,
                                            self.0,
                                            true);
 
@@ -809,10 +809,10 @@ impl LegionellaCustomIntrinsicMirGen for GraphicsPipelineRequiredExtensions {
       let (mono_did, mono_attrs) = match mono {
         MonoItem::Fn(inst) => {
           let did = inst.def_id();
-          (did, legionella_global_attrs(tcx, did, true))
+          (did, geobacter_global_attrs(tcx, did, true))
         },
         MonoItem::Static(mono_did) => {
-          (mono_did, legionella_global_attrs(tcx, mono_did, true))
+          (mono_did, geobacter_global_attrs(tcx, mono_did, true))
         },
         MonoItem::GlobalAsm(..) => {
           bug!("unexpected `{:?}`", mono);

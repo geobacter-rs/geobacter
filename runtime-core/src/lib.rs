@@ -11,7 +11,7 @@
 
 #![recursion_limit="256"]
 
-extern crate hsa_core;
+extern crate geobacter_core;
 #[macro_use] extern crate rustc;
 extern crate rustc_ast_borrowck;
 extern crate rustc_metadata;
@@ -42,8 +42,8 @@ extern crate log;
 extern crate seahash;
 extern crate core;
 extern crate dirs;
-extern crate legionella_intrinsics_common as lintrinsics;
-extern crate legionella_shared_defs as shared_defs;
+extern crate geobacter_intrinsics_common as gintrinsics;
+extern crate geobacter_shared_defs as shared_defs;
 extern crate owning_ref;
 extern crate crossbeam;
 extern crate any_key;

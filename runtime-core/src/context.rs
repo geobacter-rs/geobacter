@@ -418,7 +418,7 @@ impl ModuleContextData {
   pub fn get<F, Args, Ret>(f: &F) -> Self
     where F: Fn<Args, Output = Ret>,
   {
-    use hsa_core::kernel::kernel_context_data_id;
+    use geobacter_core::kernel::kernel_context_data_id;
     let data_ref = kernel_context_data_id(f);
     ModuleContextData(data_ref)
   }

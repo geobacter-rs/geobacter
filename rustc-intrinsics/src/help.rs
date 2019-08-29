@@ -83,7 +83,7 @@ pub fn extract_opt_fn_instance<'tcx>(tcx: TyCtxt<'tcx>,
   Some(instance)
 }
 
-pub trait LegionellaTyCtxtHelp<'tcx>: Copy {
+pub trait GeobacterTyCtxtHelp<'tcx>: Copy {
   fn as_tcx(self) -> TyCtxt<'tcx>;
 
   fn mk_const_op(self,
@@ -164,11 +164,11 @@ pub trait LegionellaTyCtxtHelp<'tcx>: Copy {
     Operand::Constant(v)
   }
 }
-impl<'tcx> LegionellaTyCtxtHelp<'tcx> for TyCtxt<'tcx> {
+impl<'tcx> GeobacterTyCtxtHelp<'tcx> for TyCtxt<'tcx> {
   fn as_tcx(self) -> TyCtxt<'tcx> { self }
 }
 
-// TODO move the following functions into `LegionellaTyCtxtHelp`.
+// TODO move the following functions into `GeobacterTyCtxtHelp`.
 
 pub fn build_compiler_opt<'tcx, F, T>(tcx: TyCtxt<'tcx>,
                                       val: Option<T>,

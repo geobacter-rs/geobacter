@@ -11,7 +11,7 @@ macro_rules! host_unreachable {
       unreachable!();
     } else {
       #[allow(unused_unsafe)]
-      unsafe { $crate::intrinsics::__legionella_kill() };
+      unsafe { $crate::intrinsics::__geobacter_kill() };
     }
   });
   ($msg:expr) => ({
@@ -19,7 +19,7 @@ macro_rules! host_unreachable {
       unreachable!($msg);
     } else {
       #[allow(unused_unsafe)]
-      unsafe { $crate::intrinsics::__legionella_kill() };
+      unsafe { $crate::intrinsics::__geobacter_kill() };
     }
   });
   ($msg:expr,) => ({
@@ -27,7 +27,7 @@ macro_rules! host_unreachable {
       unreachable!($msg,);
     } else {
       #[allow(unused_unsafe)]
-      unsafe { $crate::intrinsics::__legionella_kill() };
+      unsafe { $crate::intrinsics::__geobacter_kill() };
     }
   });
   ($fmt:expr, $($arg:tt)*) => ({
@@ -35,7 +35,7 @@ macro_rules! host_unreachable {
       unreachable!($fmt, $($arg)*);
     } else {
       #[allow(unused_unsafe)]
-      unsafe { $crate::intrinsics::__legionella_kill() };
+      unsafe { $crate::intrinsics::__geobacter_kill() };
     }
   });
 }
@@ -46,7 +46,7 @@ macro_rules! host_unimplemented {
       unimplemented!();
     } else {
       #[allow(unused_unsafe)]
-      unsafe { $crate::intrinsics::__legionella_kill() };
+      unsafe { $crate::intrinsics::__geobacter_kill() };
     }
   });
   ($msg:expr) => ({
@@ -54,7 +54,7 @@ macro_rules! host_unimplemented {
       unimplemented!($msg);
     } else {
       #[allow(unused_unsafe)]
-      unsafe { $crate::intrinsics::__legionella_kill() };
+      unsafe { $crate::intrinsics::__geobacter_kill() };
     }
   });
   ($msg:expr,) => ({
@@ -62,7 +62,7 @@ macro_rules! host_unimplemented {
       unimplemented!($msg,);
     } else {
       #[allow(unused_unsafe)]
-      unsafe { $crate::intrinsics::__legionella_kill() };
+      unsafe { $crate::intrinsics::__geobacter_kill() };
     }
   });
   ($fmt:expr, $($arg:tt)*) => ({
@@ -70,7 +70,7 @@ macro_rules! host_unimplemented {
       unimplemented!($fmt, $($arg)*);
     } else {
       #[allow(unused_unsafe)]
-      unsafe { $crate::intrinsics::__legionella_kill() };
+      unsafe { $crate::intrinsics::__geobacter_kill() };
     }
   });
 }
@@ -83,7 +83,7 @@ macro_rules! host_assert {
       // $cond is false
       if !$crate::platform::is_host() {
         #[allow(unused_unsafe)]
-        unsafe { $crate::intrinsics::__legionella_kill() };
+        unsafe { $crate::intrinsics::__geobacter_kill() };
       }
       false
     });
@@ -93,7 +93,7 @@ macro_rules! host_assert {
       // $cond is false
       if !$crate::platform::is_host() {
         #[allow(unused_unsafe)]
-        unsafe { $crate::intrinsics::__legionella_kill() };
+        unsafe { $crate::intrinsics::__geobacter_kill() };
       }
       false
     });
@@ -104,7 +104,7 @@ macro_rules! host_assert {
       if !$crate::platform::is_host() {
         // no printing :(
         #[allow(unused_unsafe)]
-        unsafe { $crate::intrinsics::__legionella_kill() };
+        unsafe { $crate::intrinsics::__geobacter_kill() };
       }
       false
     }, $($arg)+);
@@ -127,7 +127,7 @@ macro_rules! host_assert_eq {
           } else {
             // no printing :(
             #[allow(unused_unsafe)]
-            unsafe { $crate::intrinsics::__legionella_kill() };
+            unsafe { $crate::intrinsics::__geobacter_kill() };
           }
         }
       }
@@ -151,7 +151,7 @@ macro_rules! host_assert_eq {
           } else {
             // no printing :(
             #[allow(unused_unsafe)]
-            unsafe { $crate::intrinsics::__legionella_kill() };
+            unsafe { $crate::intrinsics::__geobacter_kill() };
           }
         }
       }
@@ -175,7 +175,7 @@ macro_rules! host_assert_ne {
           } else {
             // no printing :(
             #[allow(unused_unsafe)]
-            unsafe { $crate::intrinsics::__legionella_kill() };
+            unsafe { $crate::intrinsics::__geobacter_kill() };
           }
         }
       }
@@ -199,7 +199,7 @@ macro_rules! host_assert_ne {
           } else {
             // no printing :(
             #[allow(unused_unsafe)]
-            unsafe { $crate::intrinsics::__legionella_kill() };
+            unsafe { $crate::intrinsics::__geobacter_kill() };
           }
         }
       }

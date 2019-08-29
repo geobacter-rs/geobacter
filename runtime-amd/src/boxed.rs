@@ -15,8 +15,8 @@ use std::sync::Arc;
 
 use std::result::Result; // CLion.
 
-use hsa_core::ptr::{SlicePtr, Ptr};
-use hsa_core::slice::{SliceRef, SliceMut};
+use geobacter_core::ptr::{SlicePtr, Ptr};
+use geobacter_core::slice::{SliceRef, SliceMut};
 
 use hsa_rt::error::Error as HsaError;
 use hsa_rt::ext::amd::{lock_memory, unlock_memory, MemoryPool, MemoryPoolPtr};

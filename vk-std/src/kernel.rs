@@ -1,11 +1,10 @@
 
 /// Types, functions, and globals for kernels
 
-use hsa_core::kernel::{KernelId, kernel_id_for, };
-use hsa_core::unit::*;
+use geobacter_core::kernel::{KernelId, kernel_id_for, };
 use spirv_help::*;
 
-use lcore::{Capabilities, Capability, };
+use gcore::{Capabilities, Capability, };
 use vk_help::{StaticPipelineLayoutDesc,
               compute_pipeline_layout_desc,
               compute_pipeline_required_capabilities,
@@ -15,57 +14,57 @@ extern "Rust" {
 
 // Note the initializers for input storage class globals are
 // deleted. So their value here doesn't matter.
-#[legionella(spirv_builtin = "DeviceIndex",
-             storage_class = "Input")]
+#[geobacter(spirv_builtin = "DeviceIndex",
+            storage_class = "Input")]
 #[linkage = "extern_weak"]
 static DEVICE_INDEX: *const u32;
 
-#[legionella(exe_model(any(Kernel, GLCompute)),
-             spirv_builtin = "LocalInvocationId",
-             storage_class = "Input")]
+#[geobacter(exe_model(any(Kernel, GLCompute)),
+            spirv_builtin = "LocalInvocationId",
+            storage_class = "Input")]
 #[linkage = "extern_weak"]
 static LOCAL_INVOCATION_ID: *const Vec3<u32>;
 
-#[legionella(exe_model(any(Kernel, GLCompute)),
-             spirv_builtin = "LocalInvocationIndex",
-             storage_class = "Input")]
+#[geobacter(exe_model(any(Kernel, GLCompute)),
+            spirv_builtin = "LocalInvocationIndex",
+            storage_class = "Input")]
 #[linkage = "extern_weak"]
 static LOCAL_INVOCATION_INDEX: *const u32;
 
-#[legionella(exe_model(any(Kernel, GLCompute)),
-             spirv_builtlin = "NumSubgroups",
-             storage_class = "Input")]
+#[geobacter(exe_model(any(Kernel, GLCompute)),
+            spirv_builtlin = "NumSubgroups",
+            storage_class = "Input")]
 #[linkage = "extern_weak"]
 static NUM_SUBGROUPS: *const u32;
 
-#[legionella(exe_model(any(Kernel, GLCompute)),
-             spirv_builtlin = "NumWorkgroups",
-             storage_class = "Input")]
+#[geobacter(exe_model(any(Kernel, GLCompute)),
+            spirv_builtlin = "NumWorkgroups",
+            storage_class = "Input")]
 #[linkage = "extern_weak"]
 static NUM_WORKGROUPS: *const Vec3<u32>;
 
-#[legionella(spirv_builtlin = "SubgroupSize",
-             storage_class = "Input")]
+#[geobacter(spirv_builtlin = "SubgroupSize",
+            storage_class = "Input")]
 #[linkage = "extern_weak"]
 static SUBGROUP_SIZE: *const u32;
 
-#[legionella(exe_model(any(Kernel, GLCompute)),
-             spirv_builtlin = "WorkgroupId",
-             storage_class = "Input")]
+#[geobacter(exe_model(any(Kernel, GLCompute)),
+            spirv_builtlin = "WorkgroupId",
+            storage_class = "Input")]
 #[linkage = "extern_weak"]
 static WORKGROUP_ID: *const Vec3<u32>;
 
-#[legionella(exe_model(any(Kernel, GLCompute)),
-             spirv_builtlin = "WorkgroupSize",
-             storage_class = "Input")]
+#[geobacter(exe_model(any(Kernel, GLCompute)),
+            spirv_builtlin = "WorkgroupSize",
+            storage_class = "Input")]
 #[linkage = "extern_weak"]
 static WORKGROUP_SIZE: *const Vec3<u32>;
 
 }
 
-#[legionella(exe_model(any(Kernel, GLCompute)),
-             spirv_builtin = "GlobalInvocationId",
-             storage_class = "Input")]
+#[geobacter(exe_model(any(Kernel, GLCompute)),
+            spirv_builtin = "GlobalInvocationId",
+            storage_class = "Input")]
 static GLOBAL_INVOCATION_ID: Vec3<u32> = Vec3::new_u32_c([0, 0, 0, ]);
 
 macro_rules! g {
@@ -99,9 +98,9 @@ pub fn workgroup_id() -> Vec3<usize> { gv3!(WORKGROUP_ID) }
 pub fn workgroup_size() -> Vec3<usize> { gv3!(WORKGROUP_SIZE) }
 
 extern "rust-intrinsic" {
-  fn __legionella_check_glcompute_shader<F>(f: &F)
+  fn __geobacter_check_glcompute_shader<F>(f: &F)
     where F: Fn<(), Output = ()>;
-  fn __legionella_check_kernel_shader<F>(f: &F)
+  fn __geobacter_check_kernel_shader<F>(f: &F)
     where F: Fn<(), Output = ()>;
 }
 
@@ -132,7 +131,7 @@ pub fn kernel_desc<F>(f: &F) -> KernelDesc
   where F: Fn<(), Output = ()>,
 {
   unsafe {
-    __legionella_check_glcompute_shader(f);
+    __geobacter_check_glcompute_shader(f);
   }
 
   let id = kernel_id_for(f);

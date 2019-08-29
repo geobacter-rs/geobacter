@@ -1,9 +1,9 @@
 
 //! This bin builds a vanilla Rust toolchain suitable for use with
-//! Legionella, then installs the full Legionella specific `rustc`
+//! Geobacter, then installs the full Geobacter specific `rustc`
 //! driver into it.
 //!
-//! It is intended that development of the Rust Legionella patches
+//! It is intended that development of the Rust Geobacter patches
 //! is done in a separate checkout, which is passed to us via `--repo-url`
 //!
 
@@ -19,18 +19,18 @@ use which::which;
 
 mod git;
 
-const RUST_REPO_URL: &str = "https://github.com/legionella-rs/rust.git";
+const RUST_REPO_URL: &str = "https://github.com/geobacter-rs/rust.git";
 const RUST_REPO_BRANCH: &str = "merge-head";
 
 pub fn main() {
   let repo_url = Arg::with_name("repo-url")
     .long("repo-url")
-    .help("override the Legionella Rust url")
+    .help("override the Geobacter Rust url")
     .takes_value(true)
     .default_value(RUST_REPO_URL);
   let repo_branch = Arg::with_name("repo-branch")
     .long("repo-branch")
-    .help("override the Legionella Rust branch")
+    .help("override the Geobacter Rust branch")
     .takes_value(true)
     .default_value(RUST_REPO_BRANCH)
     .requires("repo-url");
@@ -61,7 +61,7 @@ pub fn main() {
     .help("Rustup toolchain name")
     .takes_value(true);
 
-  let matches = App::new("Legionella Rust Toolchain Builder")
+  let matches = App::new("Geobacter Rust Toolchain Builder")
     .version("0.0.0")
     .author("Richard Diamond <wichard@vitalitystudios.com>")
     .arg(repo_url)
@@ -136,7 +136,7 @@ trait Builder {
     cmd.current_dir(self.target_dir())
       .arg(task)
       .arg("--config").arg(self.config_path())
-      .env("RUSTFLAGS_NOT_STAGE_0", get_rust_flags());
+      .env("RUSTFLAGS_NOT_STAGE_0", RUST_FLAGS);
 
     cmd
   }
@@ -294,9 +294,9 @@ ar = "ar"
     let cmd = self.x_py_command("build");
     run_unlogged_cmd("build-rust", cmd);
   }
-  fn install_legionella_drivers(&self) -> PathBuf {
+  fn install_geobacter_drivers(&self) -> PathBuf {
     let bootstrap = self.install_bootstrap_driver();
-    self.install_driver("rustc", "legionella-rustc-driver",
+    self.install_driver("rustc", "geobacter-rustc-driver",
                         Some("rustc-driver"), Some(&bootstrap))
   }
   fn install_toolchain_into_rustup(&self) {
@@ -316,7 +316,7 @@ ar = "ar"
     self.write_config_toml();
     self.build_toolchain();
     self.build_docs();
-    let driver = self.install_legionella_drivers();
+    let driver = self.install_geobacter_drivers();
     self.install_toolchain_into_rustup();
 
     // verify the driver works:

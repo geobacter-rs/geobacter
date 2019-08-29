@@ -17,14 +17,14 @@ use crate::rustc::ty::{TyCtxt, Instance, };
 use amd_comgr::{set::DataSet, data::RelocatableData,
                 data::Data, action::*, };
 
-use hsa_core::platform::hsa::AmdGpu;
-use hsa_core::platform::{hsa, Platform};
+use geobacter_core::platform::hsa::AmdGpu;
+use geobacter_core::platform::{hsa, Platform};
 
-use crate::lrt_core::{AcceleratorTargetDesc, };
-use crate::lrt_core::codegen as core_codegen;
-use crate::lrt_core::codegen::*;
-use crate::lrt_core::codegen::help::LlvmBuildRoot;
-use crate::lrt_core::codegen::products::*;
+use crate::grt_core::{AcceleratorTargetDesc, };
+use crate::grt_core::codegen as core_codegen;
+use crate::grt_core::codegen::*;
+use crate::grt_core::codegen::help::LlvmBuildRoot;
+use crate::grt_core::codegen::products::*;
 
 use crate::intrinsics::*;
 use crate::intrinsics_common::CurrentPlatform;
@@ -128,11 +128,11 @@ impl PlatformCodegen for Codegenner {
       if var_os("RUST_BUILD_ROOT").is_none() &&
         var_os("LLVM_BUILD").is_none() {
         println!("Due to some required LLVM patches, I need a build of \
-                Legionella's LLVM");
+                 Geobacter's LLVM");
         println!("You shouldn't need to build this separately; it should \
-                have been built with Rust");
+                 have been built with Rust");
         println!("Set either LLVM_BUILD or RUST_BUILD_ROOT \
-                (RUST_BUILD_ROOT takes priority)");
+                 (RUST_BUILD_ROOT takes priority)");
         println!("XXX Temporary");
       }
 

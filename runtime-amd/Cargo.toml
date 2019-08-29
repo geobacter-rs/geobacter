@@ -1,5 +1,5 @@
 [package]
-name = "legionella-runtime-amd"
+name = "geobacter-runtime-amd"
 version = "0.1.0"
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 edition = "2018"
@@ -15,12 +15,12 @@ log = "0.4.7"
 any_key = "0.1.1"
 
 amd-comgr = { path = "../amd-comgr" }
-hsa-core = { path = "../hsa-core" }
+geobacter-core = { path = "../geobacter-core" }
 hsa-rt = { path = "../hsa-rt" }
-legionella-runtime-core = { path = "../runtime-core" }
-legionella-shared-defs = { path = "../shared-defs" }
-legionella-intrinsics-common = { path = "../shared-intrinsics/common" }
-legionella-amdgpu-intrinsics = { path = "../shared-intrinsics/amdgpu" }
+geobacter-runtime-core = { path = "../runtime-core" }
+geobacter-shared-defs = { path = "../shared-defs" }
+geobacter-intrinsics-common = { path = "../shared-intrinsics/common" }
+geobacter-amdgpu-intrinsics = { path = "../shared-intrinsics/amdgpu" }
 
 [dependencies.goblin]
 version = "0.0.23"

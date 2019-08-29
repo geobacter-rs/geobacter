@@ -3,9 +3,9 @@
 
 #![feature(rustc_private)]
 
-extern crate legionella_core as lcore;
-extern crate legionella_std as lstd;
-extern crate legionella_runtime_core as lrt_core;
+extern crate geobacter_core as gcore;
+extern crate geobacter_std as gstd;
+extern crate geobacter_runtime_core as grt_core;
 extern crate rustc_target;
 
 #[macro_use]
@@ -16,11 +16,11 @@ use std::error::Error;
 use std::ffi::CString;
 use std::sync::{Arc, RwLock, };
 
-use lrt_core::{AcceleratorId, Accelerator, AcceleratorTargetDesc,
+use grt_core::{AcceleratorId, Accelerator, AcceleratorTargetDesc,
                PlatformTargetDesc, };
-use lrt_core::codegen::{PlatformKernelDesc, CodegenDesc};
-use lrt_core::codegen::worker::{CodegenComms, CodegenUnsafeSyncComms, };
-use lrt_core::context::Context;
+use grt_core::codegen::{PlatformKernelDesc, CodegenDesc};
+use grt_core::codegen::worker::{CodegenComms, CodegenUnsafeSyncComms, };
+use grt_core::context::Context;
 
 use rustc_target::spec::{PanicStrategy, abi::Abi, };
 use crate::module::SpirvModule;

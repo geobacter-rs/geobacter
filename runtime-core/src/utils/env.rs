@@ -8,7 +8,7 @@ static USE_LLC: AtomicBool = AtomicBool::new(false);
 static OPT_REMARKS: AtomicBool = AtomicBool::new(false);
 
 fn key(key: &str) -> String {
-  format!("LEGIONELLA_{}", key)
+  format!("GEOBACTER_{}", key)
 }
 
 fn b(k: &str) -> bool {

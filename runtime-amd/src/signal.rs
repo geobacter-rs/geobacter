@@ -7,7 +7,7 @@ use std::sync::atomic::{fence, Ordering, };
 use hsa_rt::error::Error as HsaError;
 use hsa_rt::signal::{Signal, SignalRef, ConditionOrdering, WaitState, };
 
-use lrt_core::AcceleratorId;
+use grt_core::AcceleratorId;
 
 pub use hsa_rt::signal::Value;
 

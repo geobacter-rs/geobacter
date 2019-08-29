@@ -22,8 +22,8 @@ use std::sync::{Arc, };
 use crate::codegen::PlatformCodegen;
 use super::driver_data::DriverData;
 
-use lintrinsics::collector::{collect_items_rec, create_fn_mono_item, };
-use lintrinsics::stubbing::Stubber;
+use gintrinsics::collector::{collect_items_rec, create_fn_mono_item, };
+use gintrinsics::stubbing::Stubber;
 
 pub fn collect_and_partition_mono_items<'tcx, P>(tcx: TyCtxt<'tcx>,
                                                  dd: &'tcx DriverData<'tcx, P>,

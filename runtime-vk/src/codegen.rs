@@ -142,10 +142,10 @@ impl PlatformCodegen for VkPlatformCodegen {
           attrs.spirv = None;
         },
         _ => {
-          let global_attrs = legionella_global_attrs(tcx,
-                                                     dd.root().exe_model(),
-                                                     inst,
-                                                     false);
+          let global_attrs = geobacter_global_attrs(tcx,
+                                                    dd.root().exe_model(),
+                                                    inst,
+                                                    false);
 
           if let Some(_) = global_attrs.spirv_builtin {
             // remove the linkage attr. This is used on the host to

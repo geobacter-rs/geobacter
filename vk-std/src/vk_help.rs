@@ -202,23 +202,23 @@ impl ExactSizeIterator for StaticShaderInterfaceDefEntryIter {
 extern "rust-intrinsic" {
   /// These functions don't actually use the provided function,
   /// other than to force the function to have the correct parameterization.
-  fn __legionella_compute_pipeline_layout_desc<F, Args, Ret>(_: &F)
+  fn __geobacter_compute_pipeline_layout_desc<F, Args, Ret>(_: &F)
     -> CompilerDescriptorSetBindingsDesc
     where F: Fn<Args, Output = Ret>;
-  fn __legionella_compute_pipeline_required_capabilities<F, Ret, Args>(_: &F)
+  fn __geobacter_compute_pipeline_required_capabilities<F, Ret, Args>(_: &F)
     -> &'static [u32]
     where F: Fn<Args, Output = Ret>;
-  fn __legionella_compute_pipeline_required_extensions<F, Ret, Args>(_: &F)
+  fn __geobacter_compute_pipeline_required_extensions<F, Ret, Args>(_: &F)
     -> &'static [&'static str]
     where F: Fn<Args, Output = Ret>;
 
-  crate fn __legionella_compute_descriptor_set_binding<Fm>()
+  crate fn __geobacter_compute_descriptor_set_binding<Fm>()
     -> &'static (u32, u32);
 
   // Note we don't put predicates on the generic params (which would otherwise
   // want Fn<(), Output = ()>). This is done so the geometry and tessellation
   // stages can use () if they aren't used.
-  crate fn __legionella_graphics_pipeline_layout_desc<Vs, Gs, Tcs, Tes, Fs>(
+  crate fn __geobacter_graphics_pipeline_layout_desc<Vs, Gs, Tcs, Tes, Fs>(
     vertex: &Vs,
     geometry: &Gs,
     tess_control: &Tcs,
@@ -233,7 +233,7 @@ extern "rust-intrinsic" {
           //Tes: Fn<(), Output = ()>,
           Fs: Fn<(), Output = ()>;
 
-  crate fn __legionella_graphics_pipeline_required_capabilities<Vs, Gs, Tcs, Tes, Fs>(
+  crate fn __geobacter_graphics_pipeline_required_capabilities<Vs, Gs, Tcs, Tes, Fs>(
     vertex: &Vs,
     geometry: &Gs,
     tess_control: &Tcs,
@@ -248,7 +248,7 @@ extern "rust-intrinsic" {
           //Tes: Fn<(), Output = ()>,
           Fs: Fn<(), Output = ()>;
 
-  crate fn __legionella_graphics_pipeline_required_extensions<Vs, Gs, Tcs, Tes, Fs>(
+  crate fn __geobacter_graphics_pipeline_required_extensions<Vs, Gs, Tcs, Tes, Fs>(
     vertex: &Vs,
     geometry: &Gs,
     tess_control: &Tcs,
@@ -268,7 +268,7 @@ pub fn compute_pipeline_layout_desc<F>(kernel: &F) -> StaticPipelineLayoutDesc
   where F: Fn<(), Output = ()>,
 {
   let desc = unsafe {
-    __legionella_compute_pipeline_layout_desc(kernel)
+    __geobacter_compute_pipeline_layout_desc(kernel)
   };
   StaticPipelineLayoutDesc(desc)
 }
@@ -277,7 +277,7 @@ pub fn compute_pipeline_required_capabilities<F>(kernel: &F)
   where F: Fn<(), Output = ()>,
 {
   let raw = unsafe {
-    __legionella_compute_pipeline_required_capabilities(kernel)
+    __geobacter_compute_pipeline_required_capabilities(kernel)
   };
 
   let slice = unsafe {
@@ -292,7 +292,7 @@ pub fn compute_pipeline_required_extensions<F>(kernel: &F)
   where F: Fn<(), Output = ()>,
 {
   unsafe {
-    __legionella_compute_pipeline_required_extensions(kernel)
+    __geobacter_compute_pipeline_required_extensions(kernel)
   }
 }
 
@@ -312,22 +312,22 @@ pub fn graphics_pipeline_layout_desc<Vs, Gs, Tcs, Tes, Fs>(
   let desc = unsafe {
     match (geometry, tess) {
       (None, None) => {
-        __legionella_graphics_pipeline_layout_desc(vertex, &(),
+        __geobacter_graphics_pipeline_layout_desc(vertex, &(),
                                                    &(), &(),
                                                    frag)
       },
       (Some(geometry), None) => {
-        __legionella_graphics_pipeline_layout_desc(vertex, geometry,
+        __geobacter_graphics_pipeline_layout_desc(vertex, geometry,
                                                    &(), &(),
                                                    frag)
       },
       (None, Some((control, eval))) => {
-        __legionella_graphics_pipeline_layout_desc(vertex, &(),
+        __geobacter_graphics_pipeline_layout_desc(vertex, &(),
                                                    control, eval,
                                                    frag)
       },
       (Some(geometry), Some((control, eval))) => {
-        __legionella_graphics_pipeline_layout_desc(vertex, geometry,
+        __geobacter_graphics_pipeline_layout_desc(vertex, geometry,
                                                    control, eval,
                                                    frag)
       },
@@ -352,22 +352,22 @@ pub fn graphics_pipeline_required_capabilities<Vs, Gs, Tcs, Tes, Fs>(
   let raw = unsafe {
     match (geometry, tess) {
       (None, None) => {
-        __legionella_graphics_pipeline_required_capabilities(vertex, &(),
+        __geobacter_graphics_pipeline_required_capabilities(vertex, &(),
                                                              &(), &(),
                                                              frag)
       },
       (Some(geometry), None) => {
-        __legionella_graphics_pipeline_required_capabilities(vertex, geometry,
+        __geobacter_graphics_pipeline_required_capabilities(vertex, geometry,
                                                              &(), &(),
                                                              frag)
       },
       (None, Some((control, eval))) => {
-        __legionella_graphics_pipeline_required_capabilities(vertex, &(),
+        __geobacter_graphics_pipeline_required_capabilities(vertex, &(),
                                                              control, eval,
                                                              frag)
       },
       (Some(geometry), Some((control, eval))) => {
-        __legionella_graphics_pipeline_required_capabilities(vertex, geometry,
+        __geobacter_graphics_pipeline_required_capabilities(vertex, geometry,
                                                              control, eval,
                                                              frag)
       },
@@ -397,22 +397,22 @@ pub fn graphics_pipeline_required_extensions<Vs, Gs, Tcs, Tes, Fs>(
   unsafe {
     match (geometry, tess) {
       (None, None) => {
-        __legionella_graphics_pipeline_required_extensions(vertex, &(),
+        __geobacter_graphics_pipeline_required_extensions(vertex, &(),
                                                            &(), &(),
                                                            frag)
       },
       (Some(geometry), None) => {
-        __legionella_graphics_pipeline_required_extensions(vertex, geometry,
+        __geobacter_graphics_pipeline_required_extensions(vertex, geometry,
                                                            &(), &(),
                                                            frag)
       },
       (None, Some((control, eval))) => {
-        __legionella_graphics_pipeline_required_extensions(vertex, &(),
+        __geobacter_graphics_pipeline_required_extensions(vertex, &(),
                                                            control, eval,
                                                            frag)
       },
       (Some(geometry), Some((control, eval))) => {
-        __legionella_graphics_pipeline_required_extensions(vertex, geometry,
+        __geobacter_graphics_pipeline_required_extensions(vertex, geometry,
                                                            control, eval,
                                                            frag)
       },

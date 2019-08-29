@@ -2,12 +2,10 @@
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 license = "MIT / Apache-2.0"
 edition = "2018"
-name = "legionella-runtime-vk"
+name = "geobacter-runtime-vk"
 version = "0.1.0"
 
 [dependencies]
 vulkano = "0.11.1"
-legionella-intrinsics-common = { path = "../shared-intrinsics/common" }
-
-[dependencies.legionella-runtime-core]
-path = "../runtime-core"
+geobacter-intrinsics-common = { path = "../shared-intrinsics/common" }
+geobacter-runtime-core = { path = "../runtime-core" }

@@ -1,5 +1,5 @@
-//! Definitions used by legionella-core and the drivers (and thus
-//! can't be included in legionella-core).
+//! Definitions used by geobacter-core and the drivers (and thus
+//! can't be included in geobacter-core).
 
 extern crate serde;
 

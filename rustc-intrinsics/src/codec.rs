@@ -36,7 +36,7 @@ struct Footer {
   interpret_alloc_index: Vec<u32>,
 }
 
-pub struct LegionellaDecoder<'a, 'tcx> {
+pub struct GeobacterDecoder<'a, 'tcx> {
   pub tcx: TyCtxt<'tcx>,
   pub opaque: opaque::Decoder<'a>,
 
@@ -49,7 +49,7 @@ pub struct LegionellaDecoder<'a, 'tcx> {
   alloc_decoding_session: AllocDecodingSession<'a>,
 }
 
-impl<'a, 'tcx> LegionellaDecoder<'a, 'tcx> {
+impl<'a, 'tcx> GeobacterDecoder<'a, 'tcx> {
   pub fn new(tcx: TyCtxt<'tcx>, data: &'a [u8],
              alloc_decoding_state: &'a mut Option<AllocDecodingState>)
     -> Self
@@ -73,7 +73,7 @@ impl<'a, 'tcx> LegionellaDecoder<'a, 'tcx> {
 
     *alloc_decoding_state = Some(AllocDecodingState::new(footer.interpret_alloc_index));
 
-    LegionellaDecoder {
+    GeobacterDecoder {
       tcx,
       opaque: decoder,
       rcache: Default::default(),
@@ -118,21 +118,21 @@ impl<'a, 'tcx> LegionellaDecoder<'a, 'tcx> {
   }
 }
 
-implement_ty_decoder!(LegionellaDecoder<'a, 'tcx>);
+implement_ty_decoder!(GeobacterDecoder<'a, 'tcx>);
 
-impl<'a, 'tcx> SpecializedDecoder<AllocId> for LegionellaDecoder<'a, 'tcx> {
+impl<'a, 'tcx> SpecializedDecoder<AllocId> for GeobacterDecoder<'a, 'tcx> {
   fn specialized_decode(&mut self) -> Result<AllocId, Self::Error> {
     let alloc_decoding_session = self.alloc_decoding_session;
     alloc_decoding_session.decode_alloc_id(self)
   }
 }
-impl<'a, 'tcx> SpecializedDecoder<DefIndex> for LegionellaDecoder<'a, 'tcx> {
+impl<'a, 'tcx> SpecializedDecoder<DefIndex> for GeobacterDecoder<'a, 'tcx> {
   #[inline]
   fn specialized_decode(&mut self) -> Result<DefIndex, Self::Error> {
     bug!("Trying to decode DefIndex outside the context of a DefId")
   }
 }
-impl<'a, 'tcx> SpecializedDecoder<DefId> for LegionellaDecoder<'a, 'tcx> {
+impl<'a, 'tcx> SpecializedDecoder<DefId> for GeobacterDecoder<'a, 'tcx> {
   #[inline]
   fn specialized_decode(&mut self) -> Result<DefId, Self::Error> {
     // Load the DefPathHash which is was we encoded the DefId as.
@@ -142,14 +142,14 @@ impl<'a, 'tcx> SpecializedDecoder<DefId> for LegionellaDecoder<'a, 'tcx> {
     Ok(self.tcx().def_path_hash_to_def_id.as_ref().unwrap()[&def_path_hash])
   }
 }
-impl<'a, 'tcx> SpecializedDecoder<Fingerprint> for LegionellaDecoder<'a, 'tcx> {
+impl<'a, 'tcx> SpecializedDecoder<Fingerprint> for GeobacterDecoder<'a, 'tcx> {
   fn specialized_decode(&mut self) -> Result<Fingerprint, Self::Error> {
     Fingerprint::decode_opaque(&mut self.opaque)
   }
 }
 
 
-impl<'a, 'tcx> TyDecoder<'tcx> for LegionellaDecoder<'a, 'tcx> {
+impl<'a, 'tcx> TyDecoder<'tcx> for GeobacterDecoder<'a, 'tcx> {
   fn tcx(&self) -> TyCtxt<'tcx> {
     self.tcx
   }
@@ -195,7 +195,7 @@ impl<'a, 'tcx> TyDecoder<'tcx> for LegionellaDecoder<'a, 'tcx> {
 }
 
 
-pub struct LegionellaEncoder<'a, 'tcx, E>
+pub struct GeobacterEncoder<'a, 'tcx, E>
   where E: ty_codec::TyEncoder + 'a,
 {
   pub tcx: TyCtxt<'tcx>,
@@ -209,11 +209,11 @@ pub struct LegionellaEncoder<'a, 'tcx, E>
   interpret_allocs_inverse: Vec<AllocId>,
 }
 
-impl<'a, 'tcx, E> LegionellaEncoder<'a, 'tcx, E>
+impl<'a, 'tcx, E> GeobacterEncoder<'a, 'tcx, E>
   where E: ty_codec::TyEncoder + 'a,
 {
   pub fn new(tcx: TyCtxt<'tcx>, encoder: &'a mut E) -> Self {
-    LegionellaEncoder {
+    GeobacterEncoder {
       tcx, encoder,
       crate_nums: Default::default(),
       type_shorthands: Default::default(),
@@ -292,14 +292,14 @@ impl<'a, 'tcx, E> LegionellaEncoder<'a, 'tcx, E>
   }
 }
 
-impl<'a, 'tcx> LegionellaEncoder<'a, 'tcx, opaque::Encoder> {
+impl<'a, 'tcx> GeobacterEncoder<'a, 'tcx, opaque::Encoder> {
   pub fn with<F>(tcx: TyCtxt<'tcx>, f: F) -> Result<Vec<u8>, <opaque::Encoder as Encoder>::Error>
-    where F: for<'b> FnOnce(&mut LegionellaEncoder<'b, 'tcx, opaque::Encoder>) -> Result<(), <opaque::Encoder as Encoder>::Error>,
+    where F: for<'b> FnOnce(&mut GeobacterEncoder<'b, 'tcx, opaque::Encoder>) -> Result<(), <opaque::Encoder as Encoder>::Error>,
   {
     let mut encoder = opaque::Encoder::new(vec![]);
 
     {
-      let mut this = LegionellaEncoder {
+      let mut this = GeobacterEncoder {
         tcx,
         encoder: &mut encoder,
         crate_nums: Default::default(),
@@ -315,7 +315,7 @@ impl<'a, 'tcx> LegionellaEncoder<'a, 'tcx, opaque::Encoder> {
   }
 }
 
-impl<'a, 'tcx, E> SpecializedEncoder<AllocId> for LegionellaEncoder<'a, 'tcx, E>
+impl<'a, 'tcx, E> SpecializedEncoder<AllocId> for GeobacterEncoder<'a, 'tcx, E>
   where E: ty_codec::TyEncoder + 'a,
 {
   fn specialized_encode(&mut self, alloc_id: &AllocId)
@@ -336,7 +336,7 @@ impl<'a, 'tcx, E> SpecializedEncoder<AllocId> for LegionellaEncoder<'a, 'tcx, E>
     index.encode(self)
   }
 }
-impl<'a, 'tcx, E> SpecializedEncoder<CrateNum> for LegionellaEncoder<'a, 'tcx, E>
+impl<'a, 'tcx, E> SpecializedEncoder<CrateNum> for GeobacterEncoder<'a, 'tcx, E>
   where E: ty_codec::TyEncoder + 'a,
 {
   fn specialized_encode(&mut self, &cnum: &CrateNum) -> Result<(), Self::Error> {
@@ -348,7 +348,7 @@ impl<'a, 'tcx, E> SpecializedEncoder<CrateNum> for LegionellaEncoder<'a, 'tcx, E
     self.emit_u32(cnum.as_u32())
   }
 }
-impl<'a, 'tcx, E> SpecializedEncoder<DefId> for LegionellaEncoder<'a, 'tcx, E>
+impl<'a, 'tcx, E> SpecializedEncoder<DefId> for GeobacterEncoder<'a, 'tcx, E>
   where E: ty_codec::TyEncoder + 'a,
 {
   #[inline]
@@ -358,14 +358,14 @@ impl<'a, 'tcx, E> SpecializedEncoder<DefId> for LegionellaEncoder<'a, 'tcx, E>
   }
 }
 
-impl<'a, 'tcx, E> SpecializedEncoder<DefIndex> for LegionellaEncoder<'a, 'tcx, E>
+impl<'a, 'tcx, E> SpecializedEncoder<DefIndex> for GeobacterEncoder<'a, 'tcx, E>
   where E: ty_codec::TyEncoder + 'a,
 {
   fn specialized_encode(&mut self, _def_index: &DefIndex) -> Result<(), Self::Error> {
     bug!("Encoding DefIndex without context.")
   }
 }
-impl<'a, 'tcx, E> SpecializedEncoder<Ty<'tcx>> for LegionellaEncoder<'a, 'tcx, E>
+impl<'a, 'tcx, E> SpecializedEncoder<Ty<'tcx>> for GeobacterEncoder<'a, 'tcx, E>
   where E: ty_codec::TyEncoder + 'a,
 {
   #[inline]
@@ -374,12 +374,12 @@ impl<'a, 'tcx, E> SpecializedEncoder<Ty<'tcx>> for LegionellaEncoder<'a, 'tcx, E
                                     |encoder| &mut encoder.type_shorthands)
   }
 }
-impl<'a, 'tcx> SpecializedEncoder<Fingerprint> for LegionellaEncoder<'a, 'tcx, opaque::Encoder> {
+impl<'a, 'tcx> SpecializedEncoder<Fingerprint> for GeobacterEncoder<'a, 'tcx, opaque::Encoder> {
   fn specialized_encode(&mut self, f: &Fingerprint) -> Result<(), Self::Error> {
     f.encode_opaque(&mut self.encoder)
   }
 }
-impl<'a, 'tcx, E> ty_codec::TyEncoder for LegionellaEncoder<'a, 'tcx, E>
+impl<'a, 'tcx, E> ty_codec::TyEncoder for GeobacterEncoder<'a, 'tcx, E>
   where E: ty_codec::TyEncoder + 'a,
 {
   #[inline]
@@ -395,7 +395,7 @@ macro_rules! encoder_methods {
     }
 }
 
-impl<'a, 'tcx, E> Encoder for LegionellaEncoder<'a, 'tcx, E>
+impl<'a, 'tcx, E> Encoder for GeobacterEncoder<'a, 'tcx, E>
   where E: ty_codec::TyEncoder + 'a,
 {
   type Error = E::Error;
@@ -477,7 +477,7 @@ impl<'a> DecoderWithPosition for opaque::Decoder<'a> {
   }
 }
 
-impl<'a, 'tcx> DecoderWithPosition for LegionellaDecoder<'a, 'tcx> {
+impl<'a, 'tcx> DecoderWithPosition for GeobacterDecoder<'a, 'tcx> {
   fn position(&self) -> usize {
     self.opaque.position()
   }

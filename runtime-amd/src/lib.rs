@@ -30,12 +30,12 @@ extern crate syntax;
 extern crate rustc;
 extern crate rustc_target;
 
-extern crate hsa_core;
+extern crate geobacter_core;
 extern crate hsa_rt;
-extern crate legionella_runtime_core as lrt_core;
-extern crate legionella_shared_defs as shared_defs;
-extern crate legionella_intrinsics_common as intrinsics_common;
-extern crate legionella_amdgpu_intrinsics as intrinsics;
+extern crate geobacter_runtime_core as grt_core;
+extern crate geobacter_shared_defs as shared_defs;
+extern crate geobacter_intrinsics_common as intrinsics_common;
+extern crate geobacter_amdgpu_intrinsics as intrinsics;
 
 use std::any::Any;
 use std::cmp::max;
@@ -61,18 +61,18 @@ use hsa_rt::mem::region::{Region, Segment};
 use hsa_rt::queue::{KernelSingleQueue, KernelMultiQueue};
 use hsa_rt::signal::{SignalRef, Signal};
 
-use lrt_core::{Accelerator, AcceleratorTargetDesc,
+use grt_core::{Accelerator, AcceleratorTargetDesc,
                PlatformTargetDesc, Device, };
-use lrt_core::codegen::{CodegenComms, CodegenUnsafeSyncComms, };
-use lrt_core::codegen::products::PCodegenResults;
+use grt_core::codegen::{CodegenComms, CodegenUnsafeSyncComms, };
+use grt_core::codegen::products::PCodegenResults;
 use shared_defs::platform::{Platform, host_platform, hsa, };
 use shared_defs::platform::hsa::AmdGpu;
 
 use codegen::Codegenner;
 use crate::module::HsaModuleData;
 
-pub use lrt_core::AcceleratorId;
-pub use lrt_core::context::Context;
+pub use grt_core::AcceleratorId;
+pub use grt_core::context::Context;
 
 use crate::async_copy::CopyDataObject;
 use crate::boxed::{RawPoolBox, LocallyAccessiblePoolBox};
@@ -100,7 +100,7 @@ pub struct HsaAmdGpuAccel {
   kernarg_region: Region,
   alloc_pool: MemoryPool,
 
-  // TODO need to create a `legionella_runtime_host` crate
+  // TODO need to create a `geobacter_runtime_host` crate
   //host_codegen: CodegenUnsafeSyncComms<Self>,
   self_codegen: Option<Arc<CodegenUnsafeSyncComms<Codegenner>>>,
 }

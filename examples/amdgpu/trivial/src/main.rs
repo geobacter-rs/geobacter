@@ -8,9 +8,9 @@ extern crate env_logger;
 extern crate rand;
 extern crate packed_simd;
 
-extern crate legionella_runtime_core as rt_core;
-extern crate legionella_runtime_amd as rt_amd;
-extern crate legionella_amdgpu_std as amdgpu_std;
+extern crate geobacter_runtime_core as rt_core;
+extern crate geobacter_runtime_amd as rt_amd;
+extern crate geobacter_amdgpu_std as amdgpu_std;
 
 use std::mem::{size_of, };
 use std::time::Instant;

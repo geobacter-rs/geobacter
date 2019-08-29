@@ -3,7 +3,7 @@ name = "rust-builder"
 version = "0.1.0"
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 edition = "2018"
-description = "Builds the Legionella Rust toolchain"
+description = "Builds the Geobacter Rust toolchain"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

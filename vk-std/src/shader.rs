@@ -5,49 +5,48 @@
 use std::ops::{Deref, };
 use std::slice::{from_raw_parts, };
 
-use hsa_core::kernel::{KernelId, kernel_id_for, opt_kernel_id_for,
-                       OptionalFn, };
-use hsa_core::unit::*;
+use geobacter_core::kernel::{KernelId, kernel_id_for, opt_kernel_id_for,
+                             OptionalFn, };
 use spirv_help::*;
 
-use lcore::{Capabilities, Capability, };
+use gcore::{Capabilities, Capability, };
 use vk_help::{StaticPipelineLayoutDesc,
-              __legionella_graphics_pipeline_layout_desc,
-              __legionella_graphics_pipeline_required_capabilities,
-              __legionella_graphics_pipeline_required_extensions,
+              __geobacter_graphics_pipeline_layout_desc,
+              __geobacter_graphics_pipeline_required_capabilities,
+              __geobacter_graphics_pipeline_required_extensions,
 };
 
 use super::{exe_model, ExeModel, };
 
   // TODO expand these
 
-#[legionella(capabilities(any(Geometry, Tessellation, RayTracingNV, Fragment)),
-             spirv_builtin = "PrimitiveId",
-             storage_class = "Input")]
+#[geobacter(capabilities(any(Geometry, Tessellation, RayTracingNV, Fragment)),
+            spirv_builtin = "PrimitiveId",
+            storage_class = "Input")]
 static PRIMITIVE_ID: u32 = 0;
 
-#[legionella(capabilities = "Vertex",
-             spirv_builtin = "VertexIndex",
-             storage_class = "Input")]
+#[geobacter(capabilities = "Vertex",
+            spirv_builtin = "VertexIndex",
+            storage_class = "Input")]
 static VERTEX_INDEX: u32 = 0;
 
-#[legionella(capabilities(all(not(Kernel), Shader)),
-             spirv_builtin = "ViewIndex",
-             storage_class = "Input")]
+#[geobacter(capabilities(all(not(Kernel), Shader)),
+            spirv_builtin = "ViewIndex",
+            storage_class = "Input")]
 static VIEW_INDEX: u32 = 0;
 
-#[legionella(capabilities(all(not(Kernel), Shader)),
-             exe_model(any(Geometry, TessellationControl,
-                           TessellationEval)),
-             spirv_builtin = "Position",
-             storage_class = "Input")]
+#[geobacter(capabilities(all(not(Kernel), Shader)),
+            exe_model(any(Geometry, TessellationControl,
+                          TessellationEval)),
+            spirv_builtin = "Position",
+            storage_class = "Input")]
 static POSITION_IN: Vec4<f32> = Vec4::new_f32_c([0.0, 0.0, 0.0, 1.0]);
 
 // this isn't unsafe; the `Output` storage class is per work item.
 pub struct Position;
 impl Position {
-  #[legionella(exe_model(any(Vertex, Geometry, TessellationControl,
-                             TessellationEval)))]
+  #[geobacter(exe_model(any(Vertex, Geometry, TessellationControl,
+                            TessellationEval)))]
   pub fn write(&self, v: Vec4<f32>) {
     unsafe { POSITION_OUT = v; }
   }
@@ -55,18 +54,18 @@ impl Position {
 impl Deref for Position {
   type Target = Vec4<f32>;
 
-  #[legionella(exe_model(any(Geometry, TessellationControl,
-                             TessellationEval)))]
+  #[geobacter(exe_model(any(Geometry, TessellationControl,
+                            TessellationEval)))]
   fn deref(&self) -> &Vec4<f32> {
     unsafe { &POSITION_IN }
   }
 }
 
-#[legionella(capabilities = "Shader",
-             exe_model(any(Vertex, Geometry, TessellationControl,
-                           TessellationEval)),
-             spirv_builtin = "Position",
-             storage_class = "Output")]
+#[geobacter(capabilities = "Shader",
+            exe_model(any(Vertex, Geometry, TessellationControl,
+                          TessellationEval)),
+            spirv_builtin = "Position",
+            storage_class = "Output")]
 static mut POSITION_OUT: Vec4<f32> = Vec4::new_f32_c([0.0, 0.0, 0.0, 1.0]);
 
 pub fn position() -> &'static Position {
@@ -93,15 +92,15 @@ pub fn view_index() -> usize { g!(VIEW_INDEX) }
 extern "rust-intrinsic" {
   /// These cause our driver to run the compile time checking for the
   /// provided function.
-  fn __legionella_check_vertex_shader<F>(f: &F)
+  fn __geobacter_check_vertex_shader<F>(f: &F)
     where F: Fn<(), Output=()>;
-  fn __legionella_check_geometry_shader<F>(f: &F)
+  fn __geobacter_check_geometry_shader<F>(f: &F)
     where F: OptionalFn<(), Output=()>;
-  fn __legionella_check_tessellation_control_shader<F>(f: &F)
+  fn __geobacter_check_tessellation_control_shader<F>(f: &F)
     where F: OptionalFn<(), Output=()>;
-  fn __legionella_check_tessellation_eval_shader<F>(f: &F)
+  fn __geobacter_check_tessellation_eval_shader<F>(f: &F)
     where F: OptionalFn<(), Output=()>;
-  fn __legionella_check_fragment_shader<F>(f: &F)
+  fn __geobacter_check_fragment_shader<F>(f: &F)
     where F: Fn<(), Output=()>;
 }
 
@@ -138,11 +137,11 @@ pub fn $pub_name<F>(f: &F) -> Option<KernelId>
   }
 }
 
-required_shader_id!(vertex_shader_id __legionella_check_vertex_shader);
-optional_shader_id!(geometry_shader_id __legionella_check_geometry_shader);
-optional_shader_id!(tessellation_control_shader_id __legionella_check_tessellation_control_shader);
-optional_shader_id!(tessellation_eval_shader_id __legionella_check_tessellation_eval_shader);
-required_shader_id!(fragment_shader_id __legionella_check_fragment_shader);
+required_shader_id!(vertex_shader_id __geobacter_check_vertex_shader);
+optional_shader_id!(geometry_shader_id __geobacter_check_geometry_shader);
+optional_shader_id!(tessellation_control_shader_id __geobacter_check_tessellation_control_shader);
+optional_shader_id!(tessellation_eval_shader_id __geobacter_check_tessellation_eval_shader);
+required_shader_id!(fragment_shader_id __geobacter_check_fragment_shader);
 
 pub fn is_vertex_shader() -> bool { exe_model() == ExeModel::Vertex }
 pub fn is_geometry_shader() -> bool { exe_model() == ExeModel::Geometry }
@@ -292,13 +291,13 @@ impl<Vs, Gs, Tsc, Tse, Fs> GraphicsDescBuilder<Vs, Gs, Tsc, Tse, Fs>
     let fragment_id = fragment_shader_id(&fragment);
 
     let pipeline_desc = unsafe {
-      __legionella_graphics_pipeline_layout_desc(&vertex,
+      __geobacter_graphics_pipeline_layout_desc(&vertex,
                                                  &geometry,
                                                  &control, &eval,
                                                  &fragment)
     };
     let caps = unsafe {
-      __legionella_graphics_pipeline_required_capabilities(&vertex,
+      __geobacter_graphics_pipeline_required_capabilities(&vertex,
                                                            &geometry,
                                                            &control, &eval,
                                                            &fragment)
@@ -310,7 +309,7 @@ impl<Vs, Gs, Tsc, Tse, Fs> GraphicsDescBuilder<Vs, Gs, Tsc, Tse, Fs>
     let caps = Capabilities::new(caps);
 
     let exts = unsafe {
-      __legionella_graphics_pipeline_required_extensions(&vertex,
+      __geobacter_graphics_pipeline_required_extensions(&vertex,
                                                          &geometry,
                                                          &control, &eval,
                                                          &fragment)

@@ -8,17 +8,17 @@ use crate::rustc::ty::{self, TyCtxt, layout::Size, };
 use crate::rustc::ty::{Const, };
 use crate::syntax_pos::{DUMMY_SP, };
 
-use rustc_intrinsics::help::LegionellaTyCtxtHelp;
+use rustc_intrinsics::help::GeobacterTyCtxtHelp;
 
-use crate::lcore::*;
-use crate::common::{DefIdFromKernelId, LegionellaCustomIntrinsicMirGen,
+use crate::gvk_core::*;
+use crate::common::{DefIdFromKernelId, GeobacterCustomIntrinsicMirGen,
                     stubbing, };
 
 pub mod shader;
 pub mod vk;
 
 pub struct ExeModel(pub Option<ExecutionModel>);
-impl LegionellaCustomIntrinsicMirGen for ExeModel {
+impl GeobacterCustomIntrinsicMirGen for ExeModel {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
                                    _kid_did: &dyn DefIdFromKernelId,
@@ -84,6 +84,6 @@ impl LegionellaCustomIntrinsicMirGen for ExeModel {
 
 impl fmt::Display for ExeModel {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "__legionella_exe_model")
+    write!(f, "__geobacter_exe_model")
   }
 }

@@ -1,10 +1,10 @@
 [package]
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 license = "MIT / Apache-2.0"
-name = "hsa-core"
+name = "geobacter-core"
 version = "0.1.0"
 
 [dependencies]
-legionella-shared-defs = { path = "../shared-defs" }
+geobacter-shared-defs = { path = "../shared-defs" }
 
 [dev-dependencies]

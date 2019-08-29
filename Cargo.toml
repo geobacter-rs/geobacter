@@ -1,6 +1,6 @@
 
 [workspace]
-members = ["hsa-core-gen", "hsa-core",
+members = ["hsa-core-gen", "geobacter-core",
            "runtime-core", "shared-defs",
 
            "rustc-intrinsics", "bootstrap-rustc-driver",
@@ -11,13 +11,13 @@ members = ["hsa-core-gen", "hsa-core",
            # TODO
            # "shared-intrinsics/nv",
 
-           "legionella-vk-core", "legionella-vk-std", "runtime-vk",
+           "vk-core", "vk-std", "runtime-vk",
            "examples/vk/trivial", "examples/vk/fractal",
 
            "amd-comgr-sys", "amd-comgr",
            "hsa-rt-sys", "hsa-rt",
            "tools/hsa-agent-info",
-           "legionella-amdgpu-std", "runtime-amd",
+           "amdgpu-std", "runtime-amd",
            "examples/amdgpu/trivial", "examples/amdgpu/fractal",
            "examples/amdgpu/mut-slice-ub",
 

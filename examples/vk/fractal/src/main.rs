@@ -5,13 +5,13 @@
 #![feature(coerce_unsized)]
 
 extern crate ndarray as nd;
-extern crate hsa_core;
+extern crate geobacter_core;
 extern crate runtime_core as rt;
 #[macro_use]
 extern crate log;
 extern crate env_logger;
 extern crate rand;
-extern crate legionella_std as lstd;
+extern crate geobacter_std as gstd;
 extern crate tempdir;
 #[macro_use]
 extern crate vulkano as vk;
@@ -30,8 +30,6 @@ use std::sync::{Arc, };
 use std::time::Instant;
 use std::vec::Vec;
 
-use hsa_core::unit::{Vec2, Vec3, Vec4, VecFloat, };
-
 use vk::buffer::BufferUsage;
 use vk::buffer::cpu_access::{CpuAccessibleBuffer, };
 use vk::buffer::device_local::{DeviceLocalBuffer, };
@@ -47,8 +45,8 @@ use rt::accelerators::VkAccel;
 use rt::context::Context;
 use rt::module::KernelDesc;
 
-use lstd::kernel::global_invocation_id;
-use lstd::mem::buffer::{BufferBinding, UniformBinding, AddBinding, };
+use gstd::kernel::global_invocation_id;
+use gstd::mem::buffer::{BufferBinding, UniformBinding, AddBinding, };
 use rt::Accelerator;
 
 pub type Elem = Vec4<u8>;
@@ -75,12 +73,12 @@ struct Scale {
   scale: Vec2<f32>,
 }
 
-#[legionella(set = "0", binding = "1",
-             storage_class = "Uniform")]
+#[geobacter(set = "0", binding = "1",
+            storage_class = "Uniform")]
 static mut SCALE: Scale = Scale {
   scale: Vec2::new_c([0.0; 2]),
 };
-#[legionella(set = "0", binding = "1")]
+#[geobacter(set = "0", binding = "1")]
 fn scale_binding() -> UniformBinding<Scale> {
   UniformBinding::new(&scale_binding)
 }
@@ -103,16 +101,16 @@ impl DerefMut for Pixels {
 }
 impl CoerceUnsized<[Elem]> for Pixels { }
 
-#[legionella(set = "0", binding = "0",
-             storage_class = "StorageBuffer")]
+#[geobacter(set = "0", binding = "0",
+            storage_class = "StorageBuffer")]
 static mut PIXELS: Pixels = Pixels([Elem::new_u8_c([0u8; 4]); PIXEL_LEN]);
-#[legionella(set = "0", binding = "0")]
+#[geobacter(set = "0", binding = "0")]
 fn pixels_binding() -> BufferBinding<Pixels> {
   BufferBinding::new(&pixels_binding)
 }
 
-#[legionella(capabilities(Shader, Kernel))]
-#[legionella(local_size(x = 8, y = 8, z = 1))]
+#[geobacter(capabilities(Shader, Kernel))]
+#[geobacter(local_size(x = 8, y = 8, z = 1))]
 fn kernel() {
   let gid = global_invocation_id();
   let id_x = gid.x();
@@ -336,7 +334,7 @@ pub fn main() {
     let vk_accel = VkAccel::new(&ctxt,
                                 device.clone(),
                                 queue.clone())
-      .expect("failed to create Legionella accelerator");
+      .expect("failed to create Geobacter accelerator");
     let vk_accel = Arc::new(vk_accel);
     let accel = vk_accel.clone() as Arc<Accelerator>;
 

@@ -2,7 +2,7 @@
 use std::marker::{PhantomData, Unsize, };
 use std::ops::{Deref, };
 
-use vk_help::{__legionella_compute_descriptor_set_binding, };
+use vk_help::{__geobacter_compute_descriptor_set_binding, };
 use vk::buffer::{TypedBufferAccess, };
 use vk::descriptor::descriptor_set::{PersistentDescriptorSetError,
                                      PersistentDescriptorSetBuf,
@@ -23,7 +23,7 @@ use crate::{is_host, };
 /// Note: T must satisfy `Copy + 'static` in addition to `Sized`. They are
 /// omitted because `const fn`s can't have any other bounds other than
 /// `Sized` currently.
-#[legionella(lang_item = "Uniform")]
+#[geobacter(lang_item = "Uniform")]
 pub struct Uniform<T>
   where T: Sized,
 {
@@ -47,7 +47,7 @@ pub struct Uniform<T>
 /// Note: T must satisfy `Copy + 'static` in addition to `Sized`. They are
 /// omitted because `const fn`s can't have any other bounds other than
 /// `Sized` currently.
-#[legionella(lang_item = "UniformArray")]
+#[geobacter(lang_item = "UniformArray")]
 pub struct UniformArray<T>
   where T: Sized,
 {
@@ -104,7 +104,7 @@ impl<T> Uniform<T>
     Uniform {
       data,
       set_binding: unsafe {
-        __legionella_compute_descriptor_set_binding::<Km>()
+        __geobacter_compute_descriptor_set_binding::<Km>()
       },
     }
   }
@@ -117,7 +117,7 @@ impl<T> UniformArray<T>
       start: data.as_ptr(),
       len: data.len(),
       set_binding: unsafe {
-        __legionella_compute_descriptor_set_binding::<Km>()
+        __geobacter_compute_descriptor_set_binding::<Km>()
       },
     }
   }
@@ -159,7 +159,7 @@ impl<T> UniformArray<T>
 /// Note: T must satisfy `Copy + 'static` in addition to `Sized`. They are
 /// omitted because `const fn`s can't have any other bounds other than
 /// `Sized` currently.
-///#[legionella(lang_item = "Buffer")]
+///#[geobacter(lang_item = "Buffer")]
 pub struct UniformBinding<T>
   where T: Sized,
 {
@@ -174,7 +174,7 @@ impl<T> UniformBinding<T>
     UniformBinding {
       _data: PhantomData,
       set_binding: unsafe {
-        __legionella_compute_descriptor_set_binding::<Km>()
+        __geobacter_compute_descriptor_set_binding::<Km>()
       },
     }
   }
@@ -222,7 +222,7 @@ unsafe impl<T> DescriptorSetBinding<T> for UniformBinding<T>
 /// Note: T must satisfy `Copy + 'static` in addition to `Sized`. They are
 /// omitted because `const fn`s can't have any other bounds other than
 /// `Sized` currently.
-///#[legionella(lang_item = "Buffer")]
+///#[geobacter(lang_item = "Buffer")]
 pub struct BufferBinding<T>
   where T: Sized,
 {
@@ -237,7 +237,7 @@ impl<T> BufferBinding<T>
     BufferBinding {
       _data: PhantomData,
       set_binding: unsafe {
-        __legionella_compute_descriptor_set_binding::<Km>()
+        __geobacter_compute_descriptor_set_binding::<Km>()
       },
     }
   }

@@ -1,7 +1,7 @@
 
 extern crate runtime_core as rt;
-extern crate legionella_std as lstd;
-extern crate hsa_core;
+extern crate geobacter_std as gstd;
+extern crate geobacter_core;
 #[macro_use]
 extern crate log;
 #[macro_use]
@@ -26,8 +26,8 @@ use rt::accelerators::VkAccel;
 use rt::context::Context;
 use rt::module::KernelDesc;
 
-use lstd::kernel::global_invocation_id;
-use lstd::mem::buffer::{BufferBinding, AddBinding, };
+use gstd::kernel::global_invocation_id;
+use gstd::mem::buffer::{BufferBinding, AddBinding, };
 use rt::Accelerator;
 
 const ELEMENTS: usize = 4096;
@@ -51,17 +51,17 @@ impl DerefMut for Data {
 
 // TODO fix this ugly duplication of the set and binding number attributes.
 
-#[legionella(set = "0", binding = "0",
-             storage_class = "StorageBuffer")]
+#[geobacter(set = "0", binding = "0",
+            storage_class = "StorageBuffer")]
 static mut DATA: Data = Data([0; ELEMENTS]);
 
-#[legionella(set = "0", binding = "0")]
+#[geobacter(set = "0", binding = "0")]
 fn data_binding() -> BufferBinding<Data> {
   BufferBinding::new(&data_binding)
 }
 
-#[legionella(capabilities(Kernel, Shader))]
-#[legionella(local_size(x = 64, y = 1, z = 1))]
+#[geobacter(capabilities(Kernel, Shader))]
+#[geobacter(local_size(x = 64, y = 1, z = 1))]
 fn kernel() {
   // we have to use unsafe here because all invocations can access any
   // part of `DATA` (as reflected in the use of a static mut).
@@ -162,7 +162,7 @@ pub fn main() {
     let vk_accel = VkAccel::new(&ctxt,
                                 device.clone(),
                                 queue.clone())
-      .expect("failed to create Legionella accelerator");
+      .expect("failed to create Geobacter accelerator");
     let vk_accel = Arc::new(vk_accel);
     let accel = vk_accel.clone() as Arc<Accelerator>;
 

@@ -1,6 +1,6 @@
 #![feature(core_intrinsics)]
 
-extern crate legionella_shared_defs as shared_defs;
+extern crate geobacter_shared_defs as shared_defs;
 extern crate vulkano as vk;
 
 use std::iter::*;

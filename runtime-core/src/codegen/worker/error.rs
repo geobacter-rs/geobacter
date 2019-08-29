@@ -2,7 +2,7 @@
 use std::error::Error as StdError;
 use std::{fmt, io, };
 
-use hsa_core::kernel::KernelInstance;
+use geobacter_core::kernel::KernelInstance;
 
 #[derive(Debug)]
 pub enum Error {

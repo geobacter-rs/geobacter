@@ -17,17 +17,17 @@ use crate::rustc::mir::{self, Location, };
 use crate::rustc::mir::visit::{Visitor, };
 use crate::rustc::ty::{TyCtxt, ParamEnv, Instance, AdtDef, };
 
-use crate::lcore::*;
-use crate::lcore::ss::ExeModel;
+use crate::gvk_core::*;
+use crate::gvk_core::ss::ExeModel;
 use crate::rustc_intrinsics::help::*;
 use crate::common::{attrs::*, };
 
-use crate::{LegionellaLangItemTypes, };
+use crate::{GeobacterLangItemTypes, };
 
 fn unknown_capability(tcx: TyCtxt<'_>, span: Span, _: Option<&str>) {
-  let msg = "#[legionella(capabilities = \"..\")] expects one of \
-                   enum values listed in the SPIR-V spec (too many to \
-                   list here)";
+  let msg = "#[geobacter(capabilities = \"..\")] expects one of \
+             enum values listed in the SPIR-V spec (too many to \
+             list here)";
   tcx.sess.span_err(span, &msg);
 }
 fn unknown_exe_model(tcx: TyCtxt<'_>, span: Span, found: Option<&str>) {
@@ -95,9 +95,9 @@ impl Deref for $newtype {
 
   }
 }
-condition_word_newtype!(CapabilityCondition, lcore::Capability,
+condition_word_newtype!(CapabilityCondition, gvk_core::Capability,
                         unknown_capability);
-condition_word_newtype!(ExecutionModelCondition, lcore::ExecutionModel,
+condition_word_newtype!(ExecutionModelCondition, gvk_core::ExecutionModel,
                         unknown_exe_model);
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
@@ -138,8 +138,8 @@ pub fn find_descriptor_set_binding_nums(tcx: TyCtxt<'_>,
     let value = match item.value_str() {
       Some(value) => value,
       None => {
-        let msg = "#[legionella(set)] attribute must be of the form \
-                        #[legionella(set = \"<integer>\")]";
+        let msg = "#[geobacter(set)] attribute must be of the form \
+                   #[geobacter(set = \"<integer>\")]";
         tcx.sess.span_err(item.span(), &msg);
         return (None, None);
       },
@@ -158,8 +158,8 @@ pub fn find_descriptor_set_binding_nums(tcx: TyCtxt<'_>,
     let value = match item.value_str() {
       Some(value) => value,
       None => {
-        let msg = "#[legionella(binding)] attribute must be of the form \
-                         #[legionella(binding = \"<integer>\")]";
+        let msg = "#[geobacter(binding)] attribute must be of the form \
+                   #[geobacter(binding = \"<integer>\")]";
         tcx.sess.span_err(item.span(), &msg);
         return (None, None);
       },
@@ -183,7 +183,7 @@ pub fn optional_descriptor_set_binding_nums(tcx: TyCtxt<'_>, did: DefId)
 {
   let mut set_num = None;
   let mut binding_num = None;
-  legionella_attrs(tcx, did, |item| {
+  geobacter_attrs(tcx, did, |item| {
     let (set, binding) = find_descriptor_set_binding_nums(tcx, item);
     if let Some(set) = set {
       set_num = Some(set);
@@ -203,11 +203,11 @@ pub fn require_descriptor_set_binding_nums(tcx: TyCtxt<'_>, did: DefId)
 
   let span = tcx.def_span(did);
   if set_num.is_none() {
-    let msg = "missing #[legionella(set = \"<integer>\")]";
+    let msg = "missing #[geobacter(set = \"<integer>\")]";
     tcx.sess.span_fatal(span, &msg);
   }
   if binding_num.is_none() {
-    let msg = "missing #[legionella(binding = \"<integer>\")]";
+    let msg = "missing #[geobacter(binding = \"<integer>\")]";
     tcx.sess.span_fatal(span, &msg);
   }
   let set_num = set_num.unwrap();
@@ -338,7 +338,7 @@ impl Root {
       return;
     }
 
-    let msg = format!("#[legionella(capabilities(..))] expects a list of words, \
+    let msg = format!("#[geobacter(capabilities(..))] expects a list of words, \
                       found {:?}", item);
     tcx.sess.span_err(span, &msg);
   }
@@ -486,7 +486,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for LangItemTypeCtorVisitor<'tcx> {
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct RustVkLangDesc<'tcx> {
-  lang: LegionellaLangItemTypes,
+  lang: GeobacterLangItemTypes,
   global: DefId,
   marker: Instance<'tcx>
 }
@@ -501,19 +501,19 @@ pub fn extract_rust_vk_lang_desc<'tcx>(tcx: TyCtxt<'tcx>,
 {
   let adt_did = adt_def.did;
   let mut lang_item = None;
-  legionella_attrs(tcx, adt_did, |item| {
+  geobacter_attrs(tcx, adt_did, |item| {
     if item.check_name(Symbol::intern("lang_item")) {
       let s = match item.value_str() {
         Some(str) => str,
         None => {
-          let msg = "#[legionella(lang_item)] attribute must be of the form \
-                             #[legionella(lang_item = \"..\")]";
+          let msg = "#[geobacter(lang_item)] attribute must be of the form \
+                     #[geobacter(lang_item = \"..\")]";
           tcx.sess.span_err(item.span(), &msg);
           return;
         },
       };
 
-      match LegionellaLangItemTypes::from_str(&*s.as_str()) {
+      match GeobacterLangItemTypes::from_str(&*s.as_str()) {
         Ok(li) => {
           lang_item = Some(li);
         },
@@ -566,10 +566,10 @@ pub fn extract_rust_vk_lang_desc<'tcx>(tcx: TyCtxt<'tcx>,
   }
 }
 
-pub fn legionella_global_attrs<'tcx>(tcx: TyCtxt<'tcx>,
-                                     _root_model: ExecutionModel,
-                                     instance: Instance<'tcx>,
-                                     perform_checking: bool)
+pub fn geobacter_global_attrs<'tcx>(tcx: TyCtxt<'tcx>,
+                                    _root_model: ExecutionModel,
+                                    instance: Instance<'tcx>,
+                                    perform_checking: bool)
   -> GlobalAttrs
 {
   let id = instance.def_id();
@@ -580,10 +580,10 @@ pub fn legionella_global_attrs<'tcx>(tcx: TyCtxt<'tcx>,
 
   // TODO check that storage_class isn't used on a function.
 
-  legionella_attrs(tcx, id, |item| {
+  geobacter_attrs(tcx, id, |item| {
     if item.check_name(Symbol::intern("capabilities")) {
       if out.capabilities.is_some() {
-        let msg = "duplicate #[legionella(capabilities(..))]";
+        let msg = "duplicate #[geobacter(capabilities(..))]";
         tcx.sess.span_err(item.span(), &msg);
         return;
       }
@@ -593,8 +593,8 @@ pub fn legionella_global_attrs<'tcx>(tcx: TyCtxt<'tcx>,
       let value = match item.value_str() {
         Some(value) => value,
         None => {
-          let msg = "#[legionella(spirv_builtin)] attribute must be of the form \
-                             #[legionella(spirv_builtin = \"..\")]";
+          let msg = "#[geobacter(spirv_builtin)] attribute must be of the form \
+                     #[geobacter(spirv_builtin = \"..\")]";
           tcx.sess.span_err(item.span(), &msg);
           return;
         }
@@ -609,8 +609,8 @@ pub fn legionella_global_attrs<'tcx>(tcx: TyCtxt<'tcx>,
       };
 
       if out.spirv_builtin.is_some() {
-        let msg = "#[legionella(spirv_builtin = \"..\")] specified more \
-                           than once";
+        let msg = "#[geobacter(spirv_builtin = \"..\")] specified more \
+                   than once";
         tcx.sess.span_err(item.span(), &msg);
         return;
       }
@@ -649,8 +649,8 @@ pub fn legionella_global_attrs<'tcx>(tcx: TyCtxt<'tcx>,
           }
         },
         _ => {
-          let msg = "#[legionella(storage_class_if(..))] expects two elements \
-                            a condition and a storage class";
+          let msg = "#[geobacter(storage_class_if(..))] expects two elements \
+                     a condition and a storage class";
           tcx.sess.span_err(item.span(), &msg);
         }
       }
@@ -658,8 +658,8 @@ pub fn legionella_global_attrs<'tcx>(tcx: TyCtxt<'tcx>,
       let value = match item.value_str() {
         Some(value) => value,
         None => {
-          let msg = "#[legionella(storage_class)] attribute must be of the form \
-                            #[legionella(storage_class = \"..\")]";
+          let msg = "#[geobacter(storage_class)] attribute must be of the form \
+                     #[geobacter(storage_class = \"..\")]";
           tcx.sess.span_err(item.span(), &msg);
           return;
         }
@@ -674,8 +674,8 @@ pub fn legionella_global_attrs<'tcx>(tcx: TyCtxt<'tcx>,
       };
 
       if out.storage_class.is_some() {
-        let msg = "#[legionella(storage_class = \"..\")] specified more \
-                           than once";
+        let msg = "#[geobacter(storage_class = \"..\")] specified more \
+                   than once";
         tcx.sess.span_err(item.span(), &msg);
         return;
       }
@@ -683,7 +683,7 @@ pub fn legionella_global_attrs<'tcx>(tcx: TyCtxt<'tcx>,
       if perform_checking {
         if let Some(required) = required_storage_class {
           if required != class {
-            let msg = format!("#[legionella(storage_class = \"..\")] required to be {:?}",
+            let msg = format!("#[geobacter(storage_class = \"..\")] required to be {:?}",
                               required);
             tcx.sess.span_err(item.span(), &msg);
             return;
@@ -740,7 +740,7 @@ pub fn legionella_global_attrs<'tcx>(tcx: TyCtxt<'tcx>,
           let model = ConditionalExpr::parse_from_attrs(tcx, mi.meta_item().unwrap());
           if let Some(_) = model {
             if out.exe_model.is_some() {
-              let msg = "duplicate #[legionella(exe_model(..))]";
+              let msg = "duplicate #[geobacter(exe_model(..))]";
               tcx.sess.span_err(item.span(), &msg);
               return;
             }
@@ -749,12 +749,12 @@ pub fn legionella_global_attrs<'tcx>(tcx: TyCtxt<'tcx>,
           out.exe_model = model;
         },
         Some(_) => {
-          let msg = "#[legionella(exe_model(..))] expects a single condition";
+          let msg = "#[geobacter(exe_model(..))] expects a single condition";
           tcx.sess.span_err(item.span(), &msg);
           return;
         },
         None => {
-          let msg = "#[legionella(exe_model(..))] expects a list with one condition";
+          let msg = "#[geobacter(exe_model(..))] expects a list with one condition";
           tcx.sess.span_err(item.span(), &msg);
           return;
         },
@@ -762,7 +762,7 @@ pub fn legionella_global_attrs<'tcx>(tcx: TyCtxt<'tcx>,
     } else if item.check_name(Symbol::intern("set")) || item.check_name(Symbol::intern("binding")) {
       // ignore these two, they are parsed contextually elsewhere.
     } else {
-      let msg = "unknown Legionella attribute";
+      let msg = "unknown Geobacter attribute";
       tcx.sess.span_err(item.span(), &msg);
       return;
     }
@@ -780,9 +780,9 @@ pub fn legionella_global_attrs<'tcx>(tcx: TyCtxt<'tcx>,
   out
 }
 
-pub fn legionella_root_attrs(tcx: TyCtxt, id: DefId,
-                             model: ExecutionModel,
-                             perform_checking: bool)
+pub fn geobacter_root_attrs(tcx: TyCtxt, id: DefId,
+                            model: ExecutionModel,
+                            perform_checking: bool)
   -> Root
 {
   let mut out = Root {
@@ -792,13 +792,13 @@ pub fn legionella_root_attrs(tcx: TyCtxt, id: DefId,
     execution_modes: Vec::new(),
   };
 
-  legionella_attrs(tcx, id, |item| {
+  geobacter_attrs(tcx, id, |item| {
     if item.check_name(Symbol::intern("capabilities")) {
       out.parse_caps(tcx, item.meta_item().unwrap());
     } else if item.check_name(Symbol::intern("local_size")) {
       if !item.is_meta_item_list() {
-        let msg = "#[legionella(local_size(..))] expects a list \
-                          of name/value pairs: `x`, `y`, and `z`";
+        let msg = "#[geobacter(local_size(..))] expects a list \
+                   of name/value pairs: `x`, `y`, and `z`";
         tcx.sess.span_err(item.span(), &msg);
         return;
       }
@@ -808,7 +808,7 @@ pub fn legionella_root_attrs(tcx: TyCtxt, id: DefId,
                        name: &str) {
         if value.is_some() { return; }
 
-        let msg = format!("#[legionella(local_size(..))] missing dim `{}`",
+        let msg = format!("#[geobacter(local_size(..))] missing dim `{}`",
                           name);
         tcx.sess.span_err(span, &msg);
       }
@@ -863,7 +863,7 @@ pub fn legionella_root_attrs(tcx: TyCtxt, id: DefId,
       for mode in out.execution_modes.iter() {
         match mode {
           &ExecutionMode::LocalSize { .. } => {
-            tcx.sess.span_err(item.span(), "#[legionella(local_size(..))] given twice")
+            tcx.sess.span_err(item.span(), "#[geobacter(local_size(..))] given twice")
           },
           _ => {},
         }
@@ -876,7 +876,7 @@ pub fn legionella_root_attrs(tcx: TyCtxt, id: DefId,
       };
       out.execution_modes.push(mode);
     } else {
-      let msg = "unknown Legionella attribute";
+      let msg = "unknown Geobacter attribute";
       tcx.sess.span_err(item.span(), &msg);
     }
   });

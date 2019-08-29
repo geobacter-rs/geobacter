@@ -12,19 +12,19 @@ use crate::rustc_data_structures::fx::{FxHashSet, };
 use crate::rustc_data_structures::sync::{Lrc, };
 use crate::syntax_pos::{DUMMY_SP, symbol::Symbol, };
 
-use crate::common::{DefIdFromKernelId, LegionellaCustomIntrinsicMirGen,
-                    GetDefIdFromKernelId, LegionellaMirGen, stubbing,
+use crate::common::{DefIdFromKernelId, GeobacterCustomIntrinsicMirGen,
+                    GetDefIdFromKernelId, GeobacterMirGen, stubbing,
                     collector::collect_items_rec, };
 
-use crate::lcore::*;
-use crate::attrs::{legionella_root_attrs, legionella_global_attrs, };
+use crate::gvk_core::*;
+use crate::attrs::{geobacter_root_attrs, geobacter_global_attrs, };
 
 pub fn insert_all_intrinsics<F, U>(marker: &U, mut into: F)
   where F: FnMut(String, Lrc<dyn CustomIntrinsicMirGen>),
         U: GetDefIdFromKernelId + Send + Sync + 'static,
 {
   for id in CheckFn::permutations().into_iter() {
-    let (k, v) = LegionellaMirGen::new(id, marker);
+    let (k, v) = GeobacterMirGen::new(id, marker);
     into(k, v);
   }
 }
@@ -57,10 +57,10 @@ impl fmt::Display for CheckFn {
       ExecutionModel::GLCompute => "glcompute",
       ExecutionModel::Kernel => "kernel",
     };
-    write!(f, "__legionella_check_{}_shader", kind)
+    write!(f, "__geobacter_check_{}_shader", kind)
   }
 }
-impl LegionellaCustomIntrinsicMirGen for CheckFn {
+impl GeobacterCustomIntrinsicMirGen for CheckFn {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    stubber: &stubbing::Stubber,
                                    kid_did: &dyn DefIdFromKernelId,
@@ -142,9 +142,8 @@ impl LegionellaCustomIntrinsicMirGen for CheckFn {
     // respected
     visited.remove(&mono_root);
 
-    let root_attrs = legionella_root_attrs(tcx, did,
-                                           self.0,
-                                           true);
+    let root_attrs = geobacter_root_attrs(tcx, did,
+                                          self.0, true);
 
     for mono in visited.into_iter() {
       let instance = match mono {
@@ -155,10 +154,10 @@ impl LegionellaCustomIntrinsicMirGen for CheckFn {
         },
       };
 
-      let mono_attrs = legionella_global_attrs(tcx,
-                                               self.0,
-                                               instance,
-                                               true);
+      let mono_attrs = geobacter_global_attrs(tcx,
+                                              self.0,
+                                              instance,
+                                              true);
 
       if !mono_attrs.capabilities().eval(&|cap| root_attrs.capabilities.contains(cap) ) {
         let msg = "unsatisfied capability (TODO which one???)";

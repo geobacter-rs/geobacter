@@ -1,5 +1,5 @@
 [package]
-name = "legionella-amdgpu-std"
+name = "geobacter-amdgpu-std"
 version = "0.1.0"
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 edition = "2018"
@@ -7,5 +7,5 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-hsa-core = { path = "../hsa-core" }
+geobacter-core = { path = "../geobacter-core" }
 hsa-rt = { path = "../hsa-rt" }

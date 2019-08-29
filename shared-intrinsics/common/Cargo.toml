@@ -1,5 +1,5 @@
 [package]
-name = "legionella-intrinsics-common"
+name = "geobacter-intrinsics-common"
 version = "0.1.0"
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 edition = "2018"
@@ -10,8 +10,5 @@ edition = "2018"
 num-traits = "0.2.6"
 log = "0.4.7"
 seahash = "3.0.6"
-
-[dependencies.rustc-intrinsics]
-path = "../../rustc-intrinsics"
-[dependencies.hsa-core]
-path = "../../hsa-core"
+geobacter-core = { path = "../../geobacter-core" }
+rustc-intrinsics = { path = "../../rustc-intrinsics" }

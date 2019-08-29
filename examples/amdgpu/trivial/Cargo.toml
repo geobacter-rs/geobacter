@@ -10,6 +10,6 @@ ndarray = "0.12.1"
 ndarray-parallel = "0.9"
 packed_simd = "0.3.3"
 rand = { version = "0.7.0", features = ["small_rng", "simd_support", ] }
-legionella-runtime-core = { path = "../../../runtime-core" }
-legionella-runtime-amd = { path = "../../../runtime-amd" }
-legionella-amdgpu-std = { path = "../../../legionella-amdgpu-std" }
+geobacter-runtime-core = { path = "../../../runtime-core" }
+geobacter-runtime-amd = { path = "../../../runtime-amd" }
+geobacter-amdgpu-std = { path = "../../../amdgpu-std" }

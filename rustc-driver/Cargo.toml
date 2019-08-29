@@ -3,15 +3,12 @@ authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 license = "MIT / Apache-2.0"
 autobins = true
 edition = "2018"
-name = "legionella-rustc-driver"
+name = "geobacter-rustc-driver"
 version = "0.1.0"
 
 [dependencies]
-legionella-intrinsics-common = { path = "../shared-intrinsics/common" }
-legionella-amdgpu-intrinsics = { path = "../shared-intrinsics/amdgpu" }
-legionella-vk-intrinsics = { path = "../shared-intrinsics/vk" }
+geobacter-amdgpu-intrinsics = { path = "../shared-intrinsics/amdgpu" }
+geobacter-core = { path = "../geobacter-core" }
+geobacter-intrinsics-common = { path = "../shared-intrinsics/common" }
+geobacter-vk-intrinsics = { path = "../shared-intrinsics/vk" }
 rustc-intrinsics = { path = "../rustc-intrinsics" }
-
-[dependencies.hsa-core]
-path = "../hsa-core"
-

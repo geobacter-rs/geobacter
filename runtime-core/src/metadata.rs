@@ -21,7 +21,7 @@ use flate2::read::DeflateDecoder;
 
 use crate::utils::{new_hash_set, };
 
-pub use crate::lintrinsics::CNums;
+pub use crate::gintrinsics::CNums;
 
 #[derive(Debug)]
 pub enum MetadataLoadingError {

@@ -8,14 +8,8 @@ version = "0.1.0"
 env_logger = "0.6"
 log = "0.4.7"
 
-[dependencies.hsa-rt]
-path = "../../../hsa-rt"
-
-[dependencies.hsa-rt-sys]
-path = "../../../hsa-rt-sys"
-
-[dependencies.legionella-runtime-core]
-path = "../../../runtime-core"
-
-[dependencies.legionella-amdgpu-std]
-path = "../../../legionella-amdgpu-std"
+geobacter-core = { path = "../../../geobacter-core" }
+geobacter-runtime-core = { path = "../../../runtime-core" }
+geobacter-runtime-amd = { path = "../../../runtime-amd" }
+geobacter-amdgpu-std = { path = "../../../amdgpu-std" }
+hsa-rt = { path = "../../../hsa-rt" }

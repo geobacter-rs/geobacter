@@ -8,10 +8,10 @@
 #![feature(const_slice_len)]
 #![feature(unsize)]
 
-extern crate hsa_core;
+extern crate geobacter_core;
 extern crate core;
 extern crate vulkano as vk;
-extern crate legionella_vk_core as lcore;
+extern crate geobacter_vk_core as lcore;
 
 pub mod shader;
 pub mod kernel;
@@ -29,11 +29,11 @@ pub use lcore::ss::ExeModel;
 /// function is compiled.
 pub fn exe_model() -> ExeModel {
   extern "rust-intrinsic" {
-    fn __legionella_exe_model() -> u32;
+    fn __geobacter_exe_model() -> u32;
   }
 
   unsafe {
-    ::std::mem::transmute(__legionella_exe_model())
+    ::std::mem::transmute(__geobacter_exe_model())
   }
 }
 

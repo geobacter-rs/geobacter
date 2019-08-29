@@ -5,7 +5,7 @@ extern crate runtime;
 #[macro_use]
 extern crate log;
 extern crate env_logger;
-extern crate legionella_std;
+extern crate geobacter_std;
 
 use std::alloc::{Global, Alloc, Layout, };
 use std::mem::{size_of, };
@@ -16,7 +16,7 @@ use hsa_rt::queue::{FenceScope, };
 use runtime::context::{Context, };
 use runtime::module::{Invoc, };
 
-use legionella_std::{dispatch_packet, mem::*, mem::slice::*, };
+use geobacter_amdgpu_std::{dispatch_packet, mem::*, mem::slice::*, };
 
 const WORKITEM_SIZE: usize = 8;
 const X_SIZE: usize = 1000;

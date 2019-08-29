@@ -14,7 +14,7 @@
 #![feature(specialization)]
 #![feature(ptr_internals)]
 
-extern crate legionella_shared_defs as shared_defs;
+extern crate geobacter_shared_defs as shared_defs;
 
 #[macro_use]
 pub mod macros;

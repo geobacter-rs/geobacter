@@ -1,6 +1,6 @@
 
 //! Types and functions to determine what platform code is actually running on.
-//! Since Legionella doesn't operate at the syntax level, attributes like `#[cfg()]`
+//! Since Geobacter doesn't operate at the syntax level, attributes like `#[cfg()]`
 //! don't work. So instead, we have a common enum definition here which includes
 //! all supported accelerator devices. You can then query the platform at runtime
 //! with the constant function provided. LLVM *should* then use the constant-ness
@@ -13,11 +13,11 @@ pub use shared_defs::platform::*;
 #[inline(always)]
 pub const fn current_platform() -> Platform {
   extern "rust-intrinsic" {
-    fn __legionella_current_platform() -> &'static [u8; size_of::<Platform>()];
+    fn __geobacter_current_platform() -> &'static [u8; size_of::<Platform>()];
   }
 
   let p: &'static Platform = unsafe {
-    let r = __legionella_current_platform();
+    let r = __geobacter_current_platform();
     transmute(r)
   };
   *p

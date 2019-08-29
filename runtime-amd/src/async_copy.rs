@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use hsa_rt::ext::amd::{MemoryPool, MemoryPoolPtr};
 use hsa_rt::signal::SignalRef;
 
-use lrt_core::{AcceleratorId, };
+use grt_core::{AcceleratorId, };
 
 use crate::signal::{SignalHandle, DepSignal, DeviceConsumable, HostConsumable};
 use crate::{HsaAmdGpuAccel, HsaError};

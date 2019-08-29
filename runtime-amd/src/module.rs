@@ -14,7 +14,7 @@ use log::{error, };
 
 use nd;
 
-use hsa_core::kernel::{KernelInstance, };
+use geobacter_core::kernel::{KernelInstance, };
 
 use hsa_rt::agent::Agent;
 use hsa_rt::executable::FrozenExecutable;
@@ -25,10 +25,10 @@ pub use hsa_rt::queue::{FenceScope, QueueError, };
 pub use hsa_rt::queue::KernelMultiQueue as DeviceMultiQueue;
 pub use hsa_rt::queue::KernelSingleQueue as DeviceSingleQueue;
 
-use crate::lrt_core::{Device, Accelerator, AcceleratorId, };
-use crate::lrt_core::codegen as core_codegen;
-use crate::lrt_core::codegen::PKernelDesc;
-use crate::lrt_core::context::{ModuleContextData, PlatformModuleData, };
+use crate::grt_core::{Device, Accelerator, AcceleratorId, };
+use crate::grt_core::codegen as core_codegen;
+use crate::grt_core::codegen::PKernelDesc;
+use crate::grt_core::context::{ModuleContextData, PlatformModuleData, };
 
 use crate::HsaAmdGpuAccel;
 use crate::codegen::{Codegenner, KernelDesc, CodegenDesc};

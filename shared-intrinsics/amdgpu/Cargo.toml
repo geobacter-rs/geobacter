@@ -1,5 +1,5 @@
 [package]
-name = "legionella-amdgpu-intrinsics"
+name = "geobacter-amdgpu-intrinsics"
 version = "0.1.0"
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 edition = "2018"
@@ -7,9 +7,6 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-legionella-intrinsics-common = { path = "../common" }
-
-[dependencies.rustc-intrinsics]
-path = "../../rustc-intrinsics"
-[dependencies.hsa-core]
-path = "../../hsa-core"
+geobacter-core = { path = "../../geobacter-core" }
+geobacter-intrinsics-common = { path = "../common" }
+rustc-intrinsics = { path = "../../rustc-intrinsics" }

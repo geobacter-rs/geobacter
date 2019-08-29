@@ -27,7 +27,7 @@ extern crate log;
 extern crate num_traits;
 extern crate seahash;
 
-extern crate hsa_core;
+extern crate geobacter_core;
 extern crate rustc_intrinsics;
 
 pub mod attrs;
@@ -36,12 +36,12 @@ pub mod hash;
 pub mod platform;
 pub mod stubbing;
 
-// Note: don't try to depend on `legionella_std`.
+// Note: don't try to depend on `geobacter_std`.
 use std::borrow::Cow;
 use std::fmt;
 use std::marker::PhantomData;
 
-use hsa_core::kernel::{KernelInstance};
+use geobacter_core::kernel::{KernelInstance};
 
 use self::rustc::hir::def_id::{DefId, CrateNum, };
 use self::rustc::middle::lang_items::{self, LangItem, };
@@ -77,8 +77,8 @@ pub trait DefIdFromKernelId {
 
     // now decode the substs into `tcx`.
     let mut alloc_state = None;
-    let mut decoder = LegionellaDecoder::new(tcx, instance.instance,
-                                             &mut alloc_state);
+    let mut decoder = GeobacterDecoder::new(tcx, instance.instance,
+                                            &mut alloc_state);
 
     Instance::decode(&mut decoder).ok()
   }
@@ -91,7 +91,7 @@ pub trait GetDefIdFromKernelId {
     where F: FnOnce(&dyn DefIdFromKernelId) -> R;
 }
 
-pub trait LegionellaCustomIntrinsicMirGen: Send + Sync + 'static {
+pub trait GeobacterCustomIntrinsicMirGen: Send + Sync + 'static {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
                                    kid_did: &dyn DefIdFromKernelId,
@@ -107,7 +107,7 @@ pub trait LegionellaCustomIntrinsicMirGen: Send + Sync + 'static {
 }
 
 /// CurrentPlatform doesn't need anything special, but is used from the runtimes.
-impl LegionellaCustomIntrinsicMirGen for CurrentPlatform {
+impl GeobacterCustomIntrinsicMirGen for CurrentPlatform {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
                                    _kid_did: &dyn DefIdFromKernelId,
@@ -131,34 +131,34 @@ impl LegionellaCustomIntrinsicMirGen for CurrentPlatform {
   }
 }
 
-pub struct LegionellaMirGen<T, U>(T, PhantomData<U>)
-  where T: LegionellaCustomIntrinsicMirGen + Send + Sync + 'static,
+pub struct GeobacterMirGen<T, U>(T, PhantomData<U>)
+  where T: GeobacterCustomIntrinsicMirGen + Send + Sync + 'static,
         U: GetDefIdFromKernelId + Send + Sync + 'static;
 
-impl<T, U> LegionellaMirGen<T, U>
-  where T: LegionellaCustomIntrinsicMirGen + fmt::Display + Send + Sync + 'static,
+impl<T, U> GeobacterMirGen<T, U>
+  where T: GeobacterCustomIntrinsicMirGen + fmt::Display + Send + Sync + 'static,
         U: GetDefIdFromKernelId + Send + Sync + 'static,
 {
   pub fn new(intrinsic: T, _: &U) -> (String, Lrc<dyn CustomIntrinsicMirGen>) {
     let name = format!("{}", intrinsic);
-    let mirgen: Self = LegionellaMirGen(intrinsic, PhantomData);
+    let mirgen: Self = GeobacterMirGen(intrinsic, PhantomData);
     let mirgen = Lrc::new(mirgen) as Lrc<_>;
     (name, mirgen)
   }
 }
-impl<T, U> LegionellaMirGen<T, U>
-  where T: LegionellaCustomIntrinsicMirGen + Send + Sync + 'static,
+impl<T, U> GeobacterMirGen<T, U>
+  where T: GeobacterCustomIntrinsicMirGen + Send + Sync + 'static,
         U: GetDefIdFromKernelId + Send + Sync + 'static,
 {
   pub fn wrap(intrinsic: T, _: &U) -> Lrc<dyn CustomIntrinsicMirGen> {
-    let mirgen: Self = LegionellaMirGen(intrinsic, PhantomData);
+    let mirgen: Self = GeobacterMirGen(intrinsic, PhantomData);
     let mirgen = Lrc::new(mirgen) as Lrc<_>;
     mirgen
   }
 }
 
-impl<T, U> CustomIntrinsicMirGen for LegionellaMirGen<T, U>
-  where T: LegionellaCustomIntrinsicMirGen + Send + Sync + 'static,
+impl<T, U> CustomIntrinsicMirGen for GeobacterMirGen<T, U>
+  where T: GeobacterCustomIntrinsicMirGen + Send + Sync + 'static,
         U: GetDefIdFromKernelId + Send + Sync,
 {
   fn mirgen_simple_intrinsic<'tcx>(&self,
@@ -368,7 +368,7 @@ impl<T> Default for WorkItemKill<T>
     WorkItemKill(PhantomData)
   }
 }
-impl<T> LegionellaCustomIntrinsicMirGen for WorkItemKill<T>
+impl<T> GeobacterCustomIntrinsicMirGen for WorkItemKill<T>
   where T: PlatformImplDetail,
 {
   fn mirgen_simple_intrinsic<'tcx>(&self,
@@ -407,14 +407,14 @@ impl<T> fmt::Display for WorkItemKill<T>
   where T: PlatformImplDetail,
 {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "__legionella_kill")
+    write!(f, "__geobacter_kill")
   }
 }
 pub struct HostKillDetail;
 impl PlatformImplDetail for HostKillDetail {
   fn kernel_instance() -> KernelInstance {
     fn host_kill() -> ! {
-      panic!("__legionella_kill");
+      panic!("__geobacter_kill");
     }
 
     KernelInstance::get(&host_kill)

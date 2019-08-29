@@ -14,19 +14,17 @@ extern crate rustc_target;
 extern crate syntax;
 extern crate syntax_pos;
 
-extern crate core;
-
 #[macro_use]
 extern crate log;
 extern crate num_traits;
 extern crate vulkano as vko;
 
-extern crate hsa_core;
-extern crate legionella_vk_core as lcore;
+extern crate geobacter_core as gcore;
+extern crate geobacter_vk_core as gvk_core;
 extern crate rustc_intrinsics;
-extern crate legionella_intrinsics_common as common;
+extern crate geobacter_intrinsics_common as common;
 
-// Note: don't try to depend on `legionella_std`.
+// Note: don't try to depend on `geobacter_std`.
 
 use std::str::{FromStr, };
 
@@ -36,21 +34,21 @@ pub mod intrinsics;
 pub mod attrs;
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug)]
-pub enum LegionellaLangItemTypes {
+pub enum GeobacterLangItemTypes {
   Uniform,
   UniformArray,
   Buffer,
   BufferArray,
 }
-impl FromStr for LegionellaLangItemTypes {
+impl FromStr for GeobacterLangItemTypes {
   type Err = &'static str;
   fn from_str(v: &str) -> Result<Self, &'static str> {
     match v {
-      "Uniform" => Ok(LegionellaLangItemTypes::Uniform),
-      "UniformArray" => Ok(LegionellaLangItemTypes::UniformArray),
-      "Buffer" => Ok(LegionellaLangItemTypes::Buffer),
-      "BufferArray" => Ok(LegionellaLangItemTypes::BufferArray),
-      _ => Err("unknown Legionella lang item type"),
+      "Uniform" => Ok(GeobacterLangItemTypes::Uniform),
+      "UniformArray" => Ok(GeobacterLangItemTypes::UniformArray),
+      "Buffer" => Ok(GeobacterLangItemTypes::Buffer),
+      "BufferArray" => Ok(GeobacterLangItemTypes::BufferArray),
+      _ => Err("unknown Geobacter lang item type"),
     }
   }
 }

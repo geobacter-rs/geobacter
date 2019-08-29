@@ -18,9 +18,9 @@ use syntax_pos::symbol::{InternedString, };
 
 use crossbeam::sync::WaitGroup;
 
-use hsa_core::kernel::{KernelInstance, };
+use geobacter_core::kernel::{KernelInstance, };
 
-use lintrinsics::{DefIdFromKernelId, };
+use gintrinsics::{DefIdFromKernelId, };
 
 use crate::{AcceleratorTargetDesc, };
 use crate::codegen::*;
@@ -123,7 +123,7 @@ impl<'tcx, P> PlatformDriverData<'tcx, P>
   {
     let instance = self.dd()
       .convert_kernel_instance(tcx, desc.instance)
-      .ok_or("failed to convert Legionella kernel instance into \
+      .ok_or("failed to convert Geobacter kernel instance into \
               Rust's Instance")?;
     let root = self.platform
       .root(desc, instance, tcx, self.dd())?;

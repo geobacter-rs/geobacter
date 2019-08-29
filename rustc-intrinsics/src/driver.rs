@@ -44,7 +44,7 @@ pub use crate::rustc_driver::{EXIT_SUCCESS, EXIT_FAILURE,
                               init_rustc_env_logger, Compilation,
                               RustcDefaultCalls, version, };
 
-const BUG_REPORT_URL: &str = "https://github.com/legionella-rs/about/blob/master/\
+const BUG_REPORT_URL: &str = "https://github.com/geobacter-rs/about/blob/master/\
                               CONTRIBUTING.md#bug-reports";
 
 const ICE_REPORT_COMPILER_FLAGS: &[&str] = &["Z", "C", "crate-type"];
@@ -144,7 +144,7 @@ pub fn run_compiler(
               );
               return;
             }
-            let should_stop = LegionellaRustcDefaultCalls::print_crate_info(
+            let should_stop = GeobacterRustcDefaultCalls::print_crate_info(
               &***compiler.codegen_backend(),
               compiler.session(),
               None,
@@ -197,15 +197,15 @@ pub fn run_compiler(
   interface::run_compiler(config, |compiler| {
     let sess = compiler.session();
 
-    super::whitelist_legionella_attr(sess);
+    super::whitelist_geobacter_attr(sess);
 
-    let should_stop = LegionellaRustcDefaultCalls::print_crate_info(
+    let should_stop = GeobacterRustcDefaultCalls::print_crate_info(
       &***compiler.codegen_backend(),
       sess,
       Some(compiler.input()),
       compiler.output_dir(),
       compiler.output_file(),
-    ).and_then(|| LegionellaRustcDefaultCalls::list_metadata(
+    ).and_then(|| GeobacterRustcDefaultCalls::list_metadata(
       sess,
       compiler.cstore(),
       &matches,
@@ -407,8 +407,8 @@ fn parse_pretty(sess: &Session,
   }
 }
 
-pub struct LegionellaRustcDefaultCalls;
-impl LegionellaRustcDefaultCalls {
+pub struct GeobacterRustcDefaultCalls;
+impl GeobacterRustcDefaultCalls {
   pub fn list_metadata(sess: &Session,
                        cstore: &CStore,
                        matches: &getopts::Matches,
