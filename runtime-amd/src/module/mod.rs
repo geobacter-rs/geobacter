@@ -10,6 +10,8 @@ use std::ptr::{NonNull, };
 use std::sync::{Arc, atomic, };
 use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool, };
 
+use arrayvec::ArrayVec;
+
 use log::{error, };
 
 use nd;
@@ -32,9 +34,13 @@ use crate::grt_core::context::{ModuleContextData, PlatformModuleData, };
 
 use crate::HsaAmdGpuAccel;
 use crate::codegen::{Codegenner, KernelDesc, CodegenDesc};
-use crate::signal::{DeviceConsumable, DeviceSignal, HostConsumable, SignalHandle, DepSignal};
-use hsa_rt::ext::amd::MemoryPoolPtr;
+use crate::signal::{DeviceConsumable, HostConsumable, SignalHandle, SignaledDeref};
 use hsa_rt::signal::SignalRef;
+
+pub use self::deps::Deps;
+
+pub mod args;
+pub mod deps;
 
 /// Closures are *explicitly not supported*, so we don't keep the function
 /// around as a member or as a type param.
@@ -50,8 +56,8 @@ pub struct Function {
 }
 
 impl Function {
-  pub fn new<F, Args, Ret>(f: F) -> Self
-    where F: Fn<Args, Output = Ret> + Sized,
+  pub fn new<F, A, R>(f: F) -> Self
+    where F: Fn<A, Output = R> + Sized,
   {
     Function {
       instance: KernelInstance::get(&f),
@@ -68,7 +74,7 @@ impl Function {
 }
 
 #[derive(Clone, Copy)]
-pub struct FuncModule<Arg, MD = Arc<HsaModuleData>>
+pub struct FuncModule<A, MD = Arc<HsaModuleData>>
   where MD: Deref<Target = HsaModuleData>,
 {
   /// XXX this isn't actually used for checking anything
@@ -88,12 +94,12 @@ pub struct FuncModule<Arg, MD = Arc<HsaModuleData>>
 
   f: Function,
   /// To ensure we are only called with this argument type.
-  _arg: PhantomData<*const Arg>,
+  _arg: PhantomData<*const A>,
 }
-impl<Arg> FuncModule<Arg> {
+impl<A> FuncModule<A> {
   pub fn new<F>(accel: &Arc<HsaAmdGpuAccel>, f: F)
     -> Result<Self, Box<dyn Error>>
-    where F: for<'a> Fn(&'a Arg) + Sized,
+    where F: for<'a> Fn(&'a A) + Sized,
   {
     let f = Function::new(f);
     let context_data = f.context_data
@@ -201,65 +207,57 @@ impl LaunchDims for (usize, usize, usize, ) {
 }
 
 #[derive(Clone)]
-pub struct Invoc<Arg, Dim, S = DeviceSignal, MD = Arc<HsaModuleData>>
-  where Arg: Sized + Unpin,
+pub struct Invoc<A, Dim, MD = Arc<HsaModuleData>>
+  where A: Sized + Unpin,
         MD: Deref<Target = HsaModuleData>,
         Dim: LaunchDims,
-        S: DeviceConsumable,
 {
   pub workgroup_dim: Dim,
   pub grid_dim: Dim,
 
-  deps: Vec<S>,
-
-  fmod: FuncModule<Arg, MD>,
+  fmod: FuncModule<A, MD>,
 }
 
-impl<Arg, Dim, S> Invoc<Arg, Dim, S, Arc<HsaModuleData>>
-  where Arg: Sized + Unpin,
+impl<A, Dim> Invoc<A, Dim, Arc<HsaModuleData>>
+  where A: Deps + Sized + Unpin,
         Dim: LaunchDims,
-        S: DeviceConsumable,
 {
   pub fn new<F>(accel: &Arc<HsaAmdGpuAccel>, f: F)
     -> Result<Self, Box<dyn Error>>
-    where F: for<'a> Fn(&'a Arg) + Sized,
+    where F: for<'a> Fn(&'a A) + Sized,
   {
     let fmod = FuncModule::new(accel, f)?;
     Ok(Invoc {
       workgroup_dim: Dim::default_unit(),
       grid_dim: Dim::default_unit(),
-      deps: Vec::new(),
       fmod,
     })
   }
   pub fn new_dims<F>(accel: &Arc<HsaAmdGpuAccel>,
                      f: F, wg: Dim, grid: Dim)
     -> Result<Self, Box<dyn Error>>
-    where F: for<'a> Fn(&'a Arg) + Sized,
+    where F: for<'a> Fn(&'a A) + Sized,
   {
     let fmod = FuncModule::new(accel, f)?;
     Ok(Invoc {
       workgroup_dim: wg,
       grid_dim: grid,
-      deps: Vec::new(),
       fmod,
     })
   }
 }
 
-impl<Arg, Dim, S, MD> Invoc<Arg, Dim, S, MD>
-  where Arg: Sized + Unpin,
+impl<A, Dim, MD> Invoc<A, Dim, MD>
+  where A: Deps + Sized + Unpin,
         MD: Deref<Target = HsaModuleData>,
         Dim: LaunchDims,
-        S: DeviceConsumable,
 {
-  pub fn from(fmod: FuncModule<Arg, MD>,
+  pub fn from(fmod: FuncModule<A, MD>,
               wg: Dim, grid: Dim) -> Self
   {
     Invoc {
       workgroup_dim: wg,
       grid_dim: grid,
-      deps: Vec::new(),
       fmod,
     }
   }
@@ -278,28 +276,15 @@ impl<Arg, Dim, S, MD> Invoc<Arg, Dim, S, MD>
     self
   }
 
-  /// TODO: use `DepSignal` here to return dep guarded resources
-  /// so they can be used as kernel args. Currently no way
-  /// to ensure that the resources are used *only* for kernel
-  /// arguments for *this* invocation.
-  pub fn add_dep(&mut self, signal: S) {
-    self.deps.push(signal);
-  }
-  pub fn deps(&self) -> &[S] { &self.deps }
-  pub fn replace_deps(&mut self, deps: Vec<S>) {
-    assert_eq!(self.deps.len(), 0, "must have no existing deps");
-    self.deps = deps;
-  }
-
   /// `completion` must already have the correct value set, eg set to `1`.
   /// This function does no argument checking to ensure, eg, you're not passing
   /// anything by mutable reference or something with drop code by value.
   pub unsafe fn unchecked_call_async<P, Q, T, K, CS>(&mut self,
-                                                     args: Arg,
+                                                     args: A,
                                                      queue: Q,
                                                      completion: CS,
                                                      args_pool: P)
-    -> Result<InvocCompletion<P, Arg, Q, S, CS>, CallError>
+    -> Result<InvocCompletion<P, A, Q, CS>, CallError>
     where P: Deref<Target = ArgsPool>,
           Q: Deref<Target = T>,
           T: IQueue<K>,
@@ -316,11 +301,11 @@ impl<Arg, Dim, S, MD> Invoc<Arg, Dim, S, MD>
   /// to also recreate the arguments (since we move).
   /// If allocation fails, the provided arguments will still be `Some()`.
   pub unsafe fn try_unchecked_call_async<P, Q, T, K, CS>(&mut self,
-                                                         args: &mut Option<Arg>,
+                                                         args: &mut Option<A>,
                                                          queue: &mut Option<Q>,
                                                          completion: &mut Option<CS>,
                                                          args_pool: P)
-    -> Result<InvocCompletion<P, Arg, Q, S, CS>, CallError>
+    -> Result<InvocCompletion<P, A, Q, CS>, CallError>
     where P: Deref<Target = ArgsPool>,
           Q: Deref<Target = T>,
           T: IQueue<K>,
@@ -329,14 +314,14 @@ impl<Arg, Dim, S, MD> Invoc<Arg, Dim, S, MD>
   {
     let kernel = &*self.fmod.module_data;
 
-    assert_eq!(kernel.desc.kernarg_segment_size, size_of::<(&Arg,)>());
+    assert_eq!(kernel.desc.kernarg_segment_size, size_of::<(&A,)>());
 
-    let kernargs = args_pool.alloc::<Arg>();
+    let kernargs = args_pool.alloc::<A>();
     if kernargs.is_none() {
       return Err(CallError::Oom);
     }
     // now alloc the kernargs ref:
-    let kernargs_ref = args_pool.alloc::<(&Arg, )>();
+    let kernargs_ref = args_pool.alloc::<(&A, )>();
     if kernargs_ref.is_none() {
       return Err(CallError::Oom);
     }
@@ -344,7 +329,6 @@ impl<Arg, Dim, S, MD> Invoc<Arg, Dim, S, MD>
     let Invoc {
       workgroup_dim,
       grid_dim,
-      deps,
       ref fmod,
     } = self;
 
@@ -352,17 +336,30 @@ impl<Arg, Dim, S, MD> Invoc<Arg, Dim, S, MD>
     // so that this step isn't repeated if we're called again as a result
     // of kernarg alloc failure.
     {
-      let mut deps = deps.iter().map(|dep| {
-        dep.mark_consumed();
-        dep.signal_ref()
-      });
       let q = queue.as_ref().expect("provide a queue pls");
-      while deps.len() > 0 {
-        // no completion signal, which will cause the barrier packet to
-        // be ordered (that is, the CP won't process later packets till
-        // the barrier is complete).
-        q.try_enqueue_barrier_and(&mut deps, None)?;
+      let mut signals: ArrayVec<[SignalRef; 5]> = ArrayVec::new();
+      {
+        let mut f = |sig: &dyn DeviceConsumable| -> Result<(), CallError> {
+          sig.mark_consumed();
+          let sig = ::std::mem::transmute_copy(sig.signal_ref());
+          signals.push(sig);
+          if signals.len() == 5 {
+            {
+              let mut deps = signals.iter();
+              q.try_enqueue_barrier_and(&mut deps, None)?;
+              assert_eq!(deps.len(), 0);
+            }
+            signals.clear();
+          }
+
+          Ok(())
+        };
+        args.as_ref().unwrap()
+          .iter_deps(&mut f)?;
       }
+      let mut deps = signals.iter();
+      q.try_enqueue_barrier_and(&mut deps, None)?;
+      assert_eq!(deps.len(), 0);
     }
 
     let kernargs = kernargs.unwrap();
@@ -401,7 +398,6 @@ impl<Arg, Dim, S, MD> Invoc<Arg, Dim, S, MD>
     let inner = InvocCompletionInner {
       storage: args_pool,
       queue: queue.take().unwrap(),
-      deps: deps.drain(..).collect(),
       signal: completion.take().unwrap(),
       waited: AtomicBool::new(false),
       args: kernargs,
@@ -410,22 +406,20 @@ impl<Arg, Dim, S, MD> Invoc<Arg, Dim, S, MD>
     Ok(InvocCompletion(Some(inner)))
   }
 }
-impl<Arg, WGDim, S, MD> Deref for Invoc<Arg, WGDim, S, MD>
-  where Arg: Sized + Unpin,
+impl<A, WGDim, MD> Deref for Invoc<A, WGDim, MD>
+  where A: Sized + Unpin,
         MD: Deref<Target = HsaModuleData>,
         WGDim: LaunchDims,
-        S: DeviceConsumable,
 {
-  type Target = FuncModule<Arg, MD>;
-  fn deref(&self) -> &FuncModule<Arg, MD> { &self.fmod }
+  type Target = FuncModule<A, MD>;
+  fn deref(&self) -> &FuncModule<A, MD> { &self.fmod }
 }
-impl<Arg, WGDim, S, MD> DerefMut for Invoc<Arg, WGDim, S, MD>
-  where Arg: Sized + Unpin,
+impl<A, WGDim, MD> DerefMut for Invoc<A, WGDim, MD>
+  where A: Sized + Unpin,
         MD: Deref<Target = HsaModuleData>,
         WGDim: LaunchDims,
-        S: DeviceConsumable,
 {
-  fn deref_mut(&mut self) -> &mut FuncModule<Arg, MD> { &mut self.fmod }
+  fn deref_mut(&mut self) -> &mut FuncModule<A, MD> { &mut self.fmod }
 }
 
 /// Use this to invoc in a loop without allocating every iteration
@@ -441,14 +435,14 @@ pub struct ArgsPool {
 }
 impl ArgsPool {
   /// Create storage for `n` function calls for use on the provided accelerator.
-  pub fn new<Args>(accel: &Arc<HsaAmdGpuAccel>, count: usize)
+  pub fn new<A>(accel: &Arc<HsaAmdGpuAccel>, count: usize)
     -> Result<Self, Box<dyn Error>>
-    where Args: Sized,
+    where A: Sized,
   {
     use std::cmp::max;
 
     let kernargs_region = accel.kernargs_region().clone();
-    let layout = Layout::new::<Args>();
+    let layout = Layout::new::<A>();
     let pool_alignment = kernargs_region.runtime_alloc_alignment()?;
     if pool_alignment < layout.align() {
       return Err("pool allocation alignment is < less than arg alignment".into())
@@ -517,14 +511,14 @@ impl ArgsPool {
   /// Allocate a single `Args` block. Returns `None` when out of space.
   /// `args` must be Some. If allocation is successful, the returned
   /// pointer will be uninitialized.
-  pub unsafe fn alloc<Args>(&self) -> Option<NonNull<Args>>
-    where Args: Sized,
+  pub unsafe fn alloc<A>(&self) -> Option<NonNull<A>>
+    where A: Sized,
   {
     fn alignment_padding(size: usize, align: usize) -> usize {
       (align - (size - 1) % align) - 1
     }
 
-    let layout = Layout::new::<Args>()
+    let layout = Layout::new::<A>()
       // force alignment to at least the cacheline size to avoid false
       // sharing.
       .align_to(64) // XXX hardcoded. could use this fact to avoid the loop below
@@ -558,7 +552,7 @@ impl ArgsPool {
         }
       }
 
-      let ptr: *mut Args = transmute(allocated_start);
+      let ptr: *mut A = transmute(allocated_start);
       return Some(NonNull::new_unchecked(ptr));
     }
   }
@@ -587,21 +581,18 @@ impl Drop for ArgsPool {
 /// We really only require Args impl drop (which is given in Rust)
 /// and don't want to constrain downstream if type erasure is desired.
 #[must_use]
-pub struct InvocCompletion<P, A, Q, DS, S>(Option<InvocCompletionInner<P, A, Q, DS, S>>)
+pub struct InvocCompletion<P, A, Q, S>(Option<InvocCompletionInner<P, A, Q, S>>)
   where P: Deref<Target = ArgsPool>,
-        DS: SignalHandle,
         S: SignalHandle,
         A: ?Sized;
 
-pub struct InvocCompletionInner<P, A, Q, DS, S>
+pub struct InvocCompletionInner<P, A, Q, S>
   where P: Deref<Target = ArgsPool>,
-        DS: SignalHandle,
         S: SignalHandle,
         A: ?Sized,
 {
   storage: P,
   queue: Q,
-  deps: Vec<DS>,
   signal: S,
   /// a flag which we will set when we get used as a dep in
   /// another invoc. Only used when our completion signal
@@ -611,20 +602,41 @@ pub struct InvocCompletionInner<P, A, Q, DS, S>
   args: NonNull<A>,
   _lt: PhantomData<A>,
 }
-impl<P, A, Q, DS, S> InvocCompletion<P, A, Q, DS, S>
+impl<P, A, Q, S> InvocCompletion<P, A, Q, S>
   where P: Deref<Target = ArgsPool>,
-        DS: SignalHandle,
         S: SignalHandle,
         A: ?Sized,
 {
-  fn inner(&self) -> &InvocCompletionInner<P, A, Q, DS, S> {
+  fn inner(&self) -> &InvocCompletionInner<P, A, Q, S> {
     self.0.as_ref()
       .expect("dropped?")
   }
+
+  pub unsafe fn wait_ref<F, R>(&self, f: F) -> SignaledDeref<R, S>
+    where F: FnOnce(&A) -> R,
+          S: HostConsumable + Clone,
+  {
+    let inner = self.inner();
+    let args = inner.args.as_ref();
+    let signal = inner.signal.clone();
+    let r = f(args);
+
+    SignaledDeref::new(r, signal)
+  }
+  pub unsafe fn wait_ref_signal_ref<F, R>(&self, f: F) -> SignaledDeref<R, &S>
+    where F: FnOnce(&A) -> R,
+          S: HostConsumable,
+  {
+    let inner = self.inner();
+    let args = inner.args.as_ref();
+    let signal = &inner.signal;
+    let r = f(args);
+
+    SignaledDeref::new(r, signal)
+  }
 }
-impl<P, A, Q, DS, S> InvocCompletion<P, A, Q, DS, S>
+impl<P, A, Q, S> InvocCompletion<P, A, Q, S>
   where P: Deref<Target = ArgsPool>,
-        DS: SignalHandle,
         S: HostConsumable,
         A: ?Sized,
 {
@@ -638,76 +650,10 @@ impl<P, A, Q, DS, S> InvocCompletion<P, A, Q, DS, S>
     unsafe { std::intrinsics::drop_in_place(inner.args.as_ptr()); }
   }
 }
-impl<P, A, Q, DS, S> InvocCompletion<P, A, Q, DS, S>
-  where P: Deref<Target = ArgsPool>,
-        DS: DeviceConsumable,
-        S: DeviceConsumable + Into<DS>,
-        A: ?Sized,
-{
-  /// Execute a device side device -> host copy after this dispatch
-  /// completes. `completion` becomes the new invoc completion signal.
-  /// You need to initialize `completion` such that it's initial value reflects
-  /// every request.
-  pub unsafe fn async_copy_to_host<S2, T>(self,
-                                          device: &HsaAmdGpuAccel,
-                                          accel: MemoryPoolPtr<T>,
-                                          host: MemoryPoolPtr<T>,
-                                          completion: S2)
-    -> Result<InvocCompletion<P, A, Q, DS, S2>, Box<dyn Error>>
-    where S2: SignalHandle,
-          T: ?Sized,
-  {
-    self.async_copies_to_host(device, Some((accel, host)).into_iter(),
-                              completion)
-  }
-  /// Execute a device side device -> host copy after this dispatch
-  /// completes. `completion` becomes the new invoc completion signal.
-  /// You need to initialize `completion` such that it's initial value reflects
-  /// every request.
-  pub unsafe fn async_copies_to_host<S2, T>(mut self,
-                                            device: &HsaAmdGpuAccel,
-                                            ptrs: impl Iterator<Item = (MemoryPoolPtr<T>,
-                                                                        MemoryPoolPtr<T>)>,
-                                            completion: S2)
-    -> Result<InvocCompletion<P, A, Q, DS, S2>, Box<dyn Error>>
-    where S2: SignalHandle,
-          T: ?Sized,
-  {
-    let InvocCompletionInner {
-      storage,
-      queue,
-      mut deps,
-      signal,
-      args,
-      ..
-    } = self.0.take().unwrap();
-
-    for (accel, host) in ptrs {
-      device.unchecked_async_copy_from(accel.into_bytes(),
-                                       host.into_bytes(),
-                                       &[&signal],
-                                       &completion)?;
-    }
-
-    deps.push(signal.into());
-
-    let inner = InvocCompletionInner {
-      storage,
-      queue,
-      deps,
-      signal: completion,
-      waited: AtomicBool::new(false),
-      args,
-      _lt: PhantomData,
-    };
-    Ok(InvocCompletion(Some(inner)))
-  }
-}
 // impl the signal traits so that invoc completions can be reused for multiple
 // kernel dispatches.
-impl<P, A, Q, DS, S> SignalHandle for InvocCompletion<P, A, Q, DS, S>
+impl<P, A, Q, S> SignalHandle for InvocCompletion<P, A, Q, S>
   where P: Deref<Target = ArgsPool>,
-        DS: SignalHandle,
         S: SignalHandle,
         A: ?Sized,
 {
@@ -729,9 +675,8 @@ impl<P, A, Q, DS, S> SignalHandle for InvocCompletion<P, A, Q, DS, S>
       .as_host_consumable()
   }
 }
-impl<P, A, Q, DS, S> DeviceConsumable for InvocCompletion<P, A, Q, DS, S>
+impl<P, A, Q, S> DeviceConsumable for InvocCompletion<P, A, Q, S>
   where P: Deref<Target = ArgsPool>,
-        DS: SignalHandle,
         S: DeviceConsumable,
         A: ?Sized,
 {
@@ -741,45 +686,14 @@ impl<P, A, Q, DS, S> DeviceConsumable for InvocCompletion<P, A, Q, DS, S>
       .usable_on_device(id)
   }
 }
-impl<P, A, Q, DS, S> HostConsumable for InvocCompletion<P, A, Q, DS, S>
+impl<P, A, Q, S> HostConsumable for InvocCompletion<P, A, Q, S>
   where P: Deref<Target = ArgsPool>,
-        DS: SignalHandle,
         S: HostConsumable,
         A: ?Sized,
 {
 }
-impl<P, A, Q, DS, S> DepSignal for InvocCompletion<P, A, Q, DS, S>
+impl<P, A, Q, S> Drop for InvocCompletion<P, A, Q, S>
   where P: Deref<Target = ArgsPool>,
-        DS: SignalHandle,
-        S: SignalHandle,
-        A: Unpin,
-{
-  type Resource = A;
-
-  unsafe fn peek_resource<F, R>(&self, f: F) -> R
-    where F: FnOnce(&Self::Resource) -> R,
-  {
-    f(self.inner().args.as_ref())
-  }
-  unsafe fn peek_mut_resource(&mut self) -> &mut Self::Resource {
-    self.0.as_mut().unwrap().args.as_mut()
-  }
-  unsafe fn unwrap_resource(mut self) -> Self::Resource {
-    use std::mem::MaybeUninit;
-    use std::ptr::copy_nonoverlapping;
-
-    let inner = self.0.take().expect("already dropped?");
-
-    let mut out = MaybeUninit::uninit();
-    copy_nonoverlapping(out.as_mut_ptr(),
-                        inner.args.as_ptr(),
-                        1);
-    out.assume_init()
-  }
-}
-impl<P, A, Q, DS, S> Drop for InvocCompletion<P, A, Q, DS, S>
-  where P: Deref<Target = ArgsPool>,
-        DS: SignalHandle,
         S: SignalHandle,
         A: ?Sized,
 {
@@ -813,9 +727,8 @@ impl<P, A, Q, DS, S> Drop for InvocCompletion<P, A, Q, DS, S>
     }
   }
 }
-impl<P, A1, A2, Q, DS, S> CoerceUnsized<InvocCompletionInner<P, A2, Q, DS, S>> for InvocCompletionInner<P, A1, Q, DS, S>
+impl<P, A1, A2, Q, S> CoerceUnsized<InvocCompletionInner<P, A2, Q, S>> for InvocCompletionInner<P, A1, Q, S>
   where P: Deref<Target = ArgsPool>,
-        DS: SignalHandle,
         S: SignalHandle,
         A1: Unsize<A2> + ?Sized,
         A2: ?Sized,

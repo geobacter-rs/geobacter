@@ -18,6 +18,7 @@ members = ["hsa-core-gen", "geobacter-core",
            "hsa-rt-sys", "hsa-rt",
            "tools/hsa-agent-info",
            "amdgpu-std", "runtime-amd",
+           "runtime-amd-macros",
            "examples/amdgpu/trivial", "examples/amdgpu/fractal",
            "examples/amdgpu/mut-slice-ub",
 

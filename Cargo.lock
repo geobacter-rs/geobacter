@@ -501,9 +501,11 @@ version = "0.1.0"
 dependencies = [
  "amd-comgr 1.0.0",
  "any_key 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "arrayvec 0.4.11 (registry+https://github.com/rust-lang/crates.io-index)",
  "geobacter-amdgpu-intrinsics 0.1.0",
  "geobacter-core 0.1.0",
  "geobacter-intrinsics-common 0.1.0",
+ "geobacter-runtime-amd-macros 0.1.0",
  "geobacter-runtime-core 0.1.0",
  "geobacter-shared-defs 0.1.0",
  "goblin 0.0.23 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -512,6 +514,15 @@ dependencies = [
  "ndarray 0.12.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rmp-serde 0.13.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.99 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "geobacter-runtime-amd-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2 1.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "quote 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "syn 1.0.5 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

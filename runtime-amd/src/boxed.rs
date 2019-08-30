@@ -24,7 +24,7 @@ use hsa_rt::ext::amd::{lock_memory, unlock_memory, MemoryPool, MemoryPoolPtr};
 use log::{error, };
 
 use crate::{HsaAmdGpuAccel, };
-use crate::async_copy::{CopyDataObject, SourceDataObject, DestDataObject};
+use crate::async_copy::{CopyDataObject, };
 
 pub struct BoxSlice<T>
   where T: Sized,
@@ -282,16 +282,6 @@ impl<T> CopyDataObject<T> for RawPoolBox<T>
     Some(self.as_pool_ptr().into_bytes())
   }
 }
-impl<T> SourceDataObject<T> for RawPoolBox<T>
-  where T: ?Sized + Unpin,
-{
-  fn src_pool(&self) -> MemoryPool { self.pool().clone() }
-}
-impl<T> DestDataObject<T> for RawPoolBox<T>
-  where T: ?Sized + Unpin,
-{
-  fn dst_pool(&self) -> MemoryPool { self.pool().clone() }
-}
 
 /// A box-esk type allocated from a CPU visible memory pool.
 /// Locality is defined as memory accessible to processor which
@@ -445,14 +435,3 @@ impl<T> CopyDataObject<T> for LocallyAccessiblePoolBox<T>
     self.0.pool_copy_region()
   }
 }
-impl<T> SourceDataObject<T> for LocallyAccessiblePoolBox<T>
-  where T: ?Sized + Unpin,
-{
-  fn src_pool(&self) -> MemoryPool { self.pool().clone() }
-}
-impl<T> DestDataObject<T> for LocallyAccessiblePoolBox<T>
-  where T: ?Sized + Unpin,
-{
-  fn dst_pool(&self) -> MemoryPool { self.pool().clone() }
-}
-

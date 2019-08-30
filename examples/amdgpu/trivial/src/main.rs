@@ -9,6 +9,7 @@ extern crate rand;
 extern crate packed_simd;
 
 extern crate geobacter_runtime_core as rt_core;
+#[macro_use]
 extern crate geobacter_runtime_amd as rt_amd;
 extern crate geobacter_amdgpu_std as amdgpu_std;
 
@@ -53,7 +54,7 @@ pub fn vector_foreach(args: &Args) {
 }
 
 #[repr(C)] // Ensure we have a universally understood layout
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, GeobacterArgs)]
 pub struct Args {
   tensor: *mut [Simd],
   pub value: Elem,

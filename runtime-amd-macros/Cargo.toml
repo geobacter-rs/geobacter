@@ -1,0 +1,16 @@
+[package]
+name = "geobacter-runtime-amd-macros"
+version = "0.1.0"
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "geobacter_runtime_amd_macros"
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = "1.0"

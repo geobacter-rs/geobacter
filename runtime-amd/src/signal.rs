@@ -1,8 +1,10 @@
 
-use std::ops::{Deref, };
+use std::ops::*;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{fence, Ordering, };
+
+use crate::module::{Deps, CallError, };
 
 use hsa_rt::error::Error as HsaError;
 use hsa_rt::signal::{Signal, SignalRef, ConditionOrdering, WaitState, };
@@ -209,6 +211,11 @@ pub trait HostConsumable: SignalHandle {
   /// This function waits for an acquire memory fence before
   /// returning.
   fn wait_for_zero(&self, spin: bool) -> Result<(), Value> {
+    // quick check so we might be able to avoid a fence:
+    if self.signal_ref().load_relaxed() == 0 {
+      // XXX we might need a fence anyway!!!
+      return Ok(());
+    }
     let r = unsafe { self.wait_for_zero_relaxed(spin) };
     fence(Ordering::Acquire);
     r
@@ -227,113 +234,157 @@ impl<T> HostConsumable for Arc<T>
   where T: HostConsumable + ?Sized,
 { }
 
-/// A type which owns data which cannot be safely used until the
-/// associated signals is complete.
-pub trait DepSignal {
-  type Resource;
-
-  unsafe fn peek_resource<F, R>(&self, f: F) -> R
-    where F: FnOnce(&Self::Resource) -> R;
-  unsafe fn peek_mut_resource(&mut self) -> &mut Self::Resource;
-  unsafe fn unwrap_resource(self) -> Self::Resource;
-
-  /// Note: panics if the signal goes < 0
-  /// TODO create try version
-  fn wait_for_resource(self, spin: bool) -> Self::Resource
-    where Self: HostConsumable + Sized,
-  {
-    self.wait_for_zero(spin)
-      .expect("unexpected negative signal value");
-
-    unsafe { self.unwrap_resource() }
-  }
-
-  fn map<F, R>(self, f: F) -> MapDepSignal<Self, F>
-    where Self: HostConsumable + Sized,
-          F: FnOnce(Self::Resource) -> R,
-  {
-    MapDepSignal(self, f)
-  }
-}
-
-impl DepSignal for DeviceSignal {
-  type Resource = ();
-
-  unsafe fn peek_resource<F, R>(&self, f: F) -> R
-    where F: FnOnce(&Self::Resource) -> R,
-  {
-    f(&())
-  }
-  unsafe fn peek_mut_resource(&mut self) -> &mut Self::Resource {
-    static mut S: () = ();
-    &mut S
-  }
-
-  unsafe fn unwrap_resource(self) -> Self::Resource {
-    ()
-  }
-}
-impl DepSignal for HostSignal {
-  type Resource = ();
-
-  unsafe fn peek_resource<F, R>(&self, f: F) -> R
-    where F: FnOnce(&Self::Resource) -> R,
-  {
-    f(&())
-  }
-  unsafe fn peek_mut_resource(&mut self) -> &mut Self::Resource {
-    static mut S: () = ();
-    &mut S
-  }
-
-  unsafe fn unwrap_resource(self) -> Self::Resource {
-    ()
-  }
-}
-impl DepSignal for GlobalSignal {
-  type Resource = ();
-
-  unsafe fn peek_resource<F, R>(&self, f: F) -> R
-    where F: FnOnce(&Self::Resource) -> R,
-  {
-    f(&())
-  }
-  unsafe fn peek_mut_resource(&mut self) -> &mut Self::Resource {
-    static mut S: () = ();
-    &mut S
-  }
-
-  unsafe fn unwrap_resource(self) -> Self::Resource {
-    ()
-  }
-}
-
-pub struct MapDepSignal<D, F>(D, F);
-impl<D, F> SignalHandle for MapDepSignal<D, F>
-  where D: SignalHandle,
+/// A borrow which will decrement the associated signal on drop. Use this to start
+/// transfers/kernels when the host finishes a mutable borrow.
+pub struct SignaledBorrow<T, S>(S, T)
+  where T: ?Sized,
+        S: SignalHandle;
+impl<T, S> SignaledBorrow<T, S>
+  where S: SignalHandle,
 {
-  fn signal_ref(&self) -> &SignalRef { self.0.signal_ref() }
-  unsafe fn mark_consumed(&self) { self.0.mark_consumed() }
-  fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
-    self.0.as_host_consumable()
+  pub fn new(value: T, signal: S) -> Self {
+    SignaledBorrow(signal, value)
   }
 }
-impl<D, F> HostConsumable for MapDepSignal<D, F>
-  where D: HostConsumable,
-{ }
-impl<D, F, R> DepSignal for MapDepSignal<D, F>
-  where D: DepSignal,
-        F: FnOnce(D::Resource) -> R,
+unsafe impl<T, S> Deps for SignaledBorrow<T, S>
+  where T: Deps + ?Sized,
+        S: DeviceConsumable,
 {
-  type Resource = R;
-  unsafe fn peek_resource<F2, R2>(&self, _f: F2) -> R2
-    where F2: FnOnce(&Self::Resource) -> R2,
+  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+    -> Result<(), CallError>
   {
-    unimplemented!();
+    // XXX should iter_deps be called on the inner value too??
+    f(&self.0)
   }
-  unsafe fn peek_mut_resource(&mut self) -> &mut Self::Resource { unimplemented!() }
-  unsafe fn unwrap_resource(self) -> R {
-    let dep = self.0.unwrap_resource();
-    (self.1)(dep)
+}
+impl<T, S> Deref for SignaledBorrow<T, S>
+  where T: ?Sized,
+        S: SignalHandle,
+{
+  type Target = T;
+  fn deref(&self) -> &Self::Target {
+    &self.1
+  }
+}
+impl<T, S> DerefMut for SignaledBorrow<T, S>
+  where T: ?Sized,
+        S: SignalHandle,
+{
+  fn deref_mut(&mut self) -> &mut Self::Target {
+    &mut self.1
+  }
+}
+impl<T, S, I> Index<I> for SignaledBorrow<T, S>
+  where T: Index<I> + ?Sized,
+        S: SignalHandle,
+{
+  type Output = T::Output;
+  fn index(&self, idx: I) -> &Self::Output {
+    Index::index(&**self, idx)
+  }
+}
+
+impl<T, S, I> IndexMut<I> for SignaledBorrow<T, S>
+  where T: IndexMut<I> + ?Sized,
+        S: SignalHandle,
+{
+  fn index_mut(&mut self, idx: I) -> &mut Self::Output {
+    IndexMut::index_mut(&mut **self, idx)
+  }
+}
+impl<T, S> Drop for SignaledBorrow<T, S>
+  where T: ?Sized,
+        S: SignalHandle,
+{
+  fn drop(&mut self) {
+    self.0.signal_ref().subtract_screlease(1);
+  }
+}
+/// An object which will force the host to wait on the signal when deref-ed.
+/// Use this to wait for transfers/kernels to finish before reading
+#[derive(Clone, Copy)]
+pub struct SignaledDeref<T, S>(S, T)
+  where T: ?Sized,
+        S: HostConsumable;
+
+impl<T, S> SignaledDeref<T, S>
+  where T: ?Sized,
+        S: HostConsumable,
+{
+  pub fn new(value: T, signal: S) -> Self
+    where T: Sized,
+  {
+    SignaledDeref(signal, value)
+  }
+
+  pub unsafe fn unchecked_ref(&self) -> &T {
+    &self.1
+  }
+  pub unsafe fn unchecked_mut(&mut self) -> &mut T {
+    &mut self.1
+  }
+
+  pub fn try_unwrap(self, spin: bool) -> Result<(T, S), Value>
+    where T: Sized,
+  {
+    self.0.wait_for_zero(spin)?;
+
+    let Self(s, t) = self;
+    Ok((t, s))
+  }
+  pub fn unwrap(self, spin: bool) -> (T, S)
+    where T: Sized,
+  {
+    self.try_unwrap(spin)
+      .expect("non-zero signal result")
+  }
+
+  pub fn try_as_ref(&self, spin: bool) -> Result<&T, Value> {
+    self.0.wait_for_zero(spin)?;
+
+    Ok(&self.1)
+  }
+  pub fn try_as_mut(&mut self, spin: bool) -> Result<&mut T, Value> {
+    self.0.wait_for_zero(spin)?;
+
+    Ok(&mut self.1)
+  }
+}
+
+impl<T, S> Deref for SignaledDeref<T, S>
+  where T: ?Sized,
+        S: HostConsumable,
+{
+  type Target = T;
+  fn deref(&self) -> &Self::Target {
+    self.try_as_ref(false)
+      .expect("non-zero signal result")
+  }
+}
+impl<T, S> DerefMut for SignaledDeref<T, S>
+  where T: ?Sized,
+        S: HostConsumable,
+{
+  fn deref_mut(&mut self) -> &mut Self::Target {
+    self.try_as_mut(false)
+      .expect("non-zero signal result")
+  }
+}
+impl<T, S, I> Index<I> for SignaledDeref<T, S>
+  where T: Index<I> + ?Sized,
+        S: HostConsumable,
+{
+  type Output = T::Output;
+  fn index(&self, idx: I) -> &Self::Output {
+    Index::index(&**self, idx)
+  }
+}
+
+impl<T, S, I> IndexMut<I> for SignaledDeref<T, S>
+  where T: IndexMut<I> + ?Sized,
+        S: HostConsumable,
+{
+  fn index_mut(&mut self, idx: I) -> &mut Self::Output {
+    IndexMut::index_mut(&mut **self, idx)
   }
 }

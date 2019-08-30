@@ -37,6 +37,12 @@ extern crate geobacter_shared_defs as shared_defs;
 extern crate geobacter_intrinsics_common as intrinsics_common;
 extern crate geobacter_amdgpu_intrinsics as intrinsics;
 
+#[allow(unused_imports)]
+#[macro_use]
+extern crate geobacter_runtime_amd_macros;
+#[doc(hidden)]
+pub use geobacter_runtime_amd_macros::*;
+
 use std::any::Any;
 use std::cmp::max;
 use std::collections::{BTreeMap, };
