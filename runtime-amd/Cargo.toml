@@ -23,6 +23,7 @@ geobacter-intrinsics-common = { path = "../shared-intrinsics/common" }
 geobacter-amdgpu-intrinsics = { path = "../shared-intrinsics/amdgpu" }
 geobacter-runtime-amd-macros = { path = "../runtime-amd-macros" }
 arrayvec = "0.4.11"
+packed_simd = { version = "0.3.3", optional = true }
 
 [dependencies.goblin]
 version = "0.0.23"

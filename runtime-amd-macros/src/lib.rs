@@ -14,6 +14,16 @@ pub fn derive_geobacter_deps(input: proc_macro::TokenStream)
 {
   let input = parse_macro_input!(input as DeriveInput);
 
+  for param in input.generics.lifetimes() {
+    if param.lifetime.to_string() == "'deps_lt" {
+      return Error::new(param.lifetime.apostrophe,
+                        "cannot deserialize when there is a \
+                         lifetime parameter called 'deps_lt")
+        .to_compile_error()
+        .into();
+    }
+  }
+
   let (impl_generics, ty_generics, where_clause) =
     input.generics.split_for_impl();
 
@@ -33,7 +43,7 @@ pub fn derive_geobacter_deps(input: proc_macro::TokenStream)
   let expanded = quote! {
 
     unsafe impl #impl_generics ::geobacter_runtime_amd::module::Deps for #name #ty_generics #where_clause {
-      fn iter_deps(&self, f: &mut FnMut(&dyn ::geobacter_runtime_amd::signal::DeviceConsumable) -> Result<(), ::geobacter_runtime_amd::module::CallError>)
+      fn iter_deps<'deps_lt>(&'deps_lt self, f: &mut FnMut(&'deps_lt dyn ::geobacter_runtime_amd::signal::DeviceConsumable) -> Result<(), ::geobacter_runtime_amd::module::CallError>)
         -> Result<(), ::geobacter_runtime_amd::module::CallError>
       {
         use ::geobacter_runtime_amd::module::Deps;
@@ -47,7 +57,7 @@ pub fn derive_geobacter_deps(input: proc_macro::TokenStream)
   proc_macro::TokenStream::from(expanded)
 }
 #[proc_macro_derive(GeobacterArgs)]
-pub fn derive_geobacter_args(input: proc_macro::TokenStream)
+pub fn derive_geobacter_args(_input: proc_macro::TokenStream)
   -> proc_macro::TokenStream
 {
   unimplemented!();

@@ -19,6 +19,10 @@
 #![feature(slice_from_raw_parts)]
 #![feature(raw)]
 
+#![allow(incomplete_features)]
+#![feature(const_generics)]
+// #![warn(incomplete_features)] XXX can't just allow ^
+
 extern crate any_key;
 extern crate goblin;
 extern crate log;
@@ -30,7 +34,7 @@ extern crate syntax;
 extern crate rustc;
 extern crate rustc_target;
 
-extern crate geobacter_core;
+extern crate geobacter_core as gcore;
 extern crate hsa_rt;
 extern crate geobacter_runtime_core as grt_core;
 extern crate geobacter_shared_defs as shared_defs;

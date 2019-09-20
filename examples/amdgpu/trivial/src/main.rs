@@ -54,8 +54,9 @@ pub fn vector_foreach(args: &Args) {
 }
 
 #[repr(C)] // Ensure we have a universally understood layout
-#[derive(Clone, Copy, GeobacterArgs)]
+#[derive(GeobacterDeps)]
 pub struct Args {
+  copy: DeviceSignal,
   tensor: *mut [Simd],
   pub value: Elem,
 }
@@ -82,8 +83,10 @@ pub fn time<F, R>(what: &str, f: F) -> R
 
 pub fn main() {
   env_logger::init();
-  let ctxt = Context::new()
-    .expect("create context");
+  let ctxt = time("create context", || {
+    Context::new()
+      .expect("create context")
+  });
 
   let accels = HsaAmdGpuAccel::all_devices(&ctxt)
     .expect("HsaAmdGpuAccel::all_devices");
@@ -150,10 +153,9 @@ pub fn main() {
           .expect("HsaAmdGpuAccel::async_copy_into");
       }
 
-      let mut invoc: Invoc<_, _, DeviceSignal> =
+      let mut invoc: Invoc<_, _> =
         Invoc::new(&accel, vector_foreach)
           .expect("Invoc::new");
-      invoc.add_dep(async_copy_signal);
       unsafe {
         invoc.no_acquire_fence();
         invoc.device_release_fence();
@@ -169,6 +171,7 @@ pub fn main() {
 
       const VALUE: Elem = 4.0;
       let args = Args {
+        copy: async_copy_signal,
         tensor: device_values_ptr.as_ptr(),
         value: VALUE,
       };
@@ -220,5 +223,6 @@ pub fn main() {
           });
       });
     }
+    println!();
   }
 }
