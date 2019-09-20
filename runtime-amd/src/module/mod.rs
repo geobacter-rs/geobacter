@@ -34,7 +34,7 @@ use crate::grt_core::context::{ModuleContextData, PlatformModuleData, };
 
 use crate::HsaAmdGpuAccel;
 use crate::codegen::{Codegenner, KernelDesc, CodegenDesc};
-use crate::signal::{DeviceConsumable, HostConsumable, SignalHandle, SignaledDeref};
+use crate::signal::{DeviceConsumable, HostConsumable, SignalHandle, SignaledDeref, SignaledRef};
 use hsa_rt::signal::SignalRef;
 
 pub use self::deps::Deps;
@@ -372,7 +372,7 @@ impl<A, Dim, MD> Invoc<A, Dim, MD>
     atomic::fence(Ordering::SeqCst);
 
     {
-      let q = queue.as_ref().expect("provide a completion signal pls");
+      let q = queue.as_ref().unwrap();
       let c = completion.as_ref()
         .map(|c| c.signal_ref() );
 
@@ -612,20 +612,10 @@ impl<P, A, Q, S> InvocCompletion<P, A, Q, S>
       .expect("dropped?")
   }
 
-  pub unsafe fn wait_ref<F, R>(&self, f: F) -> SignaledDeref<R, S>
+  pub unsafe fn wait_ref<F, R>(&self, f: F) -> SignaledDeref<R, &S>
     where F: FnOnce(&A) -> R,
+          R: SignaledRef,
           S: HostConsumable + Clone,
-  {
-    let inner = self.inner();
-    let args = inner.args.as_ref();
-    let signal = inner.signal.clone();
-    let r = f(args);
-
-    SignaledDeref::new(r, signal)
-  }
-  pub unsafe fn wait_ref_signal_ref<F, R>(&self, f: F) -> SignaledDeref<R, &S>
-    where F: FnOnce(&A) -> R,
-          S: HostConsumable,
   {
     let inner = self.inner();
     let args = inner.args.as_ref();
