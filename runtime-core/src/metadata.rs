@@ -500,6 +500,7 @@ pub fn context_metadata() -> Result<LoadedCrateMetadata, Box<dyn Error>> {
   use crate::platform::os::{get_mapped_files, dylib_search_paths};
   use crate::syntax::source_map::edition::Edition;
 
+  use std::env::consts::DLL_EXTENSION;
   use std::ffi::OsStr;
   use std::path::Component;
 
@@ -542,7 +543,7 @@ pub fn context_metadata() -> Result<LoadedCrateMetadata, Box<dyn Error>> {
         let path = entry.path();
         if !path.is_file() { continue; }
         let extension = path.extension();
-        if extension.is_none() || extension.unwrap() != "so" { continue; }
+        if extension != Some(DLL_EXTENSION.as_ref()) { continue; }
         // skip other toolchains
         // XXX revisit this when deployment code is written.
         if path.components().any(|v| v == Component::Normal(OsStr::new(".rustup"))) {
