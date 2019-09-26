@@ -556,6 +556,22 @@ impl HsaAmdGpuAccel {
                               None)?;
     Ok(q)
   }
+  pub fn create_multi_queue2(&self, min: Option<u32>,
+                             private: u32,
+                             group: u32)
+    -> Result<KernelMultiQueue, HsaError>
+  {
+    let size_range = self.device_agent.queue_size()?;
+    let queue_size = if let Some(min) = min {
+      max(size_range.start, min)
+    } else {
+      size_range.end / 4
+    };
+    let q = self.device_agent
+      .new_kernel_multi_queue(queue_size, Some(private),
+                              Some(group))?;
+    Ok(q)
+  }
 
   /// Locks the memory corresponding to `ptr` in memory (ie can't be sent
   /// to the page file) and gives all devices access.
