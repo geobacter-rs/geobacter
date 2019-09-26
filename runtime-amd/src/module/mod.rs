@@ -357,9 +357,11 @@ impl<A, Dim, MD> Invoc<A, Dim, MD>
         args.as_ref().unwrap()
           .iter_deps(&mut f)?;
       }
-      let mut deps = signals.iter();
-      q.try_enqueue_barrier_and(&mut deps, None)?;
-      assert_eq!(deps.len(), 0);
+      if signals.len() > 0 {
+        let mut deps = signals.iter();
+        q.try_enqueue_barrier_and(&mut deps, None)?;
+        assert_eq!(deps.len(), 0);
+      }
     }
 
     let kernargs = kernargs.unwrap();
