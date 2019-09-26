@@ -34,7 +34,7 @@ use crate::grt_core::context::{ModuleContextData, PlatformModuleData, };
 
 use crate::HsaAmdGpuAccel;
 use crate::codegen::{Codegenner, KernelDesc, CodegenDesc};
-use crate::signal::{DeviceConsumable, HostConsumable, SignalHandle, SignaledDeref, SignaledRef};
+use crate::signal::{DeviceConsumable, HostConsumable, SignalHandle, SignaledDeref, };
 use hsa_rt::signal::SignalRef;
 
 pub use self::deps::Deps;
@@ -616,8 +616,7 @@ impl<P, A, Q, S> InvocCompletion<P, A, Q, S>
 
   pub unsafe fn wait_ref<F, R>(&self, f: F) -> SignaledDeref<R, &S>
     where F: FnOnce(&A) -> R,
-          R: SignaledRef,
-          S: HostConsumable + Clone,
+          S: HostConsumable,
   {
     let inner = self.inner();
     let args = inner.args.as_ref();

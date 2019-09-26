@@ -9,6 +9,7 @@ use crate::module::{Deps, CallError, };
 use hsa_rt::error::Error as HsaError;
 use hsa_rt::signal::{Signal, SignalRef, ConditionOrdering, WaitState, };
 
+use gcore::platform::is_host;
 use grt_core::AcceleratorId;
 
 pub use hsa_rt::signal::Value;
@@ -234,132 +235,19 @@ impl<T> HostConsumable for Arc<T>
   where T: HostConsumable + ?Sized,
 { }
 
-/// A borrow which will decrement the associated signal on drop. Use this to start
-/// transfers/kernels when the host finishes a mutable borrow.
-pub struct SignaledBorrow<T, S>(S, T)
-  where T: ?Sized,
-        S: SignalHandle;
-impl<T, S> SignaledBorrow<T, S>
-  where S: SignalHandle,
-{
-  pub fn new(value: T, signal: S) -> Self {
-    SignaledBorrow(signal, value)
-  }
-
-  fn unwrap(self) -> (S, T) {
-    let out = unsafe {
-      ::std::mem::transmute_copy(&self)
-    };
-
-    ::std::mem::forget(self);
-
-    out
-  }
-
-  pub fn as_ref(&self) -> SignaledBorrow<&T, &S> {
-    SignaledBorrow::new(&self.1, &self.0)
-  }
-
-  pub fn map<F, R>(self, f: F) -> SignaledBorrow<R, S>
-    where F: FnOnce(T) -> R,
-  {
-    let (signal, value) = self.unwrap();
-    let value = f(value);
-    SignaledBorrow::new(value, signal)
-  }
-}
-unsafe impl<T, S> Deps for SignaledBorrow<T, S>
-  where T: Deps + ?Sized,
-        S: DeviceConsumable,
-{
-  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
-    -> Result<(), CallError>
-  {
-    // XXX should iter_deps be called on the inner value too??
-    f(&self.0)
-  }
-}
-impl<T, S> Deref for SignaledBorrow<T, S>
-  where T: ?Sized,
-        S: SignalHandle,
-{
-  type Target = T;
-  fn deref(&self) -> &Self::Target {
-    &self.1
-  }
-}
-impl<T, S> DerefMut for SignaledBorrow<T, S>
-  where T: ?Sized,
-        S: SignalHandle,
-{
-  fn deref_mut(&mut self) -> &mut Self::Target {
-    &mut self.1
-  }
-}
-impl<T, S, I> Index<I> for SignaledBorrow<T, S>
-  where T: Index<I> + ?Sized,
-        S: SignalHandle,
-{
-  type Output = T::Output;
-  fn index(&self, idx: I) -> &Self::Output {
-    Index::index(&**self, idx)
-  }
-}
-
-impl<T, S, I> IndexMut<I> for SignaledBorrow<T, S>
-  where T: IndexMut<I> + ?Sized,
-        S: SignalHandle,
-{
-  fn index_mut(&mut self, idx: I) -> &mut Self::Output {
-    IndexMut::index_mut(&mut **self, idx)
-  }
-}
-impl<T, S> Drop for SignaledBorrow<T, S>
-  where T: ?Sized,
-        S: SignalHandle,
-{
-  fn drop(&mut self) {
-    self.0.signal_ref().subtract_screlease(1);
-  }
-}
-
-#[doc(hidden)]
-pub trait SignaledRef {
-  const DEREF_WAIT: bool;
-  type This;
-
-  fn _as_ref(&self) -> &Self::This;
-}
-default impl<T> SignaledRef for T {
-  const DEREF_WAIT: bool = true;
-  type This = T;
-
-  fn _as_ref(&self) -> &Self::This {
-    unsafe {
-      ::std::mem::transmute(self)
-    }
-  }
-}
-impl<'a, T> SignaledRef for &'a T {
-  const DEREF_WAIT: bool = false;
-  type This = T;
-  fn _as_ref(&self) -> &T { *self }
-}
-impl<'a, T> SignaledRef for &'a mut T {
-  const DEREF_WAIT: bool = false;
-  type This = T;
-  fn _as_ref(&self) -> &T { *self }
-}
 /// An object which will force the host to wait on the signal when deref-ed.
-/// Use this to wait for transfers/kernels to finish before reading
-#[derive(Clone, Copy)]
+/// Use this to wait for transfers/kernels to finish before reading.
+/// Also usable in your kernel's argument structure, which will cause
+/// the GPU command processor to wait on the signal before launching any wave
+/// (assuming `Deps` is implemented correctly). This structure won't wait on
+/// the signal in that case.
+#[derive(Clone, Copy, Debug)]
 pub struct SignaledDeref<T, S>(S, T)
-  where T: SignaledRef,
+  where T: ?Sized,
         S: SignalHandle;
 
 impl<T, S> SignaledDeref<T, S>
-  where T: SignaledRef,
-        S: SignalHandle,
+  where S: SignalHandle,
 {
   pub fn new(value: T, signal: S) -> Self
     where T: Sized,
@@ -367,22 +255,18 @@ impl<T, S> SignaledDeref<T, S>
     SignaledDeref(signal, value)
   }
 
-  pub unsafe fn unchecked_ref(&self) -> &T::This {
-    self.1._as_ref()
-  }
   pub unsafe fn unchecked_unwrap(self) -> (T, S) {
     let Self(s, t) = self;
     (t, s)
   }
-}
-impl<T, S> SignaledDeref<T, S>
-  where T: SignaledRef,
-        S: HostConsumable,
-{
   pub fn try_unwrap(self, spin: bool) -> Result<(T, S), Value>
     where T: Sized,
   {
-    self.0.wait_for_zero(spin)?;
+    if is_host() {
+      self.0.as_host_consumable()
+        .expect("signal is not host consumable")
+        .wait_for_zero(spin)?;
+    }
 
     let Self(s, t) = self;
     Ok((t, s))
@@ -393,31 +277,38 @@ impl<T, S> SignaledDeref<T, S>
     self.try_unwrap(spin)
       .expect("non-zero signal result")
   }
-
-  pub fn try_as_ref(&self, spin: bool) -> Result<&T::This, Value> {
-    if T::DEREF_WAIT {
-      self.0.wait_for_zero(spin)?;
+}
+impl<T, S> SignaledDeref<T, S>
+  where T: ?Sized,
+        S: SignalHandle,
+{
+  pub unsafe fn unchecked_ref(&self) -> &T {
+    &self.1
+  }
+  pub unsafe fn unchecked_mut(&mut self) -> &mut T {
+    &mut self.1
+  }
+  pub fn try_get_ref(&self, spin: bool) -> Result<&T, Value> {
+    if is_host() /* TODO && T::DEREF_WAIT */ {
+      self.0.as_host_consumable()
+        .expect("signal is not host consumable")
+        .wait_for_zero(spin)?;
     }
 
-    Ok(self.1._as_ref())
+    Ok(&self.1)
   }
-}
-impl<'a, T, S> SignaledDeref<&'a mut T, S>
-  where &'a mut T: SignaledRef<This = T>,
-        S: HostConsumable,
-{
-  pub unsafe fn unchecked_mut(&mut self) -> &mut T {
-    &mut *self.1
-  }
-  pub fn try_as_mut(&mut self, spin: bool) -> Result<&mut T, Value> {
-    self.0.wait_for_zero(spin)?;
+  pub fn try_get_mut(&mut self, spin: bool) -> Result<&mut T, Value> {
+    if is_host() {
+      self.0.as_host_consumable()
+        .expect("signal is not host consumable")
+        .wait_for_zero(spin)?;
+    }
 
-    Ok(self.1)
+    Ok(&mut self.1)
   }
 }
 impl<'a, T, S> SignaledDeref<T, &'a S>
-  where T: SignaledRef,
-        S: HostConsumable,
+  where S: SignalHandle,
 {
   pub fn clone_signal(self) -> SignaledDeref<T, S>
     where S: Clone,
@@ -426,43 +317,59 @@ impl<'a, T, S> SignaledDeref<T, &'a S>
     SignaledDeref::new(v, s.clone())
   }
 }
-
 impl<T, S> Deref for SignaledDeref<T, S>
-  where T: SignaledRef,
-        S: HostConsumable,
+  where T: ?Sized,
+        S: SignalHandle,
 {
-  type Target = T::This;
+  type Target = T;
   fn deref(&self) -> &Self::Target {
-    self.try_as_ref(false)
-      .expect("non-zero signal result")
+    if !is_host() {
+      unsafe { self.unchecked_ref() }
+    } else {
+      self.try_get_ref(false)
+        .expect("non-zero signal result")
+    }
   }
 }
-impl<'a, T, S> DerefMut for SignaledDeref<&'a mut T, S>
-  where &'a mut T: SignaledRef<This = T>,
-        S: HostConsumable,
+impl<T, S> DerefMut for SignaledDeref<T, S>
+  where T: ?Sized,
+        S: SignalHandle,
 {
   fn deref_mut(&mut self) -> &mut Self::Target {
-    self.try_as_mut(false)
-      .expect("non-zero signal result")
+    if !is_host() {
+      unsafe { self.unchecked_mut() }
+    } else {
+      self.try_get_mut(false)
+        .expect("non-zero signal result")
+    }
   }
 }
 impl<T, S, I> Index<I> for SignaledDeref<T, S>
-  where T: SignaledRef,
-        <T as SignaledRef>::This: Index<I>,
-        S: HostConsumable,
+  where T: Index<I> + ?Sized,
+        S: SignalHandle,
 {
-  type Output = <<T as SignaledRef>::This as Index<I>>::Output;
+  type Output = <T as Index<I>>::Output;
   fn index(&self, idx: I) -> &Self::Output {
     Index::index(&**self, idx)
   }
 }
 
-impl<'a, T, S, I> IndexMut<I> for SignaledDeref<&'a mut T, S>
-  where &'a mut T: SignaledRef<This = T>,
-        <&'a mut T as SignaledRef>::This: IndexMut<I>,
-        S: HostConsumable,
+impl<T, S, I> IndexMut<I> for SignaledDeref<T, S>
+  where T: IndexMut<I> + ?Sized,
+        S: SignalHandle,
 {
   fn index_mut(&mut self, idx: I) -> &mut Self::Output {
     IndexMut::index_mut(&mut **self, idx)
+  }
+}
+unsafe impl<T, S> Deps for SignaledDeref<T, S>
+  where T: Deps + ?Sized,
+        S: DeviceConsumable,
+{
+  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+    -> Result<(), CallError>
+  {
+    self.1.iter_deps(f)?;
+    f(&self.0)
   }
 }
