@@ -543,7 +543,7 @@ impl HsaAmdGpuAccel {
     Ok(q)
   }
   pub fn create_multi_queue(&self, min: Option<u32>)
-    -> Result<KernelMultiQueue, Box<dyn Error>>
+    -> Result<KernelMultiQueue, HsaError>
   {
     let size_range = self.device_agent.queue_size()?;
     let queue_size = if let Some(min) = min {
