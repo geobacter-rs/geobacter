@@ -7,6 +7,7 @@ extern crate proc_macro2;
 use proc_macro2::TokenStream;
 use quote::*;
 use syn::*;
+use syn::spanned::Spanned;
 
 #[proc_macro_derive(GeobacterDeps)]
 pub fn derive_geobacter_deps(input: proc_macro::TokenStream)
@@ -26,6 +27,52 @@ pub fn derive_geobacter_deps(input: proc_macro::TokenStream)
 
   let (impl_generics, ty_generics, where_clause) =
     input.generics.split_for_impl();
+
+  let mut where_clause = where_clause.cloned();
+  if where_clause.is_none() {
+    where_clause = Some(WhereClause {
+      where_token: Default::default(),
+      predicates: Default::default(),
+    });
+  }
+
+  let seg1 = Ident::new("geobacter_runtime_amd", input.span());
+  let seg2 = Ident::new("module", input.span());
+  let seg3 = Ident::new("Deps", input.span());
+  let mut deps_path = Path {
+    leading_colon: Some(Default::default()),
+    segments: Default::default(),
+  };
+  deps_path.segments.push(seg1.into());
+  deps_path.segments.push(seg2.into());
+  deps_path.segments.push(seg3.into());
+
+  let deps_bound = TraitBound {
+    paren_token: None,
+    modifier: TraitBoundModifier::None,
+    lifetimes: None,
+    path: deps_path,
+  };
+
+  if let Some(ref mut where_clause) = where_clause {
+    for ty in input.generics.type_params() {
+      let ty = PathSegment::from(ty.ident.clone());
+      let ty = Path::from(ty);
+      let ty = TypePath {
+        qself: None,
+        path: ty,
+      };
+      let mut ty = PredicateType {
+        lifetimes: None,
+        bounded_ty: ty.into(),
+        colon_token: Default::default(),
+        bounds: Default::default(),
+      };
+      ty.bounds.push(deps_bound.clone().into());
+      where_clause.predicates
+        .push(ty.into());
+    }
+  }
 
   let expanded = match input.data {
     Data::Union(_) => {
