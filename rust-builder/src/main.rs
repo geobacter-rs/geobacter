@@ -305,12 +305,12 @@ llvm-tools = true
       let p: &Path = "/usr/lib/icecc/bin/gcc".as_ref();
       if p.exists() {
         write!(config, r#"
-[target.{}-unknown-linux-{}]
+[target.{}]
 cc = "/usr/lib/icecc/bin/gcc"
 cxx = "/usr/lib/icecc/bin/g++"
 ar = "ar"
 "#,
-               cfg!(target_arch), cfg!(target_env)).unwrap();
+               env!("TARGET")).unwrap();
       }
     }
     #[cfg(not(target_os = "linux"))]
