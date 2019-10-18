@@ -371,7 +371,7 @@ impl<'a> Builder for ArgMatches<'a> {
   }
 
   fn rustup_enabled(&self) -> bool {
-    self.is_present("rustup")
+    !self.is_present("no-rustup")
   }
 
   fn rustup_toolchain(&self) -> &str {
