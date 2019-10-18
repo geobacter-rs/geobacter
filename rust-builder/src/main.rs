@@ -186,7 +186,7 @@ trait Builder {
 
     let mut cmd = Command::new("chrpath");
     cmd.arg("-r")
-      .arg("'$ORIGIN/../lib'")
+      .arg("$ORIGIN/../lib")
       .arg(&dest);
     run_unlogged_cmd("chrpath", cmd);
 
