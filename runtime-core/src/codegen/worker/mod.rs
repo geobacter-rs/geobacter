@@ -24,7 +24,6 @@ use std::time::Duration;
 use rustc;
 use rustc::hir::def_id::{CrateNum, DefId};
 use rustc::middle::cstore::EncodedMetadata;
-use rustc::middle::dependency_format::Dependencies;
 use rustc::middle::exported_symbols::{SymbolExportLevel, };
 use rustc::mir::{CustomIntrinsicMirGen, };
 use rustc::ty::query::Providers;
@@ -357,10 +356,6 @@ impl<P> WorkerTranslatorData<P>
         sess.recursion_limit.set(512);
         sess.allocator_kind.set(None);
 
-        let mut deps: Dependencies = Default::default();
-        deps.insert(sess.crate_types.get()[0], vec![]);
-        sess.dependency_formats.set(deps);
-
         sess.init_features(feature_gate::Features::new());
 
         // TODO hash the accelerator target desc
@@ -383,7 +378,7 @@ impl<P> WorkerTranslatorData<P>
             .expect("metadata error");
           for meta in meta.into_iter() {
             let name = CrateNameHash {
-              name: meta.name,
+              name: meta.root.name,
               hash: meta.root.hash.as_u64(),
             };
             let cnum = loader.lookup_cnum(&name)
@@ -391,7 +386,7 @@ impl<P> WorkerTranslatorData<P>
 
             let fingerprint = meta.root.disambiguator.to_fingerprint()
               .as_value();
-            let key = (Cow::Owned(format!("{}", meta.name)),
+            let key = (Cow::Owned(format!("{}", meta.root.name)),
                        fingerprint.0,
                        fingerprint.1);
 
@@ -481,8 +476,6 @@ impl<P> WorkerTranslatorData<P>
 
     let disk_cache = rustc_incremental::load_query_result_cache(&sess);
 
-    let (tx, rx) = channel();
-
     let tmpdir = TDBuilder::new()
       .prefix("geobacter-runtime-codegen-")
       .tempdir()
@@ -503,6 +496,7 @@ impl<P> WorkerTranslatorData<P>
       maybe_unused_trait_imports: Default::default(),
       maybe_unused_extern_crates: Default::default(),
       export_map: Default::default(),
+      extern_crate_map: Default::default(),
       extern_prelude: Default::default(),
       glob_map: Default::default(),
     };
@@ -542,7 +536,6 @@ impl<P> WorkerTranslatorData<P>
       map_crate,
       disk_cache,
       CRATE_NAME,
-      tx,
       &out,
       Some(driver_data),
     );
@@ -566,18 +559,15 @@ impl<P> WorkerTranslatorData<P>
       let metadata = EncodedMetadata::new();
       let need_metadata_module = false;
 
-      tcx.sess.profiler(|p| p.start_activity("codegen crate"));
       let ongoing_codegen = time(tcx.sess, "codegen", || {
-        codegen.codegen_crate(tcx, metadata, need_metadata_module,
-                              rx)
+        let _prof_timer = tcx.prof.generic_activity("codegen_crate");
+        codegen.codegen_crate(tcx, metadata, need_metadata_module)
       });
-      tcx.sess.profiler(|p| p.end_activity("codegen crate"));
 
       time(tcx.sess, "LLVM codegen",
            || {
-             codegen.join_codegen_and_link(ongoing_codegen,
-                                           &sess, dep_graph,
-                                           &out)
+             codegen.join_codegen_and_link(ongoing_codegen, &sess,
+                                           dep_graph, &out)
                .map_err(|err| {
                  error!("codegen failed: `{:?}`!", err);
                  error::Error::Codegen(instance)
@@ -696,8 +686,8 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
   // TODO: -polly-target=gpu produces host side code which
   // then triggers the gpu side code.
   //opts.cg.llvm_args.push("-polly-target=gpu".into());
-  opts.cg.llvm_args.push("-polly-vectorizer=polly".into());
-  opts.cg.llvm_args.push("-polly-position=early".into());
+  opts.cg.llvm_args.push("-polly-vectorizer=stripmine".into());
+  //opts.cg.llvm_args.push("-polly-position=early".into());
   opts.cg.llvm_args.push("-polly-enable-polyhedralinfo".into());
   opts
 }
@@ -821,6 +811,12 @@ impl<P> WorkerTranslatorData<P>
         PlatformDriverData::<P>::with(tcx, |_tcx, pd| {
           pd.dd().expect_type_of(def_id)
         })
+      },
+      dependency_formats: |tcx, cnum| {
+        assert_eq!(cnum, LOCAL_CRATE);
+        let o = vec![(tcx.sess.crate_types.borrow()[0],
+                      Default::default())];
+        o.into()
       },
       ..*providers
     };

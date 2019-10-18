@@ -150,6 +150,8 @@ pub struct TargetOptions {
   pub post_link_args: ::rustc_target::spec::LinkArgs,
   /// Environment variables to be set before invoking the linker.
   pub link_env: Vec<(String, String)>,
+  /// Environment variables to be removed for the linker invocation.
+  pub link_env_remove: Vec<String>,
 
   /// Extra arguments to pass to the external assembler (when used)
   pub asm_args: Vec<String>,

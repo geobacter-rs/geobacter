@@ -8,10 +8,10 @@ use std::ops::{Deref};
 use std::sync::{Arc, };
 
 use rustc_data_structures::fx::{FxHashMap, };
-use rustc_data_structures::sync::{Lock, RwLock, Lrc, MetadataRef, };
+use rustc_data_structures::sync::{Lock, RwLock, Lrc, MetadataRef, AtomicCell, };
 use rustc_data_structures::owning_ref::{OwningRef, };
 use rustc::hir::def_id::{CrateNum,};
-use rustc::middle::cstore::MetadataLoader;
+use rustc::middle::cstore::{MetadataLoader, CrateSource as RustcCrateSource, };
 use rustc_metadata::cstore::{self, MetadataBlob, CStore, };
 use rustc_metadata::schema::{self, METADATA_HEADER};
 use rustc::mir::interpret::AllocDecodingState;
@@ -183,6 +183,7 @@ impl CrateMetadataLoader {
                 cstore: &CStore)
     -> Result<CrateNum, String>
   {
+    use rustc::dep_graph::DepNodeIndex;
     use rustc::session::search_paths::PathKind;
     use rustc::middle::cstore::DepKind;
 
@@ -265,13 +266,10 @@ impl CrateMetadataLoader {
       .collect();
 
     let cmeta = cstore::CrateMetadata {
-      name: root.name,
-      // Is it okay to just ignore this?
-      imported_name: root.name,
       extern_crate: Lock::new(None),
       def_path_table: Lrc::new(def_path_table),
       trait_impls,
-      proc_macros: None,
+      raw_proc_macros: None,
       root,
       blob: shared_krate.clone().unwrap(), // XXX cloned
       cnum_map,
@@ -280,13 +278,14 @@ impl CrateMetadataLoader {
       source_map_import_info: RwLock::new(vec![]),
       alloc_decoding_state: AllocDecodingState::new(interpret_alloc_index),
       dep_kind: Lock::new(DepKind::Explicit),
-      source: cstore::CrateSource {
+      source: RustcCrateSource {
         // Not sure PathKind::Crate is correct.
         dylib: Some((src.to_path_buf(), PathKind::Crate)),
         rlib: None,
         rmeta: None,
       },
       private_dep: false,
+      dep_node_index: AtomicCell::new(DepNodeIndex::INVALID),
     };
     let cmeta = Lrc::new(cmeta);
     into.0.push(cmeta);

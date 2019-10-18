@@ -6,14 +6,13 @@ use rustc::session::{config, Session};
 use rustc::session::CrateDisambiguator;
 use rustc::traits;
 use rustc::ty;
-use rustc_ast_borrowck as borrowck;
 use rustc_data_structures::fingerprint::Fingerprint;
 use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_data_structures::sync::{Lock, };
 use rustc_metadata::cstore;
 use rustc_mir as mir;
 use rustc_passes;
-use rustc_plugin as plugin;
+use rustc_driver::plugin;
 use rustc_privacy;
 use rustc_traits;
 use rustc_typeck as typeck;
@@ -27,7 +26,7 @@ pub fn compute_crate_disambiguator(session: &Session) -> CrateDisambiguator {
   // into various other hashes quite a bit (symbol hashes, incr. comp. hashes,
   // debuginfo type IDs, etc), so we don't want it to be too wide. 128 bits
   // should still be safe enough to avoid collisions in practice.
-  let mut hasher = StableHasher::<Fingerprint>::new();
+  let mut hasher = StableHasher::new();
 
   let mut metadata = session.opts.cg.metadata.clone();
   // We don't want the crate_disambiguator to dependent on the order
@@ -53,7 +52,7 @@ pub fn compute_crate_disambiguator(session: &Session) -> CrateDisambiguator {
     .contains(&config::CrateType::Executable);
   hasher.write(if is_exe { b"exe" } else { b"lib" });
 
-  CrateDisambiguator::from(hasher.finish())
+  CrateDisambiguator::from(hasher.finish::<Fingerprint>())
 }
 
 pub fn default_provide(providers: &mut ty::query::Providers<'_>) {
@@ -61,7 +60,6 @@ pub fn default_provide(providers: &mut ty::query::Providers<'_>) {
   //proc_macro_decls::provide(providers);
   plugin::build::provide(providers);
   hir::provide(providers);
-  borrowck::provide(providers);
   mir::provide(providers);
   reachable::provide(providers);
   resolve_lifetime::provide(providers);
@@ -70,16 +68,15 @@ pub fn default_provide(providers: &mut ty::query::Providers<'_>) {
   ty::provide(providers);
   traits::provide(providers);
   stability::provide(providers);
-  middle::intrinsicck::provide(providers);
-  middle::liveness::provide(providers);
   reachable::provide(providers);
   rustc_passes::provide(providers);
   rustc_traits::provide(providers);
   middle::region::provide(providers);
-  middle::entry::provide(providers);
   cstore::provide(providers);
   lint::provide(providers);
   rustc_lint::provide(providers);
+  rustc_codegen_utils::provide(providers);
+  rustc_codegen_ssa::provide(providers);
 }
 
 pub fn default_provide_extern(providers: &mut ty::query::Providers<'_>) {
@@ -90,12 +87,15 @@ pub fn spawn_thread_pool<F, R>(threads: Option<usize>, f: F) -> R
   where F: FnOnce() -> R + Send,
         R: Send,
 {
-  use crate::rustc_data_structures::rayon::{ThreadPool, ThreadPoolBuilder};
+  use crate::rustc_data_structures::rayon::{ThreadBuilder,
+                                            ThreadPool,
+                                            ThreadPoolBuilder, };
 
   let gcx_ptr = &Lock::new(0);
 
   let config = ThreadPoolBuilder::new()
-    .num_threads(Session::threads_from_count(threads))
+    // Our modules are usually pretty small; no need to go wild here.
+    .num_threads(threads.unwrap_or(2))
     // give us a huge stack:
     .stack_size(32 * 1024 * 1024)
     .deadlock_handler(|| unsafe { ty::query::handle_deadlock() });
@@ -110,18 +110,17 @@ pub fn spawn_thread_pool<F, R>(threads: Option<usize>, f: F) -> R
       // the thread local rustc uses. syntax_globals and syntax_pos_globals are
       // captured and set on the new threads. ty::tls::with_thread_locals sets up
       // thread local callbacks from libsyntax
-      let main_handler = move |worker: &mut dyn FnMut()| {
+      let main_handler = move |worker: ThreadBuilder| {
         syntax::GLOBALS.set(syntax_globals, || {
           syntax_pos::GLOBALS.set(syntax_pos_globals, || {
             ty::tls::with_thread_locals(|| {
-              ty::tls::GCX_PTR.set(gcx_ptr, || worker())
+              ty::tls::GCX_PTR.set(gcx_ptr, || worker.run() )
             })
           })
         })
       };
 
-      ThreadPool::scoped_pool(config, main_handler,
-                              with_pool).unwrap()
+      config.build_scoped(main_handler, with_pool).unwrap()
     })
   })
 }
