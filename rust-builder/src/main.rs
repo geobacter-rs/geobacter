@@ -50,7 +50,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
   let cdir = current_dir().unwrap();
   let target_dir = Arg::with_name("target-dir")
     .long("target-dir")
-    .help("specific where we will put the rust sources and build artifacts")
+    .help("specific dir where we will put the rust sources and build artifacts")
     .takes_value(true)
     .required(true)
     .default_value(cdir.to_str().unwrap());
@@ -65,6 +65,12 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     .takes_value(true)
     .default_value("geobacter");
 
+  let jobs = Arg::with_name("jobs")
+    .long("jobs")
+    .short("j")
+    .help("Usual make-esk '-j'")
+    .takes_value(true);
+
   let matches = App::new("Geobacter Rust Toolchain Builder")
     .version("0.0.0")
     .author("Richard Diamond <wichard@vitalitystudios.com>")
@@ -75,6 +81,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     .arg(target_dir)
     .arg(rustup)
     .arg(rustup_name)
+    .arg(jobs)
     .get_matches();
 
   matches.run()
@@ -116,6 +123,7 @@ trait Builder {
       None
     }
   }
+  fn jobs(&self) -> Option<&str>;
 
   fn given_config_path(&self) -> Option<&str>;
   fn target_dir(&self) -> &Path;
@@ -142,6 +150,11 @@ trait Builder {
       .arg("--config").arg(self.config_path())
       .env("RUSTFLAGS_NOT_STAGE_0", RUST_FLAGS);
 
+    if let Some(j) = self.jobs() {
+      cmd.arg("-j")
+        .arg(j);
+    }
+
     cmd
   }
   fn run_cargo_command(&self, cargo_cmd: &str, krate: PathBuf,
@@ -157,6 +170,11 @@ trait Builder {
     }
 
     cmd.env("RUSTFLAGS", get_rust_flags());
+
+    if let Some(j) = self.jobs() {
+      cmd.arg("-j")
+        .arg(j);
+    }
 
     run_unlogged_cmd("cargo", cmd);
   }
@@ -389,6 +407,9 @@ impl<'a> Builder for ArgMatches<'a> {
 
   fn docs_enabled(&self) -> bool {
     self.is_present("docs")
+  }
+  fn jobs(&self) -> Option<&str> {
+    self.value_of("jobs")
   }
 }
 
