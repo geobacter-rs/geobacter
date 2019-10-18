@@ -8,10 +8,12 @@
 //!
 
 use std::env::{current_dir, var, };
+use std::error::Error;
 use std::fs::{copy, File, read_dir, };
 use std::io::*;
 use std::path::{Path, PathBuf, };
 use std::process::Command;
+use std::result::Result;
 
 use clap::*;
 
@@ -22,7 +24,7 @@ mod git;
 const RUST_REPO_URL: &str = "https://github.com/geobacter-rs/rust.git";
 const RUST_REPO_BRANCH: &str = "merge-head";
 
-pub fn main() {
+pub fn main() -> Result<(), Box<dyn Error>> {
   let repo_url = Arg::with_name("repo-url")
     .long("repo-url")
     .help("override the Geobacter Rust url")
@@ -54,12 +56,14 @@ pub fn main() {
     .default_value(cdir.to_str().unwrap());
 
   let rustup = Arg::with_name("rustup")
-    .long("rustup")
-    .help("setup Rustup with the built toolchain");
+    .long("no-rustup")
+    .help("disable Rustup setup with the built toolchain")
+    .multiple(true);
   let rustup_name = Arg::with_name("rustup-toolchain")
     .long("rustup-toolchain")
     .help("Rustup toolchain name")
-    .takes_value(true);
+    .takes_value(true)
+    .default_value("geobacter");
 
   let matches = App::new("Geobacter Rust Toolchain Builder")
     .version("0.0.0")
@@ -73,7 +77,7 @@ pub fn main() {
     .arg(rustup_name)
     .get_matches();
 
-  matches.run();
+  matches.run()
 }
 
 const CRATE_ROOT: &'static str = env!("CARGO_MANIFEST_DIR");
@@ -224,6 +228,18 @@ trait Builder {
 
   fn docs_enabled(&self) -> bool;
 
+  fn check_required_tools(&self) -> Result<(), Box<dyn Error>> {
+    if which("chrpath").is_err() {
+      return Err("I need `chrpath` somewhere in PATH".into());
+    }
+
+    if self.rustup_enabled() && which("rustup").is_err() {
+      return Err("I need `rustup` somewhere in PATH".into());
+    }
+
+    Ok(())
+  }
+
   fn checkout_rust_sources(&self) {
     let url = self.repo_url();
     let branch = self.repo_branch();
@@ -311,7 +327,8 @@ ar = "ar"
     }
   }
 
-  fn run(&self) {
+  fn run(&self) -> Result<(), Box<dyn Error>> {
+    self.check_required_tools()?;
     self.checkout_rust_sources();
     self.write_config_toml();
     self.build_toolchain();
@@ -320,11 +337,28 @@ ar = "ar"
     self.install_toolchain_into_rustup();
 
     // verify the driver works:
-    let mut cmd = Command::new(driver);
+    let mut cmd;
+    if !self.rustup_enabled() {
+      cmd = Command::new(&driver);
+    } else {
+      cmd = Command::new("rustup");
+      cmd.arg("run")
+        .arg(self.rustup_toolchain())
+        .arg("rustc");
+    }
     cmd.arg("--version");
     run_unlogged_cmd("verify-rustc", cmd);
 
     println!("Complete! :)");
+    if self.rustup_enabled() {
+      println!("To use your new toolchain via rustup:");
+      println!("either invoke cargo with `+{}` or `rustup override set {}`",
+               self.rustup_toolchain(), self.rustup_toolchain());
+    } else {
+      println!("To use your new toolchain set \"RUSTC={}\"",
+               driver.display());
+    }
+    Ok(())
   }
 }
 impl<'a> Builder for ArgMatches<'a> {
