@@ -144,12 +144,12 @@ trait Builder {
                        wrapper: Option<&Path>)
   {
     let mut cmd = Command::new("cargo");
-    cmd.arg("--release")
-      .arg("--manifest-path").arg(krate)
-      .arg(cargo_cmd);
+    cmd.arg(cargo_cmd)
+      .arg("--release")
+      .arg("--manifest-path").arg(krate);
 
     if let Some(wrapper) = wrapper {
-      cmd.env("RUSTC_WRAPPER", wrapper);
+      cmd.env("RUSTC", wrapper);
     }
 
     cmd.env("RUSTFLAGS", get_rust_flags());
