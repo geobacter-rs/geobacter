@@ -7,7 +7,7 @@ use crate::rustc::mir::{self, mono::MonoItem, Local,
                         CustomIntrinsicMirGen, };
 use crate::rustc::ty::{self, TyCtxt, Instance, };
 use crate::rustc::ty::{ParamEnv, };
-use crate::rustc_data_structures::indexed_vec::*;
+use crate::rustc_index::vec::*;
 use crate::rustc_data_structures::fx::{FxHashSet, };
 use crate::rustc_data_structures::sync::{Lrc, };
 use crate::syntax_pos::{DUMMY_SP, symbol::Symbol, };
@@ -95,9 +95,9 @@ impl GeobacterCustomIntrinsicMirGen for CheckFn {
                                            reveal_all,
                                            &local_ty);
 
-    let instance = match local_ty.sty {
+    let instance = match local_ty.kind {
       ty::Ref(_, &ty::TyS {
-        sty: ty::FnDef(def_id, subs),
+        kind: ty::FnDef(def_id, subs),
         ..
       }, ..) => {
         let subs = tcx

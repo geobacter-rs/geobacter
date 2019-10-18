@@ -20,7 +20,7 @@ use crate::rustc::ty::codec as ty_codec;
 use crate::rustc::ty::codec::{TyEncoder, TyDecoder, };
 use crate::rustc_data_structures::fingerprint::Fingerprint;
 use crate::rustc_data_structures::fx::{FxHashMap, };
-use crate::rustc_data_structures::indexed_vec::{IndexVec, };
+use crate::rustc_index::vec::*;
 
 use crate::rustc_serialize::{Decodable, Decoder, Encodable, Encoder, opaque,
                              SpecializedDecoder, SpecializedEncoder,

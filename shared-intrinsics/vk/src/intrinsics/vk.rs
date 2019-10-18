@@ -16,7 +16,7 @@ use crate::rustc::mir::interpret::{ConstValue, Scalar, Pointer,  };
 use crate::rustc::mir::{self, mono::MonoItem, Local,
                         CustomIntrinsicMirGen, };
 use crate::rustc::ty::{self, TyCtxt, Instance, };
-use crate::rustc_data_structures::indexed_vec::*;
+use crate::rustc_index::vec::*;
 use crate::rustc_data_structures::fx::{FxHashSet, };
 use crate::rustc_data_structures::sync::{Lrc, };
 use crate::syntax_pos::{DUMMY_SP, symbol::Symbol, };
@@ -231,8 +231,8 @@ impl GeobacterCustomIntrinsicMirGen for ComputePipelineLayoutDesc {
     let ret_ty = self.output(tcx);
     let slice = const_value_rvalue(tcx, slice, ret_ty);
 
-    let ret = mir::Place::RETURN_PLACE.clone();
-    let stmt_kind = StatementKind::Assign(ret, Box::new(slice));
+    let ret = mir::Place::return_place();
+    let stmt_kind = StatementKind::Assign(Box::new((ret, slice)));
     let stmt = Statement {
       source_info,
       kind: stmt_kind,
@@ -314,8 +314,8 @@ impl GeobacterCustomIntrinsicMirGen for ComputePipelineRequiredCapabilities {
     };
     let caps = const_value_rvalue(tcx, slice, ret_ty);
 
-    let ret = mir::Place::RETURN_PLACE.clone();
-    let stmt_kind = StatementKind::Assign(ret, Box::new(caps));
+    let ret = mir::Place::return_place();
+    let stmt_kind = StatementKind::Assign(Box::new((ret, caps)));
     let stmt = Statement {
       source_info,
       kind: stmt_kind,
@@ -394,8 +394,8 @@ impl GeobacterCustomIntrinsicMirGen for ComputePipelineRequiredExtensions {
     };
     let exts = const_value_rvalue(tcx, slice, ret_ty);
 
-    let ret = mir::Place::RETURN_PLACE.clone();
-    let stmt_kind = StatementKind::Assign(ret, Box::new(exts));
+    let ret = mir::Place::return_place();
+    let stmt_kind = StatementKind::Assign(Box::new((ret, exts)));
     let stmt = Statement {
       source_info,
       kind: stmt_kind,
@@ -469,8 +469,8 @@ impl GeobacterCustomIntrinsicMirGen for ComputeDescriptorSetBinding {
     let const_val = ConstValue::Scalar(Scalar::Ptr(ptr));
     let rvalue = const_value_rvalue(tcx, const_val, out_ty);
 
-    let ret = mir::Place::RETURN_PLACE.clone();
-    let stmt_kind = StatementKind::Assign(ret, Box::new(rvalue));
+    let ret = mir::Place::return_place();
+    let stmt_kind = StatementKind::Assign(Box::new((ret, rvalue)));
     let stmt = Statement {
       source_info,
       kind: stmt_kind,

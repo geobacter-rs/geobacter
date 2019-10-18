@@ -315,7 +315,7 @@ impl Root {
                     item: &MetaItem) {
     let mut span = item.span;
     'error: loop {
-      match item.node {
+      match item.kind {
         MetaItemKind::List(ref list) => {
           for mi in list.iter() {
             if !mi.is_word() {
@@ -419,7 +419,8 @@ impl<'tcx> mir::visit::Visitor<'tcx> for LangItemTypeCtorVisitor<'tcx> {
                       location: Location)
   {
     if let mir::PlaceBase::Static(static_) = place {
-      if let mir::StaticKind::Static(def_id) = static_.kind {
+      if let mir::StaticKind::Static = static_.kind {
+        let def_id = static_.def_id;
         if let Some(ref prev) = self.data_instance {
           let tcx = self.tcx;
           let msg = "found duplicate static; this is possibly a bug in the compiler";
@@ -838,7 +839,7 @@ pub fn geobacter_root_attrs(tcx: TyCtxt, id: DefId,
 
         let (size, span) = match dim.name_value_literal() {
           Some(&Lit {
-            node: LitKind::Int(v, ..),
+            kind: LitKind::Int(v, ..),
             span,
             ..
           }) => (v, span),

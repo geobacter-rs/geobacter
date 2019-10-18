@@ -42,14 +42,14 @@ impl GeobacterCustomIntrinsicMirGen for ExeModel {
       })
     };
 
-    let ret = mir::Place::RETURN_PLACE.clone();
+    let ret = mir::Place::return_place();
     let rvalue = match self.0 {
       None => 0,
       Some(v) => (v as u32) + 1,
     };
     let rvalue = Rvalue::Use(mk_u32(rvalue));
 
-    let stmt_kind = StatementKind::Assign(ret, Box::new(rvalue));
+    let stmt_kind = StatementKind::Assign(Box::new((ret, rvalue)));
     let stmt = Statement {
       source_info: source_info.clone(),
       kind: stmt_kind,

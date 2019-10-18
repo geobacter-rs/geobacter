@@ -10,16 +10,17 @@
 /// can be allowed.
 
 use rustc::middle::lang_items::{self, ExchangeMallocFnLangItem, };
-use rustc::mir::{self, Location, Promoted, visit::Visitor, AssertMessage, };
+use rustc::mir::{self, Location, visit::Visitor, AssertMessage,
+                 Static, StaticKind, };
 use rustc::mir::interpret::{AllocId, ConstValue, GlobalId, GlobalAlloc,
                             Scalar, ErrorHandled, };
 use rustc::mir::mono::{MonoItem, };
 use rustc::ty::adjustment::{CustomCoerceUnsized, PointerCast};
 use rustc::ty::{self, TyCtxt, Instance, ParamEnv, subst::SubstsRef,
-                TypeFoldable, InstanceDef, subst::InternalSubsts, };
+                TypeFoldable, InstanceDef, };
+use rustc::ty::subst::{InternalSubsts, Subst, };
 use rustc::util::nodemap::{FxHashSet, };
 use rustc_mir::monomorphize::{self, collector::InliningMap, };
-use rustc_data_structures::indexed_vec::Idx;
 
 use crate::stubbing::Stubber;
 use crate::DefIdFromKernelId;
@@ -142,7 +143,7 @@ fn visit_fn_use<'tcx, F>(tcx: TyCtxt<'tcx>,
                          output: &mut F)
   where F: FnMut(MonoItem<'tcx>),
 {
-  if let ty::FnDef(def_id, substs) = ty.sty {
+  if let ty::FnDef(def_id, substs) = ty.kind {
     let instance = Instance::resolve(tcx, ParamEnv::reveal_all(),
                                      def_id, substs)
       .unwrap();
@@ -170,6 +171,7 @@ fn visit_instance_use<'tcx, F>(tcx: TyCtxt<'tcx>,
       }
     },
     ty::InstanceDef::VtableShim(..) |
+    ty::InstanceDef::ReifyShim(..) |
     ty::InstanceDef::Virtual(..) |
     ty::InstanceDef::DropGlue(_, None) => {
       // don't need to emit shim if we are calling directly.
@@ -238,7 +240,7 @@ fn find_vtable_types_for_unsizing<'tcx>(tcx: TyCtxt<'tcx>,
         return false;
       }
       let tail = tcx.struct_tail_erasing_lifetimes(ty, param_env);
-      match tail.sty {
+      match tail.kind {
         ty::Foreign(..) => false,
         ty::Str | ty::Slice(..) | ty::Dynamic(..) => true,
         _ => bug!("unexpected unsized tail: {:?}", tail),
@@ -251,7 +253,7 @@ fn find_vtable_types_for_unsizing<'tcx>(tcx: TyCtxt<'tcx>,
     }
   };
 
-  match (&source_ty.sty, &target_ty.sty) {
+  match (&source_ty.kind, &target_ty.kind) {
     (&ty::Ref(_, a, _),
       &ty::Ref(_, b, _)) |
     (&ty::Ref(_, a, _),
@@ -311,7 +313,7 @@ fn create_mono_items_for_vtable_methods<'tcx, F>(tcx: TyCtxt<'tcx>,
   assert!(!trait_ty.needs_subst() && !trait_ty.has_escaping_bound_vars() &&
     !impl_ty.needs_subst() && !impl_ty.has_escaping_bound_vars());
 
-  if let ty::Dynamic(ref trait_ty, ..) = trait_ty.sty {
+  if let ty::Dynamic(ref trait_ty, ..) = trait_ty.kind {
     if let Some(principal) = trait_ty.principal() {
       let poly_trait_ref = principal.with_self_ty(tcx, impl_ty);
       assert!(!poly_trait_ref.has_escaping_bound_vars());
@@ -342,22 +344,24 @@ fn collect_const<'tcx, F>(tcx: TyCtxt<'tcx>,
   where F: FnMut(MonoItem<'tcx>),
 {
   debug!("visiting const {:?}", constant);
-  match constant.val {
+
+  let param_env = ty::ParamEnv::reveal_all();
+  let substituted_constant = tcx.subst_and_normalize_erasing_regions(
+    param_substs,
+    param_env,
+    &constant,
+  );
+
+  match substituted_constant.val {
     ConstValue::Scalar(Scalar::Ptr(ptr)) =>
       collect_miri(tcx, ptr.alloc_id, output),
     ConstValue::Slice { data: alloc, start: _, end: _ } |
     ConstValue::ByRef { alloc, .. } => {
-      for &((), id) in alloc.relocations.values() {
+      for &((), id) in alloc.relocations().values() {
         collect_miri(tcx, id, output);
       }
-    },
+    }
     ConstValue::Unevaluated(def_id, substs) => {
-      let param_env = ty::ParamEnv::reveal_all();
-      let substs = tcx.subst_and_normalize_erasing_regions(
-        param_substs,
-        param_env,
-        &substs,
-      );
       let instance = ty::Instance::resolve(tcx,
                                            param_env,
                                            def_id,
@@ -368,12 +372,11 @@ fn collect_const<'tcx, F>(tcx: TyCtxt<'tcx>,
         promoted: None,
       };
       match tcx.const_eval(param_env.and(cid)) {
-        Ok(val) => collect_const(tcx, val,
-                                 param_substs, output),
+        Ok(val) => collect_const(tcx, val, param_substs, output),
         Err(ErrorHandled::Reported) => {},
         Err(ErrorHandled::TooGeneric) => span_bug!(
-            tcx.def_span(def_id), "collection encountered polymorphic constant",
-        ),
+                    tcx.def_span(def_id), "collection encountered polymorphic constant",
+                ),
       }
     },
     _ => {},
@@ -394,7 +397,7 @@ fn collect_miri<'tcx, F>(tcx: TyCtxt<'tcx>,
     },
     Some(GlobalAlloc::Memory(alloc)) => {
       trace!("collecting {:?} with {:#?}", alloc_id, alloc);
-      for &((), inner) in alloc.relocations.values() {
+      for &((), inner) in alloc.relocations().values() {
         collect_miri(tcx,inner, output);
       }
     },
@@ -434,6 +437,7 @@ fn collect_neighbours<'tcx, F, G>(tcx: TyCtxt<'tcx>,
       }
     },
     ty::InstanceDef::VtableShim(..) |
+    ty::InstanceDef::ReifyShim(..) |
     ty::InstanceDef::FnPtrShim(..) |
     ty::InstanceDef::Virtual(..) |
     ty::InstanceDef::ClosureOnceShim { .. } |
@@ -453,22 +457,6 @@ fn collect_neighbours<'tcx, F, G>(tcx: TyCtxt<'tcx>,
         substs: instance.substs,
       };
       collector.visit_body(&mir);
-    }
-
-    let param_env = ParamEnv::reveal_all();
-    for i in 0..mir.promoted.len() {
-      let i = Promoted::new(i);
-      let cid = GlobalId {
-        instance,
-        promoted: Some(i),
-      };
-      match tcx.const_eval(param_env.and(cid)) {
-        Ok(val) => collect_const(tcx, val, instance.substs, output),
-        Err(_) => {
-          // would have erred on the host, ignore.
-          unreachable!();
-        },
-      }
     }
   }
 }
@@ -549,7 +537,7 @@ impl<'a, 'tcx, F, G> mir::visit::Visitor<'tcx> for MirNeighborCollector<'a, 'tcx
           ty::ParamEnv::reveal_all(),
           &source_ty,
         );
-        match source_ty.sty {
+        match source_ty.kind {
           ty::Closure(def_id, substs) => {
             let instance = Instance::resolve_closure(self.tcx,
                                                      def_id,
@@ -621,13 +609,13 @@ impl<'a, 'tcx, F, G> mir::visit::Visitor<'tcx> for MirNeighborCollector<'a, 'tcx
         match msg {
           &AssertMessage::BoundsCheck { .. } => {
             let li = lang_items::PanicBoundsCheckFnLangItem;
-            let def_id = tcx.require_lang_item(li);
+            let def_id = tcx.require_lang_item(li, None);
             let inst = Instance::mono(tcx, def_id);
             (self.output)(create_fn_mono_item(inst));
           },
           _ => {
             let li = lang_items::PanicFnLangItem;
-            let def_id = tcx.require_lang_item(li);
+            let def_id = tcx.require_lang_item(li, None);
             let inst = Instance::mono(tcx, def_id);
             (self.output)(create_fn_mono_item(inst));
           },
@@ -653,7 +641,7 @@ impl<'a, 'tcx, F, G> mir::visit::Visitor<'tcx> for MirNeighborCollector<'a, 'tcx
                       _context: mir::visit::PlaceContext,
                       location: Location) {
     match place_base {
-      mir::PlaceBase::Static(box mir::Static { kind: mir::StaticKind::Static(def_id), .. }) => {
+      mir::PlaceBase::Static(box mir::Static { kind: mir::StaticKind::Static, def_id, .. }) => {
         debug!("visiting static {:?} @ {:?}", def_id, location);
 
         // We use foreign items for things that are defined by the Vulkan impl
@@ -664,8 +652,24 @@ impl<'a, 'tcx, F, G> mir::visit::Visitor<'tcx> for MirNeighborCollector<'a, 'tcx
           (self.output)(MonoItem::Static(*def_id));
         }
       }
-      mir::PlaceBase::Static(box mir::Static { kind: mir::StaticKind::Promoted(_), .. }) => {
-        // FIXME: should we handle promoteds here instead of eagerly in collect_neighbours?
+      mir::PlaceBase::Static(box Static {
+        kind: StaticKind::Promoted(promoted, substs),
+        def_id,
+        ..
+      }) => {
+        let param_env = ty::ParamEnv::reveal_all();
+        let cid = GlobalId {
+          instance: Instance::new(*def_id, substs.subst(self.tcx, self.substs)),
+          promoted: Some(*promoted),
+        };
+        match self.tcx.const_eval(param_env.and(cid)) {
+          Ok(val) => collect_const(self.tcx, val, substs, self.output),
+          Err(ErrorHandled::Reported) => {},
+          Err(ErrorHandled::TooGeneric) => {
+            let span = self.tcx.promoted_mir(*def_id)[*promoted].span;
+            span_bug!(span, "collection encountered polymorphic constant")
+          },
+        }
       }
       mir::PlaceBase::Local(_) => {
         // Locals have no relevance for collector

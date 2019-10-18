@@ -1,6 +1,5 @@
 
-#![feature(rustc_private, platform_intrinsics,
-           rustc_diagnostic_macros)]
+#![feature(rustc_private, platform_intrinsics)]
 #![feature(link_llvm_intrinsics)]
 #![feature(intrinsics)]
 #![feature(unboxed_closures)]

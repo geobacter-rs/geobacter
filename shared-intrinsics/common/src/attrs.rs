@@ -67,7 +67,7 @@ impl<T> ConditionalExpr<T>
   }
 
   pub fn parse_from_attrs(tcx: TyCtxt, item: &MetaItem) -> Option<Self> {
-    match item.node {
+    match item.kind {
       MetaItemKind::List(ref list) => {
         for mi in list.iter() {
           if !mi.is_meta_item() {

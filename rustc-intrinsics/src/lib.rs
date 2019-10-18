@@ -14,19 +14,18 @@
 
 #[macro_use]
 extern crate rustc;
-extern crate rustc_ast_borrowck;
 extern crate rustc_codegen_ssa;
 extern crate rustc_codegen_utils;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_errors as errors;
 extern crate rustc_incremental;
+extern crate rustc_index;
 extern crate rustc_interface;
 extern crate rustc_lint;
 extern crate rustc_metadata;
 extern crate rustc_mir;
 extern crate rustc_passes;
-extern crate rustc_plugin;
 extern crate rustc_privacy;
 extern crate rustc_resolve;
 extern crate rustc_save_analysis;
@@ -42,12 +41,15 @@ extern crate tempfile;
 extern crate log;
 #[cfg(unix)]
 extern crate libc;
+#[macro_use]
+extern crate lazy_static;
 
 extern crate geobacter_shared_defs as shared_defs;
 
 use std::cell::Cell;
 use std::fmt;
 use std::mem::{transmute, size_of, };
+use std::time::Instant;
 
 use self::rustc::hir::def_id::{DefId, };
 use self::rustc::middle::lang_items::{self, LangItem, };
@@ -61,9 +63,10 @@ use self::rustc::session::{Session, early_error, };
 use self::rustc::session::config::{ErrorOutputType, };
 use self::rustc::ty::{self, TyCtxt, layout::Align, layout::Size, Instance, };
 use self::rustc::ty::{Const, };
+use crate::rustc::util::common::{set_time_depth, print_time_passes_entry, };
 use self::rustc_data_structures::fx::{FxHashMap, };
 use self::rustc_data_structures::sync::{Lrc, };
-use self::rustc_data_structures::indexed_vec::*;
+use crate::rustc_index::vec::*;
 use crate::rustc_serialize::Encodable;
 use self::syntax::ast;
 use crate::syntax::feature_gate::{AttributeType, };
@@ -71,32 +74,35 @@ use self::syntax_pos::{Span, DUMMY_SP, };
 use self::syntax_pos::symbol::{Symbol, };
 
 use crate::codec::GeobacterEncoder;
-use crate::driver::{report_ices_to_stderr_if_any,
-                    EXIT_SUCCESS, EXIT_FAILURE,
-                    DefaultCallbacks, };
 
 use crate::help::*;
 
 use self::shared_defs::platform::*;
 
 pub use crate::rustc_driver::pretty;
+pub use crate::rustc_driver::plugin as rustc_plugin;
 
+pub mod args;
 pub mod codec;
 pub mod driver;
 pub mod help;
 pub mod interface;
 pub mod passes;
 pub mod proc_macro_decls;
-pub mod profile;
 pub mod queries;
 pub mod util;
 
 pub fn main<F>(f: F)
   where F: FnOnce(&mut Generators),
 {
-  driver::init_rustc_env_logger();
+  use driver::*;
 
-  let result = report_ices_to_stderr_if_any(move || {
+  let start = Instant::now();
+  init_rustc_env_logger();
+  let mut callbacks = TimePassesCallbacks::default();
+  install_ice_hook();
+
+  let result = catch_fatal_errors(|| {
     let mut args: Vec<_> = ::std::env::args_os()
       .enumerate()
       .filter_map(|(idx, arg)| {
@@ -134,7 +140,7 @@ pub fn main<F>(f: F)
         GENERATORS = Some(transmute(&generators));
       }
 
-      let result = driver::run_compiler(&args, &mut DefaultCallbacks,
+      let result = run_compiler(&args, &mut callbacks,
                                         None, None);
 
       unsafe {
@@ -143,12 +149,18 @@ pub fn main<F>(f: F)
 
       result
     }
-  });
+  }).and_then(|result| result);
 
-  ::std::process::exit(match result {
-    Ok(Ok(_)) => EXIT_SUCCESS,
-    Err(_) | Ok(Err(_)) => EXIT_FAILURE,
-  });
+  let exit_code = match result {
+    Ok(_) => EXIT_SUCCESS,
+    Err(_) => EXIT_FAILURE,
+  };
+
+  // The extra `\t` is necessary to align this label with the others.
+  set_time_depth(0);
+  print_time_passes_entry(callbacks.time_passes,
+                          "\ttotal", start.elapsed());
+  ::std::process::exit(exit_code);
 }
 
 pub struct Generators {
@@ -256,7 +268,7 @@ impl CustomIntrinsicMirGen for KernelInstance {
       is_cleanup: false,
     };
 
-    let ret = mir::Place::RETURN_PLACE.clone();
+    let ret = mir::Place::return_place();
     let local = Local::new(1);
     let local_ty = mir.local_decls[local].ty;
 
@@ -288,7 +300,7 @@ impl CustomIntrinsicMirGen for KernelInstance {
     let rvalue = const_value_rvalue(tcx, slice,
                                     self.output(tcx));
 
-    let stmt_kind = StatementKind::Assign(ret, Box::new(rvalue));
+    let stmt_kind = StatementKind::Assign(Box::new((ret, rvalue)));
     let stmt = Statement {
       source_info: source_info.clone(),
       kind: stmt_kind,
@@ -331,7 +343,7 @@ impl CustomIntrinsicMirGen for KernelContextDataId {
     let alloc = tcx.intern_const_alloc(alloc);
     let alloc_id = tcx.alloc_map.lock().create_memory_alloc(alloc);
 
-    let ret = mir::Place::RETURN_PLACE.clone();
+    let ret = mir::Place::return_place();
 
     let source_info = mir::SourceInfo {
       span: DUMMY_SP,
@@ -365,7 +377,7 @@ impl CustomIntrinsicMirGen for KernelContextDataId {
 
     let rvalue = Rvalue::Use(constant);
 
-    let stmt_kind = StatementKind::Assign(ret, Box::new(rvalue));
+    let stmt_kind = StatementKind::Assign(Box::new((ret, rvalue)));
     let stmt = Statement {
       source_info: source_info.clone(),
       kind: stmt_kind,
@@ -422,7 +434,7 @@ impl CustomIntrinsicMirGen for CurrentPlatform {
     let alloc_id = tcx.alloc_map.lock()
       .create_memory_alloc(alloc);
 
-    let ret = mir::Place::RETURN_PLACE.clone();
+    let ret = mir::Place::return_place();
 
     let source_info = mir::SourceInfo {
       span: DUMMY_SP,
@@ -447,7 +459,7 @@ impl CustomIntrinsicMirGen for CurrentPlatform {
     });
     let rvalue = Rvalue::Use(constant);
 
-    let stmt_kind = StatementKind::Assign(ret, Box::new(rvalue));
+    let stmt_kind = StatementKind::Assign(Box::new((ret, rvalue)));
     let stmt = Statement {
       source_info: source_info.clone(),
       kind: stmt_kind,
@@ -576,8 +588,8 @@ impl CustomIntrinsicMirGen for WorkItemKill {
       let arg_local = LocalDecl::new_temp(arg_ty, DUMMY_SP);
       let arg_local_id = Place::from(mir.local_decls.next_index());
       mir.local_decls.push(arg_local);
-      let stmt_kind = StatementKind::Assign(arg_local_id.clone(),
-                                            Box::new(rvalue));
+      let stmt_kind = StatementKind::Assign(Box::new((arg_local_id.clone(),
+                                                      rvalue)));
       let stmt = Statement {
         source_info: source_info.clone(),
         kind: stmt_kind,
@@ -591,8 +603,8 @@ impl CustomIntrinsicMirGen for WorkItemKill {
       let rvalue = Rvalue::Ref(tcx.lifetimes.re_erased,
                                mir::BorrowKind::Shared,
                                arg_local_id);
-      let stmt_kind = StatementKind::Assign(arg_ref_local_id.clone(),
-                                            Box::new(rvalue));
+      let stmt_kind = StatementKind::Assign(Box::new((arg_ref_local_id.clone(),
+                                                      rvalue)));
       let stmt = Statement {
         source_info: source_info.clone(),
         kind: stmt_kind,
@@ -615,7 +627,7 @@ impl CustomIntrinsicMirGen for WorkItemKill {
       func: tcx.mk_const_op(source_info.clone(),
                             *ty::Const::zero_sized(tcx, fn_ty)),
       args,
-      destination: Some((Place::RETURN_PLACE.clone(), success)),
+      destination: Some((mir::Place::return_place(), success)),
       cleanup: None,
       from_hir_call: false,
     };

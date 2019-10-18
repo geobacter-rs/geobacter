@@ -26,9 +26,9 @@ pub fn extract_fn_instance<'tcx>(tcx: TyCtxt<'tcx>,
                                          reveal_all,
                                          &local_ty);
 
-  let instance = match local_ty.sty {
+  let instance = match local_ty.kind {
     ty::Ref(_, &ty::TyS {
-      sty: ty::FnDef(def_id, subs),
+      kind: ty::FnDef(def_id, subs),
       ..
     }, ..) |
     ty::FnDef(def_id, subs) => {
@@ -61,10 +61,10 @@ pub fn extract_opt_fn_instance<'tcx>(tcx: TyCtxt<'tcx>,
 
   if local_ty == tcx.types.unit { return None; }
 
-  let instance = match local_ty.sty {
+  let instance = match local_ty.kind {
     ty::Ref(_, reffed, _) if reffed == tcx.types.unit => { return None; },
     ty::Ref(_, &ty::TyS {
-      sty: ty::FnDef(def_id, subs),
+      kind: ty::FnDef(def_id, subs),
       ..
     }, ..) |
     ty::FnDef(def_id, subs) => {
@@ -301,16 +301,6 @@ pub fn static_tuple_alloc<'tcx, I>(tcx: TyCtxt<'tcx>,
 
   assert_eq!(tuple.next(), None);
 
-  if what != "kernel_id_for" {
-    trace!("final alloc bytes for {}: {:#?}", what, {
-      let indexed_bytes: Vec<_> = alloc.bytes.iter()
-        .cloned()
-        .enumerate()
-        .collect();
-      indexed_bytes
-    });
-  }
-
   let alloc = tcx.intern_const_alloc(alloc);
   tcx.alloc_map.lock().set_alloc_id_memory(alloc_id, alloc);
   (alloc_id, alloc, size)
@@ -347,7 +337,7 @@ pub fn write_static_tuple<'tcx, I>(tcx: TyCtxt<'tcx>,
     _ => unimplemented!("layout offsets {:?}", layout),
   };
 
-  let ty_fields: Box<dyn Iterator<Item = ty::Ty<'tcx>>> = match ty.sty {
+  let ty_fields: Box<dyn Iterator<Item = ty::Ty<'tcx>>> = match ty.kind {
     Tuple(tuple_fields) => {
       assert_eq!(tuple_fields.len(), fields.len());
       Box::new(tuple_fields.types()) as Box<_>
@@ -359,7 +349,7 @@ pub fn write_static_tuple<'tcx, I>(tcx: TyCtxt<'tcx>,
   };
 
   for (mut offset, field_ty) in fields.into_iter().zip(ty_fields) {
-    match field_ty.sty {
+    match field_ty.kind {
       Tuple(_) => {
         write_static_tuple(tcx, what, tuple, alloc_id, alloc,
                            base + offset, field_ty);

@@ -3,7 +3,7 @@
 //! agnostic interface for implementing custom Rust intrinsics and
 //! translating our `KernelId`s into Rust's `DefId`s.
 
-#![feature(rustc_private, rustc_diagnostic_macros)]
+#![feature(rustc_private)]
 #![feature(core_intrinsics, std_internals)]
 #![feature(box_patterns)]
 #![feature(link_llvm_intrinsics)]
@@ -11,12 +11,13 @@
 
 #[macro_use]
 extern crate rustc;
-extern crate rustc_driver;
-extern crate rustc_errors;
-extern crate rustc_metadata;
-extern crate rustc_mir;
 extern crate rustc_codegen_utils;
 extern crate rustc_data_structures;
+extern crate rustc_driver;
+extern crate rustc_errors;
+extern crate rustc_index;
+extern crate rustc_metadata;
+extern crate rustc_mir;
 extern crate rustc_target;
 extern crate serialize;
 extern crate syntax;
@@ -50,7 +51,7 @@ use self::rustc::mir::{self, CustomIntrinsicMirGen, Operand, Rvalue,
                        Constant, Statement, };
 use self::rustc::mir::interpret::{ConstValue, Scalar, Allocation, };
 use self::rustc::ty::{self, TyCtxt, layout::Size, Instance, Const, };
-use self::rustc_data_structures::indexed_vec::Idx;
+use self::rustc_index::vec::Idx;
 use self::rustc_data_structures::sync::{Lrc, };
 use crate::serialize::Decodable;
 use self::syntax_pos::{Span, DUMMY_SP, };
@@ -290,8 +291,8 @@ pub fn redirect_or_panic<'tcx, F>(tcx: TyCtxt<'tcx>,
       let arg_local = LocalDecl::new_temp(arg_ty, DUMMY_SP);
       let arg_local_id = Place::from(mir.local_decls.next_index());
       mir.local_decls.push(arg_local);
-      let stmt_kind = StatementKind::Assign(arg_local_id.clone(),
-                                            Box::new(rvalue));
+      let stmt_kind = StatementKind::Assign(Box::new((arg_local_id.clone(),
+                                                      rvalue)));
       let stmt = Statement {
         source_info: source_info.clone(),
         kind: stmt_kind,
@@ -305,8 +306,8 @@ pub fn redirect_or_panic<'tcx, F>(tcx: TyCtxt<'tcx>,
       let rvalue = Rvalue::Ref(tcx.lifetimes.re_erased,
                                mir::BorrowKind::Shared,
                                arg_local_id);
-      let stmt_kind = StatementKind::Assign(arg_ref_local_id.clone(),
-                                            Box::new(rvalue));
+      let stmt_kind = StatementKind::Assign(Box::new((arg_ref_local_id.clone(),
+                                                      rvalue)));
       let stmt = Statement {
         source_info: source_info.clone(),
         kind: stmt_kind,
@@ -330,7 +331,7 @@ pub fn redirect_or_panic<'tcx, F>(tcx: TyCtxt<'tcx>,
     func: tcx.mk_const_op(source_info.clone(),
                           *ty::Const::zero_sized(tcx, fn_ty)),
     args,
-    destination: Some((Place::RETURN_PLACE.clone(), success)),
+    destination: Some((Place::return_place(), success)),
     cleanup: None,
     from_hir_call: false,
   };
