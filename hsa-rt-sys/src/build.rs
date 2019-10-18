@@ -16,7 +16,8 @@ pub fn main() {
     .derive_copy(true)
     .derive_hash(true)
     .derive_eq(true)
-    .derive_ord(true)
+    .derive_partialeq(false)
+    .impl_partialeq(true)
     .rustfmt_bindings(true)
     .no_copy("hsa_amd_image_descriptor_s") // actually unsized.
     .generate()
