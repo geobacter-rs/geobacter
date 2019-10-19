@@ -1019,6 +1019,12 @@ fn encode_and_write_metadata(
 
   let metadata_kind = tcx.sess.crate_types.borrow().iter().map(|ty| {
     match *ty {
+      config::CrateType::Executable |
+      config::CrateType::Staticlib |
+      config::CrateType::Cdylib |
+      config::CrateType::Rlib if tcx.sess.opts.debugging_opts.always_emit_metadata => {
+        MetadataKind::Compressed
+      },
       CrateType::Executable |
       CrateType::Staticlib |
       CrateType::Cdylib => MetadataKind::None,
