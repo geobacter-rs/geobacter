@@ -293,7 +293,8 @@ submodules = true
 low-priority = true
 
 [rust]
-debuginfo-level = 2
+debuginfo-level = 1
+debuginfo-level-std = 2
 incremental = true
 parallel-compiler = true
 lld = true
