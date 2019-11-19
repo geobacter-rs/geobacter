@@ -388,7 +388,7 @@ version = "0.1.0"
 dependencies = [
  "env_logger 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "geobacter-amdgpu-std 0.1.0",
- "geobacter-core 0.1.0",
+ "geobacter-core 1.0.0",
  "geobacter-runtime-amd 0.1.0",
  "geobacter-runtime-core 0.1.0",
  "hsa-rt 0.1.0",
@@ -453,7 +453,7 @@ name = "fractal"
 version = "0.1.0"
 dependencies = [
  "env_logger 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "geobacter-core 0.1.0",
+ "geobacter-core 1.0.0",
  "geobacter-runtime-core 0.1.0",
  "geobacter-vk-std 0.1.0",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -479,14 +479,14 @@ dependencies = [
 name = "generic-substs"
 version = "0.1.0"
 dependencies = [
- "geobacter-core 0.1.0",
+ "geobacter-core 1.0.0",
 ]
 
 [[package]]
 name = "geobacter-amdgpu-intrinsics"
 version = "0.1.0"
 dependencies = [
- "geobacter-core 0.1.0",
+ "geobacter-core 1.0.0",
  "geobacter-intrinsics-common 0.1.0",
  "rustc-intrinsics 0.1.0",
 ]
@@ -495,13 +495,13 @@ dependencies = [
 name = "geobacter-amdgpu-std"
 version = "0.1.0"
 dependencies = [
- "geobacter-core 0.1.0",
+ "geobacter-core 1.0.0",
  "hsa-rt 0.1.0",
 ]
 
 [[package]]
 name = "geobacter-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "geobacter-shared-defs 1.0.0",
 ]
@@ -510,7 +510,7 @@ dependencies = [
 name = "geobacter-intrinsics-common"
 version = "0.1.0"
 dependencies = [
- "geobacter-core 0.1.0",
+ "geobacter-core 1.0.0",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "num-traits 0.2.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustc-intrinsics 0.1.0",
@@ -525,7 +525,7 @@ dependencies = [
  "any_key 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "arrayvec 0.4.11 (registry+https://github.com/rust-lang/crates.io-index)",
  "geobacter-amdgpu-intrinsics 0.1.0",
- "geobacter-core 0.1.0",
+ "geobacter-core 1.0.0",
  "geobacter-intrinsics-common 0.1.0",
  "geobacter-runtime-amd-macros 0.1.0",
  "geobacter-runtime-core 0.1.0",
@@ -557,7 +557,7 @@ dependencies = [
  "dirs 1.0.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "erased-serde 0.3.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "flate2 1.0.11 (registry+https://github.com/rust-lang/crates.io-index)",
- "geobacter-core 0.1.0",
+ "geobacter-core 1.0.0",
  "geobacter-intrinsics-common 0.1.0",
  "geobacter-shared-defs 1.0.0",
  "goblin 0.0.23 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -593,7 +593,7 @@ name = "geobacter-rustc-driver"
 version = "0.1.0"
 dependencies = [
  "geobacter-amdgpu-intrinsics 0.1.0",
- "geobacter-core 0.1.0",
+ "geobacter-core 1.0.0",
  "geobacter-intrinsics-common 0.1.0",
  "geobacter-vk-intrinsics 0.1.0",
  "rustc-intrinsics 0.1.0",
@@ -610,7 +610,7 @@ dependencies = [
 name = "geobacter-vk-core"
 version = "0.1.0"
 dependencies = [
- "geobacter-core 0.1.0",
+ "geobacter-core 1.0.0",
  "geobacter-shared-defs 1.0.0",
  "vulkano 0.11.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -619,7 +619,7 @@ dependencies = [
 name = "geobacter-vk-intrinsics"
 version = "0.1.0"
 dependencies = [
- "geobacter-core 0.1.0",
+ "geobacter-core 1.0.0",
  "geobacter-intrinsics-common 0.1.0",
  "geobacter-vk-core 0.1.0",
  "num-traits 0.2.9 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -631,7 +631,7 @@ dependencies = [
 name = "geobacter-vk-std"
 version = "0.1.0"
 dependencies = [
- "geobacter-core 0.1.0",
+ "geobacter-core 1.0.0",
  "geobacter-vk-core 0.1.0",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "vulkano 0.11.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -909,7 +909,7 @@ version = "0.1.0"
 dependencies = [
  "env_logger 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "geobacter-amdgpu-std 0.1.0",
- "geobacter-core 0.1.0",
+ "geobacter-core 1.0.0",
  "geobacter-runtime-amd 0.1.0",
  "geobacter-runtime-core 0.1.0",
  "hsa-rt 0.1.0",
@@ -1571,7 +1571,7 @@ name = "trivial"
 version = "0.1.0"
 dependencies = [
  "env_logger 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "geobacter-core 0.1.0",
+ "geobacter-core 1.0.0",
  "geobacter-runtime-core 0.1.0",
  "geobacter-vk-std 0.1.0",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",

@@ -2,9 +2,9 @@
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 license = "MIT / Apache-2.0"
 name = "geobacter-core"
-version = "0.1.0"
+version = "1.0.0"
+repository = "https://github.com/geobacter-rs/geobacter/tree/master/geobacter-core"
+description = "Geobacter core crate: runtime platform independent intrinsics and a few newtypes to help with host/device memory usage. This crate requires a special compiler to build."
 
 [dependencies]
-geobacter-shared-defs = { path = "../shared-defs" }
-
-[dev-dependencies]
+geobacter-shared-defs = "1.0.0"
