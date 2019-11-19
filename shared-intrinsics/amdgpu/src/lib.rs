@@ -35,14 +35,16 @@ use crate::rustc::mir::{self, CustomIntrinsicMirGen, };
 use crate::rustc::ty::{self, TyCtxt, Instance, };
 use crate::rustc_data_structures::sync::{Lrc, };
 
-use crate::common::{DefIdFromKernelId, GeobacterCustomIntrinsicMirGen,
-                    stubbing, GetDefIdFromKernelId, GeobacterMirGen, };
+use crate::rustc_intrinsics::help::GeobacterTyCtxtHelp;
+
+use crate::common::{DriverData, GeobacterCustomIntrinsicMirGen,
+                    stubbing, GetDriverData, GeobacterMirGen, };
 
 pub mod attrs;
 
 pub fn insert_all_intrinsics<F, U>(marker: &U, mut into: F)
   where F: FnMut(String, Lrc<dyn CustomIntrinsicMirGen>),
-        U: GetDefIdFromKernelId + Send + Sync + 'static,
+        U: GetDriverData + Send + Sync + 'static,
 {
   for intr in AxisId::permutations() {
     let (k, v) = GeobacterMirGen::new(intr, marker);
@@ -162,7 +164,7 @@ impl AxisId {
     o.unwrap()
   }
   fn instance<'tcx>(&self,
-                    kid_did: &dyn DefIdFromKernelId,
+                    _dd: &dyn DriverData,
                     tcx: TyCtxt<'tcx>)
     -> Option<Instance<'tcx>>
   {
@@ -173,7 +175,7 @@ impl AxisId {
     };
 
     let id = self.kernel_instance();
-    let instance = kid_did.convert_kernel_instance(tcx, id)
+    let instance = tcx.convert_kernel_instance(id)
       .expect("failed to convert kernel instance to rustc instance");
     Some(instance)
   }
@@ -181,7 +183,7 @@ impl AxisId {
 impl GeobacterCustomIntrinsicMirGen for AxisId {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
-                                   kid_did: &dyn DefIdFromKernelId,
+                                   dd: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
                                    mir: &mut mir::Body<'tcx>)
@@ -189,7 +191,7 @@ impl GeobacterCustomIntrinsicMirGen for AxisId {
     info!("mirgen intrinsic {}", self);
 
     common::redirect_or_panic(tcx, mir, move || {
-      self.instance(kid_did, tcx)
+      self.instance(dd, tcx)
     });
   }
 
@@ -239,7 +241,7 @@ impl DispatchPtr {
 impl GeobacterCustomIntrinsicMirGen for DispatchPtr {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
-                                   kid_did: &dyn DefIdFromKernelId,
+                                   _dd: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
                                    mir: &mut mir::Body<'tcx>)
@@ -254,7 +256,7 @@ impl GeobacterCustomIntrinsicMirGen for DispatchPtr {
       };
 
       let id = self.amdgcn_kernel_instance();
-      let instance = kid_did.convert_kernel_instance(tcx, id)
+      let instance = tcx.convert_kernel_instance(id)
         .expect("failed to convert kernel instance to rustc instance");
       Some(instance)
     });
@@ -292,7 +294,7 @@ impl Barrier {
 impl GeobacterCustomIntrinsicMirGen for Barrier {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
-                                   kid_did: &dyn DefIdFromKernelId,
+                                   _dd: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
                                    mir: &mut mir::Body<'tcx>)
@@ -307,7 +309,7 @@ impl GeobacterCustomIntrinsicMirGen for Barrier {
       };
 
       let id = self.kernel_instance();
-      let instance = kid_did.convert_kernel_instance(tcx, id)
+      let instance = tcx.convert_kernel_instance(id)
         .expect("failed to convert kernel instance to rustc instance");
       Some(instance)
     });
@@ -344,7 +346,7 @@ impl WaveBarrier {
 impl GeobacterCustomIntrinsicMirGen for WaveBarrier {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
-                                   kid_did: &dyn DefIdFromKernelId,
+                                   _dd: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
                                    mir: &mut mir::Body<'tcx>)
@@ -359,7 +361,7 @@ impl GeobacterCustomIntrinsicMirGen for WaveBarrier {
       };
 
       let id = self.kernel_instance();
-      let instance = kid_did.convert_kernel_instance(tcx, id)
+      let instance = tcx.convert_kernel_instance(id)
         .expect("failed to convert kernel instance to rustc instance");
       Some(instance)
     });

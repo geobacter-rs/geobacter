@@ -12,8 +12,8 @@ use crate::rustc_data_structures::fx::{FxHashSet, };
 use crate::rustc_data_structures::sync::{Lrc, };
 use crate::syntax_pos::{DUMMY_SP, symbol::Symbol, };
 
-use crate::common::{DefIdFromKernelId, GeobacterCustomIntrinsicMirGen,
-                    GetDefIdFromKernelId, GeobacterMirGen, stubbing,
+use crate::common::{DriverData, GeobacterCustomIntrinsicMirGen,
+                    GetDriverData, GeobacterMirGen, stubbing,
                     collector::collect_items_rec, };
 
 use crate::gvk_core::*;
@@ -21,7 +21,7 @@ use crate::attrs::{geobacter_root_attrs, geobacter_global_attrs, };
 
 pub fn insert_all_intrinsics<F, U>(marker: &U, mut into: F)
   where F: FnMut(String, Lrc<dyn CustomIntrinsicMirGen>),
-        U: GetDefIdFromKernelId + Send + Sync + 'static,
+        U: GetDriverData + Send + Sync + 'static,
 {
   for id in CheckFn::permutations().into_iter() {
     let (k, v) = GeobacterMirGen::new(id, marker);
@@ -63,7 +63,7 @@ impl fmt::Display for CheckFn {
 impl GeobacterCustomIntrinsicMirGen for CheckFn {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    stubber: &stubbing::Stubber,
-                                   kid_did: &dyn DefIdFromKernelId,
+                                   kid_did: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    instance: ty::Instance<'tcx>,
                                    mir: &mut mir::Body<'tcx>)
@@ -184,7 +184,7 @@ impl GeobacterCustomIntrinsicMirGen for CheckFn {
     -> &'tcx ty::List<ty::Ty<'tcx>>
   {
     let n = 0;
-    let p = Symbol::intern(&format!("P{}", n)).as_interned_str();
+    let p = Symbol::intern(&format!("P{}", n));
     let f = tcx.mk_ty_param(n, p);
     let region = tcx.mk_region(ty::ReLateBound(ty::INNERMOST,
                                                ty::BrAnon(0)));

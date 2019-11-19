@@ -38,64 +38,36 @@ pub mod platform;
 pub mod stubbing;
 
 // Note: don't try to depend on `geobacter_std`.
-use std::borrow::Cow;
 use std::fmt;
 use std::marker::PhantomData;
 
 use geobacter_core::kernel::{KernelInstance};
 
-use self::rustc::hir::def_id::{DefId, CrateNum, };
+use self::rustc::hir::def_id::{DefId, };
 use self::rustc::middle::lang_items::{self, LangItem, };
-use self::rustc::mir::{self, CustomIntrinsicMirGen, Operand, Rvalue,
-                       AggregateKind, LocalDecl, Place, StatementKind,
-                       Constant, Statement, };
-use self::rustc::mir::interpret::{ConstValue, Scalar, Allocation, };
-use self::rustc::ty::{self, TyCtxt, layout::Size, Instance, Const, };
+use self::rustc::mir::{self, CustomIntrinsicMirGen, Operand, Place,
+                       Constant, };
+use self::rustc::ty::{self, TyCtxt, Instance, };
 use self::rustc_index::vec::Idx;
 use self::rustc_data_structures::sync::{Lrc, };
-use crate::serialize::Decodable;
 use self::syntax_pos::{Span, DUMMY_SP, };
+use syntax::symbol::Symbol;
 
-use crate::rustc_intrinsics::{help::*, codec::*, };
-
-use crate::hash::HashMap;
+use crate::rustc_intrinsics::{help::*, };
 
 pub use rustc_intrinsics::*;
 
-pub type CNums = HashMap<(Cow<'static, str>, u64, u64), CrateNum>;
-
-pub trait DefIdFromKernelId {
-  fn get_cstore(&self) -> &rustc_metadata::cstore::CStore;
-  fn cnum_map(&self) -> Option<&CNums> {
-    None
-  }
-
-  fn convert_kernel_instance<'tcx>(&self, tcx: TyCtxt<'tcx>,
-                                   instance: KernelInstance)
-    -> Option<Instance<'tcx>>
-  {
-    trace!("converting kernel instance for {}", instance.name().unwrap());
-
-    // now decode the substs into `tcx`.
-    let mut alloc_state = None;
-    let mut decoder = GeobacterDecoder::new(tcx, instance.instance,
-                                            &mut alloc_state);
-
-    Instance::decode(&mut decoder).ok()
-  }
-}
-impl DefIdFromKernelId for rustc_metadata::cstore::CStore {
-  fn get_cstore(&self) -> &rustc_metadata::cstore::CStore { self }
-}
-pub trait GetDefIdFromKernelId {
+/// TODO move the real runtime Driver data into this crate.
+pub trait DriverData { }
+pub trait GetDriverData {
   fn with_self<'tcx, F, R>(tcx: TyCtxt<'tcx>, f: F) -> R
-    where F: FnOnce(&dyn DefIdFromKernelId) -> R;
+    where F: FnOnce(&dyn DriverData) -> R;
 }
 
 pub trait GeobacterCustomIntrinsicMirGen: Send + Sync + 'static {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
-                                   kid_did: &dyn DefIdFromKernelId,
+                                   kid_did: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    instance: ty::Instance<'tcx>,
                                    mir: &mut mir::Body<'tcx>);
@@ -111,7 +83,7 @@ pub trait GeobacterCustomIntrinsicMirGen: Send + Sync + 'static {
 impl GeobacterCustomIntrinsicMirGen for CurrentPlatform {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
-                                   _kid_did: &dyn DefIdFromKernelId,
+                                   _kid_did: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    instance: ty::Instance<'tcx>,
                                    mir: &mut mir::Body<'tcx>)
@@ -134,11 +106,11 @@ impl GeobacterCustomIntrinsicMirGen for CurrentPlatform {
 
 pub struct GeobacterMirGen<T, U>(T, PhantomData<U>)
   where T: GeobacterCustomIntrinsicMirGen + Send + Sync + 'static,
-        U: GetDefIdFromKernelId + Send + Sync + 'static;
+        U: GetDriverData + Send + Sync + 'static;
 
 impl<T, U> GeobacterMirGen<T, U>
   where T: GeobacterCustomIntrinsicMirGen + fmt::Display + Send + Sync + 'static,
-        U: GetDefIdFromKernelId + Send + Sync + 'static,
+        U: GetDriverData + Send + Sync + 'static,
 {
   pub fn new(intrinsic: T, _: &U) -> (String, Lrc<dyn CustomIntrinsicMirGen>) {
     let name = format!("{}", intrinsic);
@@ -149,7 +121,7 @@ impl<T, U> GeobacterMirGen<T, U>
 }
 impl<T, U> GeobacterMirGen<T, U>
   where T: GeobacterCustomIntrinsicMirGen + Send + Sync + 'static,
-        U: GetDefIdFromKernelId + Send + Sync + 'static,
+        U: GetDriverData + Send + Sync + 'static,
 {
   pub fn wrap(intrinsic: T, _: &U) -> Lrc<dyn CustomIntrinsicMirGen> {
     let mirgen: Self = GeobacterMirGen(intrinsic, PhantomData);
@@ -160,7 +132,7 @@ impl<T, U> GeobacterMirGen<T, U>
 
 impl<T, U> CustomIntrinsicMirGen for GeobacterMirGen<T, U>
   where T: GeobacterCustomIntrinsicMirGen + Send + Sync + 'static,
-        U: GetDefIdFromKernelId + Send + Sync,
+        U: GetDriverData + Send + Sync,
 {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    tcx: TyCtxt<'tcx>,
@@ -209,50 +181,9 @@ pub fn redirect_or_panic<'tcx, F>(tcx: TyCtxt<'tcx>,
     })
   }
 
-  fn static_str_operand<'tcx, T>(tcx: TyCtxt<'tcx>,
-                                 source_info: mir::SourceInfo,
-                                 str: T) -> Operand<'tcx>
-    where T: fmt::Display,
-  {
-    let str = format!("{}", str);
-    let alloc = Allocation::from_byte_aligned_bytes(str.as_bytes());
-    let v = ConstValue::Slice {
-      data: tcx.intern_const_alloc(alloc),
-      start: 0,
-      end: str.len(),
-    };
-    let v = tcx.mk_const(Const {
-      ty: tcx.mk_static_str(),
-      val: v,
-    });
-    let v = Constant {
-      span: source_info.span,
-      literal: v,
-      user_ty: None,
-    };
-    let v = Box::new(v);
-    Operand::Constant(v)
-  }
-
   let source_info = mir::SourceInfo {
     span: DUMMY_SP,
     scope: mir::OUTERMOST_SOURCE_SCOPE,
-  };
-
-  let mk_u32 = |v: u32| {
-    let v = Scalar::from_uint(v, Size::from_bytes(4));
-    let v = ConstValue::Scalar(v);
-    let v = tcx.mk_const(Const {
-      ty: tcx.types.u32,
-      val: v,
-    });
-    let v = Constant {
-      span: source_info.span,
-      literal: v,
-      user_ty: None,
-    };
-    let v = Box::new(v);
-    Operand::Constant(v)
   };
 
   let mut bb = mir::BasicBlockData {
@@ -271,54 +202,27 @@ pub fn redirect_or_panic<'tcx, F>(tcx: TyCtxt<'tcx>,
     },
     None => {
       // call `panic` from `libcore`
-      // `fn panic(expr_file_line_col: &(&'static str, &'static str, u32, u32)) -> !`
       let lang_item = lang_items::PanicFnLangItem;
-
-      let expr = static_str_operand(tcx, source_info.clone(),
-                                    "TODO panic expr");
-      let file = static_str_operand(tcx, source_info.clone(),
-                                    "TODO panic file");
-      let line = mk_u32(0); // TODO
-      let col  = mk_u32(0); // TODO
-      let rvalue = Rvalue::Aggregate(Box::new(AggregateKind::Tuple),
-                                     vec![expr, file, line, col]);
-      let arg_ty = tcx.intern_tup(&[
-        tcx.mk_static_str(),
-        tcx.mk_static_str(),
-        tcx.types.u32,
-        tcx.types.u32,
-      ]);
-      let arg_local = LocalDecl::new_temp(arg_ty, DUMMY_SP);
-      let arg_local_id = Place::from(mir.local_decls.next_index());
-      mir.local_decls.push(arg_local);
-      let stmt_kind = StatementKind::Assign(Box::new((arg_local_id.clone(),
-                                                      rvalue)));
-      let stmt = Statement {
-        source_info: source_info.clone(),
-        kind: stmt_kind,
-      };
-      bb.statements.push(stmt);
-
-      let arg_ref_ty = tcx.mk_imm_ref(tcx.lifetimes.re_erased, arg_ty);
-      let arg_ref_local = LocalDecl::new_temp(arg_ref_ty, DUMMY_SP);
-      let arg_ref_local_id = Place::from(mir.local_decls.next_index());
-      mir.local_decls.push(arg_ref_local);
-      let rvalue = Rvalue::Ref(tcx.lifetimes.re_erased,
-                               mir::BorrowKind::Shared,
-                               arg_local_id);
-      let stmt_kind = StatementKind::Assign(Box::new((arg_ref_local_id.clone(),
-                                                      rvalue)));
-      let stmt = Statement {
-        source_info: source_info.clone(),
-        kind: stmt_kind,
-      };
-      bb.statements.push(stmt);
 
       let def_id = langcall(tcx, None, "", lang_item);
       let instance = Instance::mono(tcx, def_id);
 
+      let loc = tcx.const_caller_location((
+        Symbol::intern("TODO panic file location"),
+        0,
+        1,
+      ));
+      let loc = Constant {
+        span: source_info.span,
+        literal: loc,
+        user_ty: None,
+      };
+      let loc = Operand::Constant(Box::new(loc));
+      let desc = tcx.mk_static_str_operand(source_info,
+                                           "Device function called on the host");
+
       (instance,
-       vec![Operand::Copy(arg_ref_local_id), ],
+       vec![desc, loc],
        mir::TerminatorKind::Unreachable)
     },
   };
@@ -374,7 +278,7 @@ impl<T> GeobacterCustomIntrinsicMirGen for WorkItemKill<T>
 {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
-                                   kid_did: &dyn DefIdFromKernelId,
+                                   _dd: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
                                    mir: &mut mir::Body<'tcx>)
@@ -383,7 +287,7 @@ impl<T> GeobacterCustomIntrinsicMirGen for WorkItemKill<T>
 
     redirect_or_panic(tcx, mir, move || {
       let id = self.kernel_instance();
-      let instance = kid_did.convert_kernel_instance(tcx, id)
+      let instance = tcx.convert_kernel_instance(id)
         .expect("failed to convert kernel id to def id");
       Some(instance)
     });

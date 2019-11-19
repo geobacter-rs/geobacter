@@ -8,7 +8,7 @@ use std::ops::{Deref};
 use std::sync::{Arc, };
 
 use rustc_data_structures::fx::{FxHashMap, };
-use rustc_data_structures::sync::{Lock, RwLock, Lrc, MetadataRef, AtomicCell, };
+use rustc_data_structures::sync::{Lock, MetadataRef, AtomicCell, Once, };
 use rustc_data_structures::owning_ref::{OwningRef, };
 use rustc::hir::def_id::{CrateNum,};
 use rustc::middle::cstore::{MetadataLoader, CrateSource as RustcCrateSource, };
@@ -20,8 +20,6 @@ use syntax_pos::symbol::{Symbol};
 use flate2::read::DeflateDecoder;
 
 use crate::utils::{new_hash_set, };
-
-pub use crate::gintrinsics::CNums;
 
 #[derive(Debug)]
 pub enum MetadataLoadingError {
@@ -86,7 +84,7 @@ impl CrateMetadataLoader {
                             src: &PathBuf,
                             symbol_name: &str,
                             krate: &MetadataBlob,
-                            cstore: &CStore)
+                            cstore: &mut CStore)
     -> (CrateNum, CrateNameHash, bool)
   {
     use std::collections::hash_map::Entry;
@@ -119,7 +117,7 @@ impl CrateMetadataLoader {
   }
 
   pub fn build(&mut self, allmd: &[Metadata],
-               cstore: &CStore)
+               cstore: &mut CStore)
     -> Result<CrateMetadata, String>
   {
     use std::collections::hash_map::Entry;
@@ -133,7 +131,6 @@ impl CrateMetadataLoader {
       let root = object.owner_blob().get_root();
       if root.plugin_registrar_fn.is_some() ||
         root.proc_macro_decls_static.is_some() {
-        info!("looks like a rustc plugin, skipping");
         continue 'outer;
       }
 
@@ -180,7 +177,7 @@ impl CrateMetadataLoader {
   fn build_impl(&mut self,
                 what: CrateNameHash,
                 into: &mut CrateMetadata,
-                cstore: &CStore)
+                cstore: &mut CStore)
     -> Result<CrateNum, String>
   {
     use rustc::dep_graph::DepNodeIndex;
@@ -245,14 +242,10 @@ impl CrateMetadataLoader {
         map.push(cnum);
       }
 
-      map.into_iter().collect()
+      map
     };
 
     let dependencies: Vec<CrateNum> = cnum_map.iter().cloned().collect();
-
-    let def_path_table = root
-      .def_path_table
-      .decode(&*shared_krate);
 
     let interpret_alloc_index: Vec<u32> = root
       .interpret_alloc_index
@@ -265,9 +258,13 @@ impl CrateMetadataLoader {
       .map(|impls| (impls.trait_id, impls.impls) )
       .collect();
 
+    let def_path_table = root
+      .def_path_table
+      .decode(&*shared_krate);
+
     let cmeta = cstore::CrateMetadata {
       extern_crate: Lock::new(None),
-      def_path_table: Lrc::new(def_path_table),
+      def_path_table,
       trait_impls,
       raw_proc_macros: None,
       root,
@@ -275,7 +272,7 @@ impl CrateMetadataLoader {
       cnum_map,
       cnum,
       dependencies: Lock::new(dependencies),
-      source_map_import_info: RwLock::new(vec![]),
+      source_map_import_info: Once::new(),
       alloc_decoding_state: AllocDecodingState::new(interpret_alloc_index),
       dep_kind: Lock::new(DepKind::Explicit),
       source: RustcCrateSource {
@@ -286,8 +283,8 @@ impl CrateMetadataLoader {
       },
       private_dep: false,
       dep_node_index: AtomicCell::new(DepNodeIndex::INVALID),
+      host_hash: None,
     };
-    let cmeta = Lrc::new(cmeta);
     into.0.push(cmeta);
 
     Ok(cnum)
@@ -309,7 +306,7 @@ impl Default for CrateMetadataLoader {
 }
 
 #[derive(Default)]
-pub struct CrateMetadata(pub Vec<Lrc<cstore::CrateMetadata>>);
+pub struct CrateMetadata(pub Vec<cstore::CrateMetadata>);
 
 pub struct SharedMetadataBlob(Arc<Vec<u8>>, MetadataBlob);
 impl SharedMetadataBlob {

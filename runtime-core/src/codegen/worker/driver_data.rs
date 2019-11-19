@@ -12,19 +12,19 @@ use rustc::ty::{self, TyCtxt, };
 use rustc::session::config::OutputFilenames;
 use rustc_data_structures::fx::{FxHashMap, };
 use rustc_data_structures::sync::{Lrc, RwLock, ReadGuard, MappedReadGuard, };
-use rustc_metadata::cstore::CStore;
 use rustc_target::abi::{LayoutDetails, };
-use syntax_pos::symbol::{InternedString, };
+use syntax::symbol::{Symbol, };
 
 use crossbeam::sync::WaitGroup;
 
 use geobacter_core::kernel::{KernelInstance, };
 
-use gintrinsics::{DefIdFromKernelId, };
+use gintrinsics::{DriverData as GIDriverData, };
+use gintrinsics::help::*;
 
 use crate::{AcceleratorTargetDesc, };
 use crate::codegen::*;
-use crate::context::{Context, CNums};
+use crate::context::{Context};
 use crate::passes::{Pass, PassType, };
 
 use super::HostQueryMessage;
@@ -37,8 +37,6 @@ pub struct DriverData<'tcx, P>
   where P: PlatformCodegen,
 {
   pub context: Context,
-  cstore: &'tcx CStore,
-  cnums: &'tcx CNums,
   pub accels: &'tcx [Weak<P::Device>],
 
   /// DO NOT USE DIRECTLY. Use `dd.host_codegen()`
@@ -63,7 +61,7 @@ pub struct DriverData<'tcx, P>
   /// we start Rust's codegen module. This doesn't need to be locked before
   /// Rust codegen as there will only be one thread accessing it at that time.
   /// And afterwards its immutable.
-  pub intrinsics: RwLock<FxHashMap<InternedString, Lrc<dyn CustomIntrinsicMirGen>>>,
+  pub intrinsics: RwLock<FxHashMap<Symbol, Lrc<dyn CustomIntrinsicMirGen>>>,
 }
 
 /// This shouldn't exist.
@@ -78,20 +76,16 @@ impl<'tcx, P> PlatformDriverData<'tcx, P>
   where P: PlatformCodegen,
 {
   pub(crate) fn new(context: Context,
-                    cstore: &'tcx CStore,
-                    cnums: &'tcx CNums,
                     accels: &'tcx [Weak<P::Device>],
                     host_codegen: Option<Sender<HostQueryMessage>>,
                     target_desc: &'tcx Arc<AcceleratorTargetDesc>,
                     passes: &'tcx [Box<dyn Pass<P>>],
-                    intrinsics: FxHashMap<InternedString, Lrc<dyn CustomIntrinsicMirGen>>,
+                    intrinsics: FxHashMap<Symbol, Lrc<dyn CustomIntrinsicMirGen>>,
                     platform: &'tcx P)
     -> Self
   {
     let dd = DriverData {
       context,
-      cstore,
-      cnums,
       accels,
       target_desc,
 
@@ -121,8 +115,7 @@ impl<'tcx, P> PlatformDriverData<'tcx, P>
                           tcx: TyCtxt<'tcx>)
     -> Result<(), Box<dyn Error + Send + Sync + 'static>>
   {
-    let instance = self.dd()
-      .convert_kernel_instance(tcx, desc.instance)
+    let instance = tcx.convert_kernel_instance(desc.instance)
       .ok_or("failed to convert Geobacter kernel instance into \
               Rust's Instance")?;
     let root = self.platform
@@ -293,7 +286,7 @@ impl<'tcx, P> DriverData<'tcx, P>
     where F: Fn<Args, Output = Ret>,
   {
     let ki = KernelInstance::get(f);
-    self.convert_kernel_instance(tcx, ki)
+    tcx.convert_kernel_instance(ki)
       .expect("instance decode failure")
   }
 
@@ -328,9 +321,6 @@ impl<'tcx, P> DriverData<'tcx, P>
   }
 }
 
-impl<'tcx, P> DefIdFromKernelId for DriverData<'tcx, P>
+impl<'tcx, P> GIDriverData for DriverData<'tcx, P>
   where P: PlatformCodegen,
-{
-  fn get_cstore(&self) -> &CStore { self.cstore }
-  fn cnum_map(&self) -> Option<&CNums> { Some(self.cnums) }
-}
+{ }

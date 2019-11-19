@@ -1,8 +1,12 @@
 
+use rustc::lint;
 use rustc::session::{config, Session};
 use rustc::session::CrateDisambiguator;
 use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_data_structures::fingerprint::Fingerprint;
+use syntax::util::lev_distance::find_best_match_for_name;
+use syntax::symbol::{Symbol, sym};
+use syntax::{self, ast};
 
 pub use crate::rustc_interface::util::*;
 
@@ -40,4 +44,58 @@ pub fn compute_crate_disambiguator(session: &Session) -> CrateDisambiguator {
   hasher.write(if is_exe { b"exe" } else { b"lib" });
 
   CrateDisambiguator::from(hasher.finish::<Fingerprint>())
+}
+const CRATE_TYPES: &[(Symbol, config::CrateType)] = &[
+  (sym::rlib, config::CrateType::Rlib),
+  (sym::dylib, config::CrateType::Dylib),
+  (sym::cdylib, config::CrateType::Cdylib),
+  (sym::lib, config::default_lib_output()),
+  (sym::staticlib, config::CrateType::Staticlib),
+  (sym::proc_dash_macro, config::CrateType::ProcMacro),
+  (sym::bin, config::CrateType::Executable),
+];
+pub fn categorize_crate_type(s: Symbol) -> Option<config::CrateType> {
+  Some(CRATE_TYPES.iter().find(|(key, _)| *key == s)?.1)
+}
+pub fn check_attr_crate_type(attrs: &[ast::Attribute], lint_buffer: &mut lint::LintBuffer) {
+  // Unconditionally collect crate types from attributes to make them used
+  for a in attrs.iter() {
+    if a.check_name(sym::crate_type) {
+      if let Some(n) = a.value_str() {
+        if let Some(_) = categorize_crate_type(n) {
+          return;
+        }
+
+        if let ast::MetaItemKind::NameValue(spanned) = a.meta().unwrap().kind {
+          let span = spanned.span;
+          let lev_candidate = find_best_match_for_name(
+            CRATE_TYPES.iter().map(|(k, _)| k),
+            &n.as_str(),
+            None
+          );
+          if let Some(candidate) = lev_candidate {
+            lint_buffer.buffer_lint_with_diagnostic(
+              lint::builtin::UNKNOWN_CRATE_TYPES,
+              ast::CRATE_NODE_ID,
+              span,
+              "invalid `crate_type` value",
+              lint::builtin::BuiltinLintDiagnostics::
+              UnknownCrateTypes(
+                span,
+                "did you mean".to_string(),
+                format!("\"{}\"", candidate)
+              )
+            );
+          } else {
+            lint_buffer.buffer_lint(
+              lint::builtin::UNKNOWN_CRATE_TYPES,
+              ast::CRATE_NODE_ID,
+              span,
+              "invalid `crate_type` value"
+            );
+          }
+        }
+      }
+    }
+  }
 }

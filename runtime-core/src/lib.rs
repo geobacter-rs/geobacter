@@ -25,6 +25,7 @@ extern crate rustc_lint;
 extern crate rustc_mir;
 extern crate rustc_passes;
 extern crate rustc_privacy;
+extern crate rustc_resolve;
 extern crate rustc_target;
 extern crate rustc_typeck;
 extern crate rustc_traits;

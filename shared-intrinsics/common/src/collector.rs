@@ -23,11 +23,11 @@ use rustc::util::nodemap::{FxHashSet, };
 use rustc_mir::monomorphize::{self, collector::InliningMap, };
 
 use crate::stubbing::Stubber;
-use crate::DefIdFromKernelId;
+use crate::DriverData;
 
 pub fn collect_items_rec<'tcx>(tcx: TyCtxt<'tcx>,
                                stubber: &Stubber,
-                               kid_did: &dyn DefIdFromKernelId,
+                               dd: &dyn DriverData,
                                start: MonoItem<'tcx>,
                                visited: &mut FxHashSet<MonoItem<'tcx>>,
                                inlining_map: &mut Option<InliningMap<'tcx>>)
@@ -52,7 +52,7 @@ pub fn collect_items_rec<'tcx>(tcx: TyCtxt<'tcx>,
             // We still want our intrinsics to be defined
             inst
           } else {
-            let inst = stubber.map_instance(tcx, kid_did, inst);
+            let inst = stubber.map_instance(tcx, dd, inst);
 
             if tcx.is_foreign_item(inst.def_id()) {
               // Exclude extern "X" { } stuff, but only if the
@@ -108,7 +108,7 @@ pub fn collect_items_rec<'tcx>(tcx: TyCtxt<'tcx>,
   }
 
   for neighbour in neighbors {
-    collect_items_rec(tcx, stubber, kid_did,
+    collect_items_rec(tcx, stubber, dd,
                       neighbour, visited,
                       inlining_map);
   }

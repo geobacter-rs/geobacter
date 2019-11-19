@@ -34,6 +34,7 @@ extern crate rustc_traits;
 extern crate rustc_typeck;
 extern crate serialize as rustc_serialize;
 extern crate syntax;
+extern crate syntax_expand;
 extern crate syntax_ext;
 extern crate syntax_pos;
 extern crate tempfile;
@@ -57,11 +58,10 @@ use self::rustc::mir::{Constant, Operand, Rvalue, Statement,
                        StatementKind, Local, };
 use self::rustc::mir::interpret::{ConstValue, Scalar, Allocation,
                                   PointerArithmetic, Pointer, };
-use self::rustc::mir::{self, CustomIntrinsicMirGen, AggregateKind,
-                       LocalDecl, Place, };
+use self::rustc::mir::{self, CustomIntrinsicMirGen, };
 use self::rustc::session::{Session, early_error, };
 use self::rustc::session::config::{ErrorOutputType, };
-use self::rustc::ty::{self, TyCtxt, layout::Align, layout::Size, Instance, };
+use self::rustc::ty::{self, TyCtxt, layout::Align, Instance, };
 use self::rustc::ty::{Const, };
 use crate::rustc::util::common::{set_time_depth, print_time_passes_entry, };
 use self::rustc_data_structures::fx::{FxHashMap, };
@@ -315,7 +315,7 @@ impl CustomIntrinsicMirGen for KernelInstance {
   /// The types of the input args.
   fn inputs<'tcx>(&self, tcx: TyCtxt<'tcx>) -> &'tcx ty::List<ty::Ty<'tcx>> {
     let n = 0;
-    let p = Symbol::intern(&format!("P{}", n)).as_interned_str();
+    let p = Symbol::intern(&format!("P{}", n));
     let f = tcx.mk_ty_param(n, p);
     let region = tcx.mk_region(ty::ReLateBound(ty::INNERMOST,
                                                ty::BrAnon(0)));
@@ -392,7 +392,7 @@ impl CustomIntrinsicMirGen for KernelContextDataId {
   /// The types of the input args.
   fn inputs<'tcx>(&self, tcx: TyCtxt<'tcx>) -> &'tcx ty::List<ty::Ty<'tcx>> {
     let n = 0;
-    let p = Symbol::intern(&format!("P{}", n)).as_interned_str();
+    let p = Symbol::intern(&format!("P{}", n));
     let f = tcx.mk_ty_param(n, p);
     let region = tcx.mk_region(ty::ReLateBound(ty::INNERMOST,
                                                ty::BrAnon(0)));
@@ -510,50 +510,9 @@ impl CustomIntrinsicMirGen for WorkItemKill {
       })
     }
 
-    fn static_str_operand<T>(tcx: TyCtxt,
-                             source_info: mir::SourceInfo,
-                             str: T) -> Operand
-      where T: fmt::Display,
-    {
-      let str = format!("{}", str);
-      let alloc = Allocation::from_byte_aligned_bytes(str.as_bytes());
-      let v = ConstValue::Slice {
-        data: tcx.intern_const_alloc(alloc),
-        start: 0,
-        end: str.len(),
-      };
-      let v = tcx.mk_const(Const {
-        ty: tcx.mk_static_str(),
-        val: v,
-      });
-      let v = Constant {
-        span: source_info.span,
-        literal: v,
-        user_ty: None,
-      };
-      let v = Box::new(v);
-      Operand::Constant(v)
-    }
-
     let source_info = mir::SourceInfo {
       span: DUMMY_SP,
       scope: mir::OUTERMOST_SOURCE_SCOPE,
-    };
-
-    let mk_u32 = |v: u32| {
-      let v = Scalar::from_uint(v, Size::from_bytes(4));
-      let v = ConstValue::Scalar(v);
-      let v = tcx.mk_const(Const {
-        ty: tcx.types.u32,
-        val: v,
-      });
-      let v = Constant {
-        span: source_info.span,
-        literal: v,
-        user_ty: None,
-      };
-      let v = Box::new(v);
-      Operand::Constant(v)
     };
 
     let mut bb = mir::BasicBlockData {
@@ -568,54 +527,27 @@ impl CustomIntrinsicMirGen for WorkItemKill {
 
     let (real_instance, args, term_kind) = {
       // call `panic` from `libcore`
-      // `fn panic(expr_file_line_col: &(&'static str, &'static str, u32, u32)) -> !`
       let lang_item = lang_items::PanicFnLangItem;
-
-      let expr = static_str_operand(tcx, source_info.clone(),
-                                    "__geobacter_kill called");
-      let file = static_str_operand(tcx, source_info.clone(),
-                                    "TODO panic file");
-      let line = mk_u32(0); // TODO
-      let col = mk_u32(0); // TODO
-      let rvalue = Rvalue::Aggregate(Box::new(AggregateKind::Tuple),
-                                     vec![expr, file, line, col]);
-      let arg_ty = tcx.intern_tup(&[
-        tcx.mk_static_str(),
-        tcx.mk_static_str(),
-        tcx.types.u32,
-        tcx.types.u32,
-      ]);
-      let arg_local = LocalDecl::new_temp(arg_ty, DUMMY_SP);
-      let arg_local_id = Place::from(mir.local_decls.next_index());
-      mir.local_decls.push(arg_local);
-      let stmt_kind = StatementKind::Assign(Box::new((arg_local_id.clone(),
-                                                      rvalue)));
-      let stmt = Statement {
-        source_info: source_info.clone(),
-        kind: stmt_kind,
-      };
-      bb.statements.push(stmt);
-
-      let arg_ref_ty = tcx.mk_imm_ref(tcx.lifetimes.re_erased, arg_ty);
-      let arg_ref_local = LocalDecl::new_temp(arg_ref_ty, DUMMY_SP);
-      let arg_ref_local_id = Place::from(mir.local_decls.next_index());
-      mir.local_decls.push(arg_ref_local);
-      let rvalue = Rvalue::Ref(tcx.lifetimes.re_erased,
-                               mir::BorrowKind::Shared,
-                               arg_local_id);
-      let stmt_kind = StatementKind::Assign(Box::new((arg_ref_local_id.clone(),
-                                                      rvalue)));
-      let stmt = Statement {
-        source_info: source_info.clone(),
-        kind: stmt_kind,
-      };
-      bb.statements.push(stmt);
 
       let def_id = langcall(tcx, None, "", lang_item);
       let instance = Instance::mono(tcx, def_id);
 
+      let loc = tcx.const_caller_location((
+        Symbol::intern("TODO panic file location"),
+        0,
+        1,
+      ));
+      let loc = Constant {
+        span: source_info.span,
+        literal: loc,
+        user_ty: None,
+      };
+      let loc = Operand::Constant(Box::new(loc));
+      let desc = tcx.mk_static_str_operand(source_info,
+                                           "Device function called on the host");
+
       (instance,
-       vec![Operand::Copy(arg_ref_local_id), ],
+       vec![desc, loc],
        mir::TerminatorKind::Unreachable)
     };
     debug!("mirgen intrinsic into {}", real_instance);

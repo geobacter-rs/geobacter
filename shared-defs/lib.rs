@@ -4,3 +4,4 @@
 extern crate serde;
 
 pub mod platform;
+pub mod kernel;

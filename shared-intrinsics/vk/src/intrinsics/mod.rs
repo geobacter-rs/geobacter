@@ -11,7 +11,7 @@ use crate::syntax_pos::{DUMMY_SP, };
 use rustc_intrinsics::help::GeobacterTyCtxtHelp;
 
 use crate::gvk_core::*;
-use crate::common::{DefIdFromKernelId, GeobacterCustomIntrinsicMirGen,
+use crate::common::{DriverData, GeobacterCustomIntrinsicMirGen,
                     stubbing, };
 
 pub mod shader;
@@ -21,7 +21,7 @@ pub struct ExeModel(pub Option<ExecutionModel>);
 impl GeobacterCustomIntrinsicMirGen for ExeModel {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    _stubs: &stubbing::Stubber,
-                                   _kid_did: &dyn DefIdFromKernelId,
+                                   _kid_did: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
                                    mir: &mut mir::Body<'tcx>)

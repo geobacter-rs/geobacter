@@ -15,7 +15,7 @@ use crate::codegen::{PlatformCodegen, CodegenComms, PKernelDesc};
 use crate::utils::{HashMap, };
 
 pub use rustc::session::config::OutputType;
-pub use crate::metadata::{context_metadata, LoadedCrateMetadata, CNums, };
+pub use crate::metadata::{context_metadata, LoadedCrateMetadata, };
 use crate::metadata::Metadata;
 
 type Translators = HashMap<

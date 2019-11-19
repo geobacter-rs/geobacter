@@ -13,10 +13,10 @@ use rustc::session::config::nightly_options;
 use rustc::session::{early_error, early_warn};
 use rustc::lint::Lint;
 use rustc::lint;
+use rustc::middle::cstore::MetadataLoader;
 use rustc::hir::def_id::LOCAL_CRATE;
 use rustc::ty::TyCtxt;
 use rustc::util::common::{time, ErrorReported, };
-use rustc_metadata::cstore::CStore;
 use rustc_metadata::locator;
 use rustc_codegen_utils::codegen_backend::CodegenBackend;
 use rustc_interface::util::get_codegen_sysroot;
@@ -137,7 +137,7 @@ pub fn run_compiler(
   };
 
   let sopts = config::build_session_options(&matches);
-  let cfg = config::parse_cfgspecs(matches.opt_strs("cfg"));
+  let cfg = interface::parse_cfgspecs(matches.opt_strs("cfg"));
 
   let mut dummy_config = |sopts, cfg, diagnostic_output| {
     let mut config = interface::Config {
@@ -152,6 +152,7 @@ pub fn run_compiler(
       stderr: None,
       crate_name: None,
       lint_caps: Default::default(),
+      register_lints: None,
     };
     callbacks.config(&mut config);
     config
@@ -172,9 +173,13 @@ pub fn run_compiler(
           interface::run_compiler(config, |compiler| {
             let sopts = &compiler.session().opts;
             if sopts.describe_lints {
+              let lint_store = rustc_lint::new_lint_store(
+                sopts.debugging_opts.no_interleave_lints,
+                compiler.session().unstable_options(),
+              );
               describe_lints(
                 compiler.session(),
-                &*compiler.session().lint_store.borrow(),
+                &lint_store,
                 false
               );
               return;
@@ -225,6 +230,7 @@ pub fn run_compiler(
     stderr: None,
     crate_name: None,
     lint_caps: Default::default(),
+    register_lints: None,
   };
 
   callbacks.config(&mut config);
@@ -242,7 +248,7 @@ pub fn run_compiler(
       compiler.output_file(),
     ).and_then(|| GeobacterRustcDefaultCalls::list_metadata(
       sess,
-      compiler.cstore(),
+      &*compiler.codegen_backend().metadata_loader(),
       &matches,
       compiler.input()
     ));
@@ -294,12 +300,14 @@ pub fn run_compiler(
       return sess.compile_status();
     }
 
-    compiler.register_plugins()?;
+    {
+      let (_, _, lint_store) = &*compiler.register_plugins()?.peek();
 
-    // Lint plugins are registered; now we can process command line flags.
-    if sess.opts.describe_lints {
-      describe_lints(&sess, &sess.lint_store.borrow(), true);
-      return sess.compile_status();
+      // Lint plugins are registered; now we can process command line flags.
+      if sess.opts.describe_lints {
+        describe_lints(&sess, &lint_store, true);
+        return sess.compile_status();
+      }
     }
 
     compiler.expansion()?;
@@ -459,7 +467,7 @@ fn parse_pretty(sess: &Session,
 pub struct GeobacterRustcDefaultCalls;
 impl GeobacterRustcDefaultCalls {
   pub fn list_metadata(sess: &Session,
-                       cstore: &CStore,
+                       metadata_loader: &dyn MetadataLoader,
                        matches: &getopts::Matches,
                        input: &Input)
     -> Compilation {
@@ -471,7 +479,7 @@ impl GeobacterRustcDefaultCalls {
           let mut v = Vec::new();
           locator::list_file_metadata(&sess.target.target,
                                       path,
-                                      cstore,
+                                      metadata_loader,
                                       &mut v)
             .unwrap();
           println!("{}", String::from_utf8(v).unwrap());
@@ -755,8 +763,7 @@ Available lint options:
 
 ");
 
-  fn sort_lints(sess: &Session, lints: Vec<(&'static Lint, bool)>) -> Vec<&'static Lint> {
-    let mut lints: Vec<_> = lints.into_iter().map(|(x, _)| x).collect();
+  fn sort_lints(sess: &Session, mut lints: Vec<&'static Lint>) -> Vec<&'static Lint> {
     // The sort doesn't case-fold but it's doubtful we care.
     lints.sort_by_cached_key(|x: &&Lint| (x.default_level(sess), x.name));
     lints
@@ -772,7 +779,7 @@ Available lint options:
   let (plugin, builtin): (Vec<_>, _) = lint_store.get_lints()
     .iter()
     .cloned()
-    .partition(|&(_, p)| p);
+    .partition(|&lint| lint.is_plugin);
   let plugin = sort_lints(sess, plugin);
   let builtin = sort_lints(sess, builtin);
 

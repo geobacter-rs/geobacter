@@ -23,11 +23,11 @@ use self::rustc::mir::{CustomIntrinsicMirGen, };
 use self::rustc::ty::{TyCtxt, };
 use self::rustc_data_structures::sync::{Lrc, };
 
-use crate::common::DefIdFromKernelId;
+use crate::common::DriverData;
 
 pub fn main() {
   rustc_intrinsics::main(|gen| {
-    insert_all_intrinsics(&GeneratorDefIdKernelId,
+    insert_all_intrinsics(&GeneratorDriverData,
                           |k, v| {
                             let inserted = gen.intrinsics.insert(k.clone(), v);
                             assert!(inserted.is_none(), "key: {}", k);
@@ -35,24 +35,21 @@ pub fn main() {
   });
 }
 
-pub struct GeneratorDefIdKernelId;
-impl common::DefIdFromKernelId for GeneratorDefIdKernelId {
-  fn get_cstore(&self) -> &rustc_metadata::cstore::CStore {
-    rustc_intrinsics::generators().cstore()
-  }
+pub struct GeneratorDriverData;
+impl common::DriverData for GeneratorDriverData {
 }
-impl common::GetDefIdFromKernelId for GeneratorDefIdKernelId {
+impl common::GetDriverData for GeneratorDriverData {
   fn with_self<F, R>(_tcx: TyCtxt<'_>, f: F) -> R
-    where F: FnOnce(&dyn DefIdFromKernelId) -> R,
+    where F: FnOnce(&dyn DriverData) -> R,
   {
-    f(&GeneratorDefIdKernelId)
+    f(&GeneratorDriverData)
   }
 }
 
 /// Call `into` for every intrinsic in every platform intrinsic crate.
 pub fn insert_all_intrinsics<F, U>(marker: &U, mut into: F)
   where F: FnMut(String, Lrc<dyn CustomIntrinsicMirGen>),
-        U: common::GetDefIdFromKernelId + Send + Sync + 'static,
+        U: common::GetDriverData + Send + Sync + 'static,
 {
   amdgpu::insert_all_intrinsics(marker, &mut into);
   vk::shader::insert_all_intrinsics(marker, &mut into);

@@ -2,13 +2,18 @@
 use std::borrow::Cow;
 use std::iter::{repeat, };
 
+use crate::codec::GeobacterDecoder;
+
+use crate::shared_defs::kernel::KernelDesc;
+
 use crate::rustc::mir::{Constant, Operand, Rvalue, };
 use crate::rustc::mir::interpret::{ConstValue, Scalar, Pointer,
                                    ScalarMaybeUndef, AllocId,
                                    Allocation, };
 use crate::rustc::mir::{self, };
 use crate::rustc::ty::{self, TyCtxt, layout::Size, };
-use crate::rustc::ty::{Const, ParamEnv, Tuple, Array, };
+use crate::rustc::ty::{Const, ParamEnv, Tuple, Array, Instance, };
+use crate::rustc_serialize::Decodable;
 use crate::rustc_target::abi::{FieldPlacement, Align, HasDataLayout, };
 use crate::syntax_pos::{DUMMY_SP, };
 
@@ -162,6 +167,21 @@ pub trait GeobacterTyCtxtHelp<'tcx>: Copy {
     };
     let v = Box::new(v);
     Operand::Constant(v)
+  }
+
+  fn convert_kernel_instance<T>(self, k: T)
+    -> Option<Instance<'tcx>>
+    where T: KernelDesc,
+  {
+    trace!("converting kernel instance for {}",
+           k.instance_name().unwrap());
+
+    let mut alloc_state = None;
+    let mut decoder = GeobacterDecoder::new(self.as_tcx(),
+                                            k.instance_data(),
+                                            &mut alloc_state);
+
+    Instance::decode(&mut decoder).ok()
   }
 }
 impl<'tcx> GeobacterTyCtxtHelp<'tcx> for TyCtxt<'tcx> {

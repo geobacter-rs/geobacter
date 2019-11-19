@@ -4,6 +4,8 @@ use std::hash::*;
 use std::ops::*;
 use std::sync::atomic::AtomicUsize;
 
+use shared_defs::kernel::KernelDesc;
+
 /// roughly corresponds to a `ty::Instance` in `rustc`.
 #[derive(Clone, Copy)]
 pub struct KernelInstance {
@@ -62,6 +64,10 @@ impl Hash for KernelInstance {
   {
     self.instance.hash(hasher)
   }
+}
+impl KernelDesc for KernelInstance {
+  fn instance_name(&self) -> Option<&str> { self.name() }
+  fn instance_data(&self) -> &[u8] { self.instance }
 }
 
 pub trait OptionalFn<Args> {

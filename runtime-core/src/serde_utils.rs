@@ -259,6 +259,9 @@ pub struct TargetOptions {
   /// defined in libgcc.  If this option is enabled, the target must provide
   /// `eh_unwind_resume` lang item.
   pub custom_unwind_resume: bool,
+  /// Whether the runtime startup code requires the `main` function be passed
+  /// `argc` and `argv` values.
+  pub main_needs_argc_argv: bool,
 
   /// Flag indicating whether ELF TLS (e.g. #[thread_local]) is available for
   /// this target.
@@ -370,6 +373,9 @@ pub struct TargetOptions {
 
   /// Use platform dependent mcount function
   pub target_mcount: String,
+
+  /// LLVM ABI name, corresponds to the '-mabi' parameter available in multilib C compilers
+  pub llvm_abiname: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -637,6 +643,7 @@ pub enum Abi {
   X86Interrupt,
   AmdGpuKernel,
   SpirKernel,
+  EfiApi,
 
   // Multiplatform / generic ABIs
   Rust,
@@ -667,6 +674,7 @@ impl Into<spec::abi::Abi> for Abi {
       X86Interrupt => Abi::X86Interrupt,
       AmdGpuKernel => Abi::AmdGpuKernel,
       SpirKernel => Abi::SpirKernel,
+      EfiApi => Abi::EfiApi,
 
       // Multiplatform / generic ABIs
       Rust => Abi::Rust,
@@ -698,6 +706,7 @@ impl From<spec::abi::Abi> for Abi {
       X86Interrupt => Abi::X86Interrupt,
       AmdGpuKernel => Abi::AmdGpuKernel,
       SpirKernel => Abi::SpirKernel,
+      EfiApi => Abi::EfiApi,
 
       // Multiplatform / generic ABIs
       Rust => Abi::Rust,

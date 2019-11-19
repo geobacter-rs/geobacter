@@ -11,7 +11,6 @@
 //!
 
 use std::any::Any;
-use std::borrow::Cow;
 use std::collections::{BTreeMap, };
 use std::error::{Error, };
 use std::io::{self, };
@@ -34,23 +33,25 @@ use rustc::util::nodemap::DefIdMap;
 use rustc_data_structures::fx::{FxHashMap};
 use rustc_data_structures::sync::{self, Lrc, };
 use rustc_metadata;
-use rustc_metadata::cstore::CStore;
+use rustc_metadata::{creader::CrateLoader, cstore::CStore, };
 use rustc_incremental;
 use rustc_target::abi::{LayoutDetails, };
-use syntax::feature_gate;
-use syntax_pos::symbol::{Symbol, InternedString, };
+use rustc_resolve::Resolver;
+use syntax::{ast, feature_gate, };
+use syntax_pos::DUMMY_SP;
+use syntax_pos::symbol::{Symbol, };
 
 use crossbeam::sync::WaitGroup;
 
-use gintrinsics::{DefIdFromKernelId, GetDefIdFromKernelId,
+use gintrinsics::{DriverData as GIDriverData, GetDriverData,
                   GeobacterCustomIntrinsicMirGen,
-                  GeobacterMirGen, CNums, };
+                  GeobacterMirGen, };
 
 use tempfile::{Builder as TDBuilder, };
 
 use crate::{AcceleratorTargetDesc, context::Context,
             context::WeakContext, };
-use crate::utils::{HashMap, StableHash, new_hash_map};
+use crate::utils::{HashMap, StableHash, };
 
 use crate::passes::{Pass, };
 
@@ -65,7 +66,7 @@ mod util;
 use super::{PlatformCodegen, CodegenComms, PKernelDesc, };
 use super::products::*;
 use crate::codegen::{PlatformIntrinsicInsert, };
-use crate::metadata::{CrateMetadataLoader, CrateMetadata, DummyMetadataLoader, CrateNameHash};
+use crate::metadata::{CrateMetadataLoader, CrateMetadata, CrateNameHash, DummyMetadataLoader};
 use crate::utils::env::{use_llc, print_opt_remarks};
 
 const CRATE_NAME: &'static str = "geobacter-cross-codegen";
@@ -117,27 +118,27 @@ pub(crate) enum Message<P>
   },
 }
 
-struct DefIdFromKernelIdGetter<P>(PhantomData<P>)
+struct DriverDataGetter<P>(PhantomData<P>)
   where P: PlatformCodegen;
-impl<P> GetDefIdFromKernelId for DefIdFromKernelIdGetter<P>
+impl<P> GetDriverData for DriverDataGetter<P>
   where P: PlatformCodegen,
 {
   fn with_self<F, R>(tcx: TyCtxt, f: F) -> R
-    where F: FnOnce(&dyn DefIdFromKernelId) -> R,
+    where F: FnOnce(&dyn GIDriverData) -> R,
   {
     PlatformDriverData::<P>::with(tcx, move |_tcx, pd| {
-      f(pd.dd() as &dyn DefIdFromKernelId)
+      f(pd.dd() as &dyn GIDriverData)
     })
   }
 }
-impl<P> Default for DefIdFromKernelIdGetter<P>
+impl<P> Default for DriverDataGetter<P>
   where P: PlatformCodegen,
 {
   fn default() -> Self {
-    DefIdFromKernelIdGetter(PhantomData)
+    DriverDataGetter(PhantomData)
   }
 }
-type IntrinsicsMap = FxHashMap<InternedString, Lrc<dyn CustomIntrinsicMirGen>>;
+type IntrinsicsMap = FxHashMap<Symbol, Lrc<dyn CustomIntrinsicMirGen>>;
 pub struct PlatformIntrinsicInserter<'a, P>(&'a mut IntrinsicsMap, PhantomData<P>);
 impl<'a, P> PlatformIntrinsicInsert for PlatformIntrinsicInserter<'a, P>
   where P: PlatformCodegen,
@@ -145,8 +146,8 @@ impl<'a, P> PlatformIntrinsicInsert for PlatformIntrinsicInserter<'a, P>
   fn insert_name<T>(&mut self, name: &str, intrinsic: T)
     where T: GeobacterCustomIntrinsicMirGen
   {
-    let k = Symbol::intern(name).as_interned_str();
-    let marker: DefIdFromKernelIdGetter<P> = DefIdFromKernelIdGetter::default();
+    let k = Symbol::intern(name);
+    let marker: DriverDataGetter<P> = DriverDataGetter::default();
     let v = GeobacterMirGen::wrap(intrinsic, &marker);
     self.0.insert(k, v);
   }
@@ -347,7 +348,7 @@ impl<P> WorkerTranslatorData<P>
   }
 
   fn initialize_sess<F, R>(&self, context: &Context, f: F) -> R
-    where F: FnOnce(Session, &CStore, &gintrinsics::CNums) -> R + Send,
+    where F: FnOnce(Session, CStore) -> R + Send,
           R: Send,
   {
     context.syntax_globals().with(|| {
@@ -369,12 +370,11 @@ impl<P> WorkerTranslatorData<P>
         // which causes missing allocations the second time around.
         // XXX fix upstream to remove that implicit assumption, that is
         // 1 cstore per 1 tcx (1 to 1 and onto).
-        let cstore = CStore::new(Box::new(DummyMetadataLoader));
-        let mut cnums = new_hash_map();
+        let mut cstore = CStore::default();
         {
           let mut loader = CrateMetadataLoader::default();
           let CrateMetadata(meta) = loader.build(context.mapped_metadata(),
-                                                 &cstore)
+                                                 &mut cstore)
             .expect("metadata error");
           for meta in meta.into_iter() {
             let name = CrateNameHash {
@@ -384,18 +384,11 @@ impl<P> WorkerTranslatorData<P>
             let cnum = loader.lookup_cnum(&name)
               .unwrap();
 
-            let fingerprint = meta.root.disambiguator.to_fingerprint()
-              .as_value();
-            let key = (Cow::Owned(format!("{}", meta.root.name)),
-                       fingerprint.0,
-                       fingerprint.1);
-
             cstore.set_crate_data(cnum, meta);
-            cnums.insert(key, cnum);
           }
         }
 
-        f(sess, &cstore, &cnums)
+        f(sess, cstore)
       })
     })
   }
@@ -407,28 +400,21 @@ impl<P> WorkerTranslatorData<P>
       let _ = ret.send(Ok(results.clone()));
     }
 
-    let result = self.initialize_sess(context,|sess, cstore, cnums, | {
+    let result = self.initialize_sess(context,
+                                      |sess, cstore, | {
       let (host_codegen, _) = channel();
 
       let krate = create_empty_hir_crate();
       let dep_graph = rustc::dep_graph::DepGraph::new(Default::default(),
                                                       Default::default());
       let mut forest = rustc::hir::map::Forest::new(krate, &dep_graph);
-      let mut defs = rustc::hir::map::definitions::Definitions::default();
-      let disambiguator = sess.crate_disambiguator
-        .borrow()
-        .clone();
-      defs.create_root_def("jit-methods", disambiguator);
-      let defs = defs;
       let mut arenas = rustc::ty::AllArenas::new();
       self.codegen_kernel_inner(desc.clone(),
                                 context,
                                 sess,
                                 cstore,
-                                cnums,
                                 &mut arenas,
                                 &mut forest,
-                                &defs,
                                 &dep_graph,
                                 host_codegen)
           .map(Arc::new)
@@ -445,11 +431,9 @@ impl<P> WorkerTranslatorData<P>
                               desc: PKernelDesc<P>,
                               context: &Context,
                               sess: Session,
-                              cstore: &CStore,
-                              cnums: &CNums,
+                              cstore: CStore,
                               arenas: &mut ty::AllArenas,
                               forest: &mut rustc::hir::map::Forest,
-                              defs: &rustc::hir::map::definitions::Definitions,
                               dep_graph: &rustc::dep_graph::DepGraph,
                               host_codegen: Sender<HostQueryMessage>)
     -> Result<PCodegenResults<P>, error::Error>
@@ -489,17 +473,30 @@ impl<P> WorkerTranslatorData<P>
       outputs: sess.opts.output_types.clone(),
     };
 
-    let map_crate = rustc::hir::map::map_crate(&sess, cstore,
-                                               forest, defs);
-    let resolutions = rustc::ty::Resolutions {
-      trait_map: Default::default(),
-      maybe_unused_trait_imports: Default::default(),
-      maybe_unused_extern_crates: Default::default(),
-      export_map: Default::default(),
-      extern_crate_map: Default::default(),
-      extern_prelude: Default::default(),
-      glob_map: Default::default(),
+    let krate = ast::Crate {
+      module: ast::Mod {
+        inner: DUMMY_SP,
+        items: vec![],
+        inline: false,
+      },
+      attrs: vec![],
+      span: DUMMY_SP,
     };
+    let resolver_arenas = Resolver::arenas();
+    let crate_name = if let Some(name) = desc.instance.name() {
+      name
+    } else {
+      "geobacter-jit-methods"
+    };
+    let crate_loader = CrateLoader::new_from_cstore(&sess, &DummyMetadataLoader,
+                                                    crate_name, cstore);
+    let resolver = Resolver::new_with_cloader(&sess, &krate, crate_name,
+                                              &resolver_arenas, crate_loader);
+    let mut resolutions = resolver.into_outputs();
+    let definitions = mem::take(&mut resolutions.definitions);
+
+    let map_crate = rustc::hir::map::map_crate(&sess, &*resolutions.cstore,
+                                               forest, &definitions);
 
     let mut intrinsics = IntrinsicsMap::default();
     {
@@ -513,8 +510,6 @@ impl<P> WorkerTranslatorData<P>
 
     let driver_data: PlatformDriverData<P> =
       PlatformDriverData::new(context.clone(),
-                              cstore,
-                              cnums,
                               &self.accels,
                               Some(host_codegen),
                               &self.target_desc,
@@ -528,7 +523,7 @@ impl<P> WorkerTranslatorData<P>
 
     let gcx = TyCtxt::create_global_ctxt(
       &sess,
-      cstore,
+      Lrc::new(rustc::lint::LintStore::new()),
       local_providers,
       extern_providers,
       &arenas,
@@ -694,7 +689,6 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
 
 pub fn create_empty_hir_crate() -> rustc::hir::Crate {
   use rustc::hir::*;
-  use syntax_pos::DUMMY_SP;
 
   let m = Mod {
     inner: DUMMY_SP,
@@ -860,7 +854,7 @@ impl<P> WorkerTranslatorData<P>
           pd.dd()
             .intrinsics
             .read()
-            .get(&name.as_interned_str())
+            .get(&name)
             .cloned()
         })
       },
@@ -907,6 +901,12 @@ impl<P> WorkerTranslatorData<P>
                                                       cnum)
         })
       },
+      // we need to override this because otherwise rustc will get confused
+      // which will eventually lead to an out of bounds slice index.
+      // our synthetic crate will never have any `extern crate ...;`, so
+      // overriding this should be a bit of an optimization anyway in
+      // addition to being a bugfix.
+      missing_extern_crate_item: |_tcx, _cnum| { true },
       ..*providers
     };
 

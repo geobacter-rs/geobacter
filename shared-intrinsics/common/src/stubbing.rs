@@ -15,9 +15,10 @@ use crate::rustc::ty::{TyCtxt, Instance, InstanceDef, };
 use crate::rustc_data_structures::fx::{FxHashMap};
 
 use crate::geobacter_core::kernel::{KernelInstance, };
+use crate::rustc_intrinsics::help::*;
 
 use self::stubs::*;
-use crate::{DefIdFromKernelId, };
+use crate::{DriverData, };
 
 pub struct Stubber {
   /// Are we stubbing the "builtin" stubs? See `self::stubs`.
@@ -28,7 +29,7 @@ pub struct Stubber {
 impl Stubber {
   pub fn map_instance<'tcx>(&self,
                             tcx: TyCtxt<'tcx>,
-                            kid_did: &dyn DefIdFromKernelId,
+                            dd: &dyn DriverData,
                             inst: Instance<'tcx>)
     -> Instance<'tcx>
   {
@@ -37,7 +38,7 @@ impl Stubber {
       _ => { return inst; },
     };
 
-    let did = self.stub_def_id(tcx, kid_did, did);
+    let did = self.stub_def_id(tcx, dd, did);
 
     // we should be able to just replace `stub_instance.substs`
     // with `inst.substs`, assuming our stub signatures match the
@@ -51,7 +52,7 @@ impl Stubber {
 
   pub fn stub_def_id<'tcx>(&self,
                            tcx: TyCtxt<'tcx>,
-                           kid_did: &dyn DefIdFromKernelId,
+                           _dd: &dyn DriverData,
                            did: DefId)
     -> DefId
   {
@@ -63,8 +64,7 @@ impl Stubber {
     }
 
     let convert_ki = |ki: KernelInstance| {
-      let stub_instance = kid_did
-        .convert_kernel_instance(tcx, ki)
+      let stub_instance = tcx.convert_kernel_instance(ki)
         .unwrap_or_else(|| bug!("failed to convert {:?}", ki) );
 
       trace!("{:?} => {:?}", did, stub_instance.def_id());
@@ -186,7 +186,7 @@ mod stubs {
   use std::any::Any;
   use std::fmt;
   use core::alloc::Layout;
-  use core::panic::{PanicInfo, BoxMeUp, };
+  use core::panic::{Location, PanicInfo, BoxMeUp, };
 
   unsafe fn abort() -> ! {
     extern "rust-intrinsic" {
@@ -274,7 +274,7 @@ mod stubs {
   }
   #[inline(always)]
   pub fn panic_fmt(_fmt: fmt::Arguments,
-                   _file_line_col: &(&'static str, u32, u32))
+                   _location: &Location<'_>)
     -> !
   {
     unsafe { abort() }
@@ -288,8 +288,7 @@ mod stubs {
     unsafe { abort() }
   }
   #[inline(always)]
-  pub fn panic_bounds_check(file_line_col: &(&'static str, u32, u32),
-                            index: usize, len: usize) -> ! {
+  pub fn panic_bounds_check(location: &Location<'_>, index: usize, len: usize) -> ! {
     // XXX this should probably be implemented.
     unsafe { abort() }
   }
