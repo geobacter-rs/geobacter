@@ -4,6 +4,8 @@ build = "src/build.rs"
 name = "hsa-rt-sys"
 version = "0.1.0"
 license = "MIT / Apache-2.0"
+repository = "https://github.com/geobacter-rs/geobacter/tree/master/hsa-rt-sys"
+description = "HSA FFI bindings. Part of the Geobacter project."
 
 [dependencies]
 
