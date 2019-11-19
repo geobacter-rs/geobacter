@@ -461,7 +461,7 @@ dependencies = [
 
 [[package]]
 name = "geobacter-amdgpu-intrinsics"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "geobacter-core 1.0.0",
  "geobacter-intrinsics-common 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -513,7 +513,7 @@ dependencies = [
  "amd-comgr 1.0.0",
  "any_key 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "arrayvec 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "geobacter-amdgpu-intrinsics 0.1.0",
+ "geobacter-amdgpu-intrinsics 1.0.0",
  "geobacter-core 1.0.0",
  "geobacter-intrinsics-common 1.0.0",
  "geobacter-runtime-amd-macros 0.1.0",
@@ -580,7 +580,7 @@ dependencies = [
 name = "geobacter-rustc-driver"
 version = "0.1.0"
 dependencies = [
- "geobacter-amdgpu-intrinsics 0.1.0",
+ "geobacter-amdgpu-intrinsics 1.0.0",
  "geobacter-core 1.0.0",
  "geobacter-intrinsics-common 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "geobacter-rustc-driver-base 0.1.0",
