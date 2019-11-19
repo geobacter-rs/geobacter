@@ -1,11 +1,13 @@
 [package]
 name = "geobacter-vk-core"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 license = "MIT / Apache-2.0"
 edition = "2018"
+description = "Geobacter Vulkan/SPIRV libcore. ATM this non-functional, but still compiled for use in the driver."
+repository = "https://github.com/geobacter-rs/geobacter/tree/master/vk-core"
 
 [dependencies]
 vulkano = "0.11.1"
-geobacter-core = { path = "../geobacter-core" }
-geobacter-shared-defs = { path = "../shared-defs" }
+geobacter-core = "1.0.0"
+geobacter-shared-defs = "1.0.0"
