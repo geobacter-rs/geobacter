@@ -1,5 +1,5 @@
 [package]
-name = "rustc-intrinsics"
+name = "geobacter-rustc-driver-base"
 version = "0.1.0"
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 license = "MIT / Apache-2.0"
@@ -7,3 +7,4 @@ edition = "2018"
 
 [dependencies]
 geobacter-shared-defs = { path = "../shared-defs" }
+geobacter-rustc-help = { path = "../rustc-help" }

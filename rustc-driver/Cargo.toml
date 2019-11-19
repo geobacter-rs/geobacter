@@ -11,4 +11,4 @@ geobacter-amdgpu-intrinsics = { path = "../shared-intrinsics/amdgpu" }
 geobacter-core = { path = "../geobacter-core" }
 geobacter-intrinsics-common = { path = "../shared-intrinsics/common" }
 geobacter-vk-intrinsics = { path = "../shared-intrinsics/vk" }
-rustc-intrinsics = { path = "../rustc-intrinsics" }
+geobacter-rustc-driver-base = { path = "../rustc-driver-base" }

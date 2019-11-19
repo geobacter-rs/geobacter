@@ -5,6 +5,4 @@ name = "bootstrap-rustc-driver"
 version = "0.1.0"
 
 [dependencies]
-
-[dependencies.rustc-intrinsics]
-path = "../rustc-intrinsics"
+geobacter-rustc-driver-base = { path = "../rustc-driver-base" }

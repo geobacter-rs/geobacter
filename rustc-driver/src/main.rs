@@ -8,7 +8,7 @@
 extern crate geobacter_intrinsics_common as common;
 extern crate geobacter_amdgpu_intrinsics as amdgpu;
 extern crate geobacter_vk_intrinsics as vk;
-extern crate rustc_intrinsics;
+extern crate geobacter_rustc_driver_base;
 
 extern crate geobacter_core;
 extern crate rustc;
@@ -26,7 +26,7 @@ use self::rustc_data_structures::sync::{Lrc, };
 use crate::common::DriverData;
 
 pub fn main() {
-  rustc_intrinsics::main(|gen| {
+  geobacter_rustc_driver_base::main(|gen| {
     insert_all_intrinsics(&GeneratorDriverData,
                           |k, v| {
                             let inserted = gen.intrinsics.insert(k.clone(), v);

@@ -8,7 +8,7 @@ use crate::rustc::ty::{self, TyCtxt, layout::Size, };
 use crate::rustc::ty::{Const, };
 use crate::syntax_pos::{DUMMY_SP, };
 
-use rustc_intrinsics::help::GeobacterTyCtxtHelp;
+use crate::grustc_help::*;
 
 use crate::gvk_core::*;
 use crate::common::{DriverData, GeobacterCustomIntrinsicMirGen,

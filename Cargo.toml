@@ -3,8 +3,9 @@
 members = ["hsa-core-gen", "geobacter-core",
            "runtime-core", "shared-defs",
 
-           "rustc-intrinsics", "bootstrap-rustc-driver",
-           "rustc-driver", "rust-builder",
+           "rustc-driver-base", "rustc-help",
+           "bootstrap-rustc-driver", "rustc-driver",
+           "rust-builder",
 
            "shared-intrinsics/common", "shared-intrinsics/vk",
            "shared-intrinsics/amdgpu",

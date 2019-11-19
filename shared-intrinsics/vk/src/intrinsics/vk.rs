@@ -30,7 +30,7 @@ use crate::gvk_core::ss::{CompilerDescriptorImageDims, CompilerDescriptorDescTyK
 use crate::attrs::{geobacter_root_attrs, geobacter_global_attrs,
                    require_descriptor_set_binding_nums, };
 
-use crate::rustc_intrinsics::help::*;
+use crate::grustc_help::*;
 
 pub fn insert_all_intrinsics<F, U>(marker: &U, mut into: F)
   where F: FnMut(String, Lrc<dyn CustomIntrinsicMirGen>),

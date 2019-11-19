@@ -162,7 +162,7 @@ dependencies = [
 name = "bootstrap-rustc-driver"
 version = "0.1.0"
 dependencies = [
- "rustc-intrinsics 0.1.0",
+ "geobacter-rustc-driver-base 0.1.0",
 ]
 
 [[package]]
@@ -488,7 +488,7 @@ version = "0.1.0"
 dependencies = [
  "geobacter-core 1.0.0",
  "geobacter-intrinsics-common 0.1.0",
- "rustc-intrinsics 0.1.0",
+ "geobacter-rustc-help 1.0.0",
 ]
 
 [[package]]
@@ -511,9 +511,9 @@ name = "geobacter-intrinsics-common"
 version = "0.1.0"
 dependencies = [
  "geobacter-core 1.0.0",
+ "geobacter-rustc-help 1.0.0",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "num-traits 0.2.9 (registry+https://github.com/rust-lang/crates.io-index)",
- "rustc-intrinsics 0.1.0",
  "seahash 3.0.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -595,8 +595,24 @@ dependencies = [
  "geobacter-amdgpu-intrinsics 0.1.0",
  "geobacter-core 1.0.0",
  "geobacter-intrinsics-common 0.1.0",
+ "geobacter-rustc-driver-base 0.1.0",
  "geobacter-vk-intrinsics 0.1.0",
- "rustc-intrinsics 0.1.0",
+]
+
+[[package]]
+name = "geobacter-rustc-driver-base"
+version = "0.1.0"
+dependencies = [
+ "geobacter-rustc-help 1.0.0",
+ "geobacter-shared-defs 1.0.0",
+]
+
+[[package]]
+name = "geobacter-rustc-help"
+version = "1.0.0"
+dependencies = [
+ "geobacter-shared-defs 1.0.0",
+ "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -621,9 +637,9 @@ version = "0.1.0"
 dependencies = [
  "geobacter-core 1.0.0",
  "geobacter-intrinsics-common 0.1.0",
+ "geobacter-rustc-help 1.0.0",
  "geobacter-vk-core 0.1.0",
  "num-traits 0.2.9 (registry+https://github.com/rust-lang/crates.io-index)",
- "rustc-intrinsics 0.1.0",
  "vulkano 0.11.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -1355,13 +1371,6 @@ version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "byteorder 1.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "rustc-intrinsics"
-version = "0.1.0"
-dependencies = [
- "geobacter-shared-defs 1.0.0",
 ]
 
 [[package]]

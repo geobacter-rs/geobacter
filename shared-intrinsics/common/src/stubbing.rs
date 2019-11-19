@@ -15,7 +15,7 @@ use crate::rustc::ty::{TyCtxt, Instance, InstanceDef, };
 use crate::rustc_data_structures::fx::{FxHashMap};
 
 use crate::geobacter_core::kernel::{KernelInstance, };
-use crate::rustc_intrinsics::help::*;
+use crate::rustc_help::*;
 
 use self::stubs::*;
 use crate::{DriverData, };

@@ -19,7 +19,7 @@ use crate::rustc::ty::{TyCtxt, ParamEnv, Instance, AdtDef, };
 
 use crate::gvk_core::*;
 use crate::gvk_core::ss::ExeModel;
-use crate::rustc_intrinsics::help::*;
+use crate::grustc_help::*;
 use crate::common::{attrs::*, };
 
 use crate::{GeobacterLangItemTypes, };

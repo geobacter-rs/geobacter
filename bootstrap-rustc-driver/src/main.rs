@@ -1,6 +1,6 @@
 
-extern crate rustc_intrinsics;
+extern crate geobacter_rustc_driver_base;
 
 pub fn main() {
-  rustc_intrinsics::main(|_| { });
+  geobacter_rustc_driver_base::main(|_| { });
 }

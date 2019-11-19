@@ -24,7 +24,7 @@ extern crate syntax_pos;
 extern crate log;
 
 extern crate geobacter_core;
-extern crate rustc_intrinsics;
+extern crate geobacter_rustc_help as grustc_help;
 extern crate geobacter_intrinsics_common as common;
 
 use std::fmt;
@@ -35,7 +35,7 @@ use crate::rustc::mir::{self, CustomIntrinsicMirGen, };
 use crate::rustc::ty::{self, TyCtxt, Instance, };
 use crate::rustc_data_structures::sync::{Lrc, };
 
-use crate::rustc_intrinsics::help::GeobacterTyCtxtHelp;
+use crate::grustc_help::GeobacterTyCtxtHelp;
 
 use crate::common::{DriverData, GeobacterCustomIntrinsicMirGen,
                     stubbing, GetDriverData, GeobacterMirGen, };

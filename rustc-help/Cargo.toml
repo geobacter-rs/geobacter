@@ -1,0 +1,11 @@
+[package]
+name = "geobacter-rustc-help"
+version = "1.0.0"
+authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
+edition = "2018"
+description = "Geobacter driver internal shared code. Do not use."
+repository = "https://github.com/geobacter-rs/geobacter/tree/master/rustc-help"
+
+[dependencies]
+geobacter-shared-defs = "1.0.0"
+log = "0.4.8"

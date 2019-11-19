@@ -12,7 +12,6 @@
 
 #![recursion_limit="256"]
 
-#[macro_use]
 extern crate rustc;
 extern crate rustc_codegen_ssa;
 extern crate rustc_codegen_utils;
@@ -46,10 +45,11 @@ extern crate libc;
 extern crate lazy_static;
 
 extern crate geobacter_shared_defs as shared_defs;
+extern crate geobacter_rustc_help as rustc_help;
 
 use std::cell::Cell;
 use std::fmt;
-use std::mem::{transmute, size_of, };
+use std::mem::{transmute, };
 use std::time::Instant;
 
 use self::rustc::hir::def_id::{DefId, };
@@ -73,19 +73,15 @@ use crate::syntax::feature_gate::{AttributeType, };
 use self::syntax_pos::{Span, DUMMY_SP, };
 use self::syntax_pos::symbol::{Symbol, };
 
-use crate::codec::GeobacterEncoder;
+use crate::rustc_help::codec::GeobacterEncoder;
 
-use crate::help::*;
-
-use self::shared_defs::platform::*;
+use crate::rustc_help::*;
 
 pub use crate::rustc_driver::pretty;
 pub use crate::rustc_driver::plugin as rustc_plugin;
 
 pub mod args;
-pub mod codec;
 pub mod driver;
-pub mod help;
 pub mod interface;
 pub mod passes;
 pub mod proc_macro_decls;
@@ -402,83 +398,6 @@ impl CustomIntrinsicMirGen for KernelContextDataId {
   /// The return type.
   fn output<'tcx>(&self, tcx: TyCtxt<'tcx>) -> ty::Ty<'tcx> {
     tcx.mk_imm_ref(tcx.lifetimes.re_static, tcx.types.usize)
-  }
-}
-
-/// This intrinsic has to be manually inserted by the drivers
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-pub struct CurrentPlatform(pub Platform);
-impl CurrentPlatform {
-  pub const fn host_platform() -> Self { CurrentPlatform(host_platform()) }
-
-  fn data(self) -> [u8; size_of::<Platform>()] {
-    unsafe {
-      transmute(self.0)
-    }
-  }
-}
-impl fmt::Display for CurrentPlatform {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "__geobacter_current_platform")
-  }
-}
-impl CustomIntrinsicMirGen for CurrentPlatform {
-  fn mirgen_simple_intrinsic<'tcx>(&self,
-                                   tcx: TyCtxt<'tcx>,
-                                   _instance: ty::Instance<'tcx>,
-                                   mir: &mut mir::Body<'tcx>) {
-    let align = Align::from_bits(64).unwrap(); // XXX arch dependent.
-    let data = &self.data()[..];
-    let alloc = Allocation::from_bytes(data, align);
-    let alloc = tcx.intern_const_alloc(alloc);
-    let alloc_id = tcx.alloc_map.lock()
-      .create_memory_alloc(alloc);
-
-    let ret = mir::Place::return_place();
-
-    let source_info = mir::SourceInfo {
-      span: DUMMY_SP,
-      scope: mir::OUTERMOST_SOURCE_SCOPE,
-    };
-
-    let mut bb = mir::BasicBlockData {
-      statements: Vec::new(),
-      terminator: Some(mir::Terminator {
-        source_info: source_info.clone(),
-        kind: mir::TerminatorKind::Return,
-      }),
-
-      is_cleanup: false,
-    };
-
-    let ptr = Pointer::from(alloc_id);
-    let const_val = ConstValue::Scalar(ptr.into());
-    let constant = tcx.mk_const_op(source_info.clone(), Const {
-      ty: self.output(tcx),
-      val: const_val,
-    });
-    let rvalue = Rvalue::Use(constant);
-
-    let stmt_kind = StatementKind::Assign(Box::new((ret, rvalue)));
-    let stmt = Statement {
-      source_info: source_info.clone(),
-      kind: stmt_kind,
-    };
-    bb.statements.push(stmt);
-    mir.basic_blocks_mut().push(bb);
-  }
-
-  fn generic_parameter_count(&self, _tcx: TyCtxt) -> usize {
-    0
-  }
-  /// The types of the input args.
-  fn inputs<'tcx>(&self, tcx: TyCtxt<'tcx>) -> &'tcx ty::List<ty::Ty<'tcx>> {
-    tcx.intern_type_list(&[])
-  }
-  /// The return type.
-  fn output<'tcx>(&self, tcx: TyCtxt<'tcx>) -> ty::Ty<'tcx> {
-    let arr = tcx.mk_array(tcx.types.u8, size_of::<Platform>() as _);
-    tcx.mk_imm_ref(tcx.lifetimes.re_static, arr)
   }
 }
 

@@ -21,7 +21,7 @@ extern crate vulkano as vko;
 
 extern crate geobacter_core as gcore;
 extern crate geobacter_vk_core as gvk_core;
-extern crate rustc_intrinsics;
+extern crate geobacter_rustc_help as grustc_help;
 extern crate geobacter_intrinsics_common as common;
 
 // Note: don't try to depend on `geobacter_std`.

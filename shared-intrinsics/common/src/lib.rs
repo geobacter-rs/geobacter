@@ -29,7 +29,7 @@ extern crate num_traits;
 extern crate seahash;
 
 extern crate geobacter_core;
-extern crate rustc_intrinsics;
+extern crate geobacter_rustc_help as rustc_help;
 
 pub mod attrs;
 pub mod collector;
@@ -53,9 +53,7 @@ use self::rustc_data_structures::sync::{Lrc, };
 use self::syntax_pos::{Span, DUMMY_SP, };
 use syntax::symbol::Symbol;
 
-use crate::rustc_intrinsics::{help::*, };
-
-pub use rustc_intrinsics::*;
+pub use rustc_help::*;
 
 /// TODO move the real runtime Driver data into this crate.
 pub trait DriverData { }
