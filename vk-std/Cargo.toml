@@ -6,6 +6,6 @@ version = "0.1.0"
 
 [dependencies]
 log = "0.4.7"
-geobacter-core = { path = "../geobacter-core" }
-geobacter-vk-core = { path = "../vk-core" }
-vulkano = "0.11.1"
+geobacter-core = "1.0.0"
+geobacter-vk-core = "1.0.0"
+vulkano = "0.16.0"

@@ -47,3 +47,4 @@ hsa-rt = { path = "hsa-rt" }
 geobacter-shared-defs = { path = "shared-defs" }
 geobacter-core = { path = "geobacter-core" }
 geobacter-rustc-help = { path = "rustc-help" }
+geobacter-vk-core = { path = "vk-core" }

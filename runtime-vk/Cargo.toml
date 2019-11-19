@@ -6,6 +6,6 @@ name = "geobacter-runtime-vk"
 version = "0.1.0"
 
 [dependencies]
-vulkano = "0.11.1"
+vulkano = "0.16.0"
 geobacter-intrinsics-common = { path = "../shared-intrinsics/common" }
 geobacter-runtime-core = { path = "../runtime-core" }
