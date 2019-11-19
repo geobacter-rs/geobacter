@@ -612,7 +612,7 @@ dependencies = [
 
 [[package]]
 name = "geobacter-vk-core"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "geobacter-core 1.0.0",
  "geobacter-shared-defs 1.0.0",
@@ -626,7 +626,7 @@ dependencies = [
  "geobacter-core 1.0.0",
  "geobacter-intrinsics-common 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "geobacter-rustc-help 1.0.0",
- "geobacter-vk-core 1.0.0",
+ "geobacter-vk-core 1.0.1",
  "num-traits 0.2.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "vulkano 0.16.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -636,7 +636,7 @@ name = "geobacter-vk-std"
 version = "0.1.0"
 dependencies = [
  "geobacter-core 1.0.0",
- "geobacter-vk-core 1.0.0",
+ "geobacter-vk-core 1.0.1",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "vulkano 0.16.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
