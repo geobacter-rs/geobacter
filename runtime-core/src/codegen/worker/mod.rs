@@ -669,6 +669,7 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
   opts.cg.llvm_args.push("-amdgpu-early-inline-all".into());
   opts.cg.llvm_args.push("-amdgpu-prelink".into());
   opts.cg.llvm_args.push("-sroa-strict-inbounds".into());
+  opts.cg.llvm_args.push("-enable-store-refinement".into());
   opts.cg.llvm_args.push("-enable-interleaved-mem-accesses".into());
   opts.cg.llvm_args.push("-enable-masked-interleaved-mem-accesses".into());
   opts.debugging_opts.polly =
