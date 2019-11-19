@@ -1,10 +1,11 @@
 [package]
 name = "geobacter-shared-defs"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+license = "MIT / Apache-2.0"
+repository = "https://github.com/geobacter-rs/geobacter/tree/master/shared-defs"
+description = "Some shared definitions used by the bootstrap compiler and geobacter-core. Part of the Geobacter project."
 
 [lib]
 path = "lib.rs"
