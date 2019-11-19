@@ -655,7 +655,6 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
   opts.debugging_opts.verify_llvm_ir = false;
   opts.debugging_opts.no_landing_pads = true;
   opts.debugging_opts.incremental_queries = false;
-  opts.debugging_opts.share_generics = Some(true);
   opts.cg.no_prepopulate_passes = false;
   if opts.cg.no_prepopulate_passes {
     opts.cg.passes.push("name-anon-globals".into());
