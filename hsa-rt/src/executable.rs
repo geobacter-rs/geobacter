@@ -9,6 +9,7 @@ use crate::agent::{Profiles, DefaultFloatRoundingModes, Agent};
 use crate::code_object::{CodeObjectReader, LoadedCodeObject};
 use crate::error::Error;
 use crate::ffi;
+use utils::uninit;
 
 macro_rules! exe_info {
   ($self:expr, $id:expr, $out:expr) => {
@@ -183,7 +184,7 @@ pub trait CommonExecutable {
       .map(|a| &a.0 as *const _ )
       .unwrap_or(0 as *const _);
     let mut out: ffi::hsa_executable_symbol_t = unsafe {
-      ::std::mem::uninitialized()
+      uninit()
     };
     check_err!(ffi::hsa_executable_get_symbol_by_name(self.sys().0,
                                                       name.as_ptr(),

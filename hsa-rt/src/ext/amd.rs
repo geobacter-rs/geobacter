@@ -9,15 +9,16 @@ use std::ffi::c_void;
 use std::fmt;
 use std::marker::Unsize;
 use std::mem::{size_of, transmute, size_of_val, };
-use std::ops::{Deref, DerefMut, CoerceUnsized, };
+use std::ops::{CoerceUnsized, };
 use std::ptr::{self, NonNull, slice_from_raw_parts_mut, };
-use std::slice::{from_raw_parts, from_raw_parts_mut, };
+
+#[cfg(feature = "serde")]
+use serde::{Serialize, Deserialize, };
 
 use ffi;
 use {ApiContext, agent::Agent, agent::DeviceType, error::Error, };
 use signal::SignalRef;
-
-use nd;
+use utils::uninit;
 
 pub use mem::region::Segment;
 
@@ -59,7 +60,8 @@ macro_rules! pool_info {
 }
 
 
-#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum AgentAccess {
   Never,
   DefaultDisallowed,
@@ -459,7 +461,7 @@ pub trait QueryPtrInfo<T> {
     }
 
     let mut info: [ffi::hsa_amd_pointer_info_t; 1] = [unsafe {
-      ::std::mem::uninitialized()
+      uninit()
     }; 1];
     info[0].size = size_of::<ffi::hsa_amd_pointer_info_t>() as _;
     let alloc = if ret_accessible {
@@ -558,312 +560,6 @@ pub unsafe fn async_copy(dst: MemoryPoolPtr<[u8]>,
                                             completion.0) => ())?;
   Ok(())
 }
-
-#[deprecated]
-pub trait AsPtrValue {
-  type Target: ?Sized;
-  fn byte_len(&self) -> usize;
-  fn as_ptr_value(&self) -> NonNull<Self::Target>;
-
-  fn as_u8_slice(&self) -> &[u8] {
-    let len = self.byte_len();
-    let ptr = self.as_ptr_value().as_ptr() as *mut u8;
-    unsafe {
-      from_raw_parts(ptr as *const u8, len)
-    }
-  }
-}
-impl<T> AsPtrValue for NonNull<T>
-  where T: Sized,
-{
-  type Target = T;
-  fn byte_len(&self) -> usize {
-    size_of::<T>()
-  }
-  fn as_ptr_value(&self) -> NonNull<Self::Target> { *self }
-}
-impl<T> AsPtrValue for Vec<T> {
-  type Target = T;
-  fn byte_len(&self) -> usize {
-    size_of::<T>() * self.len()
-  }
-  fn as_ptr_value(&self) -> NonNull<Self::Target> {
-    unsafe { NonNull::new_unchecked(self.as_ptr() as *mut _) }
-  }
-}
-/// What about vtables?
-impl<'a, T> AsPtrValue for &'a T
-  where T: Sized,
-{
-  type Target = T;
-  fn byte_len(&self) -> usize {
-    size_of::<T>()
-  }
-  fn as_ptr_value(&self) -> NonNull<Self::Target> {
-    NonNull::from(&**self)
-  }
-}
-impl<'a, T> AsPtrValue for &'a mut T
-  where T: Sized,
-{
-  type Target = T;
-  fn byte_len(&self) -> usize {
-    size_of::<T>()
-  }
-  fn as_ptr_value(&self) -> NonNull<Self::Target> {
-    NonNull::from(&**self)
-  }
-}
-impl<'a, T> AsPtrValue for &'a [T]
-  where T: Sized,
-{
-  type Target = T;
-  fn byte_len(&self) -> usize {
-    size_of::<T>() * (*self).len()
-  }
-  fn as_ptr_value(&self) -> NonNull<Self::Target> {
-    unsafe { NonNull::new_unchecked((*self).as_ptr() as *mut _) }
-  }
-}
-impl<'a, T> AsPtrValue for &'a mut [T]
-  where T: Sized,
-{
-  type Target = T;
-  fn byte_len(&self) -> usize {
-    size_of::<T>() * (*self).len()
-  }
-  fn as_ptr_value(&self) -> NonNull<Self::Target> {
-    unsafe { NonNull::new_unchecked((*self).as_ptr() as *mut _) }
-  }
-}
-impl<T> AsPtrValue for Box<T>
-  where T: Sized,
-{
-  type Target = T;
-  fn byte_len(&self) -> usize {
-    size_of::<T>()
-  }
-  fn as_ptr_value(&self) -> NonNull<Self::Target> {
-    unsafe {
-      ::std::mem::transmute_copy(self)
-    }
-  }
-}
-impl<T> AsPtrValue for Box<[T]>
-  where T: Sized,
-{
-  type Target = T;
-  fn byte_len(&self) -> usize {
-    size_of::<T>() * self.len()
-  }
-  fn as_ptr_value(&self) -> NonNull<Self::Target> {
-    unsafe {
-      NonNull::new_unchecked(self.as_ptr() as *mut _)
-    }
-  }
-}
-impl<T, D> AsPtrValue for nd::ArrayBase<T, D>
-  where T: nd::DataOwned,
-        D: nd::Dimension,
-{
-  type Target = T::Elem;
-  fn byte_len(&self) -> usize {
-    self.as_slice_memory_order()
-      .expect("owned nd::ArrayBase isn't contiguous")
-      .len() * size_of::<T::Elem>()
-  }
-  fn as_ptr_value(&self) -> NonNull<Self::Target> {
-    unsafe { NonNull::new_unchecked(self.as_ptr() as *mut _) }
-  }
-}
-
-enum HostPtr<T>
-  where T: AsPtrValue,
-{
-  Obj(T),
-  Ptr(NonNull<T::Target>),
-}
-impl<T> HostPtr<T>
-  where T: AsPtrValue,
-{
-  fn host_ptr(&self) -> NonNull<T::Target> {
-    match self {
-      &HostPtr::Obj(ref obj) => obj.as_ptr_value(),
-      &HostPtr::Ptr(ptr) => ptr,
-    }
-  }
-  fn host_obj_ref(&self) -> &T {
-    match self {
-      &HostPtr::Obj(ref obj) => obj,
-      _ => unreachable!(),
-    }
-  }
-  fn host_obj_mut(&mut self) -> &mut T {
-    match self {
-      &mut HostPtr::Obj(ref mut obj) => obj,
-      _ => unreachable!(),
-    }
-  }
-  fn take_obj(&mut self) -> T {
-    let mut new_val = HostPtr::Ptr(self.host_ptr());
-    ::std::mem::swap(&mut new_val, self);
-    match new_val {
-      HostPtr::Obj(obj) => obj,
-      _ => panic!("don't have object anymore"),
-    }
-  }
-}
-
-#[deprecated]
-pub struct HostLockedAgentPtr<T>
-  where T: AsPtrValue,
-{
-  // always `HostPtr::Obj`, except during `Drop`.
-  host: HostPtr<T>,
-  agent_ptr: NonNull<T::Target>,
-}
-
-impl<T> HostLockedAgentPtr<T>
-  where T: AsPtrValue,
-{
-  fn host_ptr(&self) -> NonNull<T::Target> {
-    self.host.host_ptr()
-  }
-  pub fn agent_ptr(&self) -> &NonNull<T::Target> { &self.agent_ptr }
-
-  pub fn unlock(mut self) -> T { self.host.take_obj() }
-}
-impl<T> HostLockedAgentPtr<Vec<T>> {
-  pub fn as_agent_ref(&self) -> &[T] {
-    unsafe {
-      from_raw_parts(self.agent_ptr().as_ptr() as *const _,
-                     self.len())
-    }
-  }
-  pub fn as_agent_mut(&mut self) -> &mut [T] {
-    unsafe {
-      from_raw_parts_mut(self.agent_ptr().as_ptr(),
-                         self.len())
-    }
-  }
-}
-impl<T> HostLockedAgentPtr<Box<T>> {
-  pub fn as_agent_ref(&self) -> &T {
-    unsafe { self.agent_ptr().as_ref() }
-  }
-  pub fn as_agent_mut(&mut self) -> &mut T {
-    unsafe { self.agent_ptr.as_mut() }
-  }
-}
-impl<T, D> HostLockedAgentPtr<nd::ArrayBase<T, D>>
-  where T: nd::DataOwned,
-        D: nd::Dimension,
-{
-  pub fn agent_view(&self) -> nd::ArrayView<T::Elem, D> {
-    unsafe {
-      nd::ArrayView::from_shape_ptr(self.raw_dim(),
-                                    self.agent_ptr().as_ptr() as *const _)
-    }
-  }
-  pub fn agent_view_mut(&mut self) -> nd::ArrayViewMut<T::Elem, D> {
-    unsafe {
-      nd::ArrayViewMut::from_shape_ptr(self.raw_dim(),
-                                       self.agent_ptr().as_ptr())
-    }
-  }
-}
-impl<T> Drop for HostLockedAgentPtr<T>
-  where T: AsPtrValue,
-{
-  fn drop(&mut self) {
-    let ptr = self.host_ptr().as_ptr();
-    unsafe {
-      ffi::hsa_amd_memory_unlock(ptr as *mut _);
-      // ignore result.
-    }
-  }
-}
-impl<T> Deref for HostLockedAgentPtr<T>
-  where T: AsPtrValue,
-{
-  type Target = T;
-  fn deref(&self) -> &T { self.host.host_obj_ref() }
-}
-impl<T> DerefMut for HostLockedAgentPtr<T>
-  where T: AsPtrValue,
-{
-  fn deref_mut(&mut self) -> &mut T { self.host.host_obj_mut() }
-}
-
-/// Locks `self` in host memory, and gives access to the specified agents.
-/// If `agents` as no elements, access will be given to everyone.
-#[deprecated]
-pub trait HostLockedAgentMemory: AsPtrValue + Sized
-  where Self::Target: Sized,
-{
-  fn lock_memory_globally(self) -> Result<HostLockedAgentPtr<Self>, Error> {
-    let agents_len = 0;
-    let agents_ptr = ptr::null_mut();
-    let mut agent_ptr: *mut u8 = ptr::null_mut();
-    {
-      let bytes = self.as_u8_slice();
-      check_err!(ffi::hsa_amd_memory_lock(bytes.as_ptr() as *mut _,
-                                          bytes.len(),
-                                          agents_ptr,
-                                          agents_len,
-                                          transmute(&mut agent_ptr)))?;
-      assert_ne!(agent_ptr, ptr::null_mut());
-    }
-
-    Ok(HostLockedAgentPtr {
-      host: HostPtr::Obj(self),
-      agent_ptr: unsafe { NonNull::new_unchecked(agent_ptr as *mut _) },
-    })
-  }
-  fn lock_memory<'a>(self, agents: impl Iterator<Item = &'a Agent>)
-    -> Result<HostLockedAgentPtr<Self>, Error>
-  {
-    let mut agents: Vec<_> = agents
-      .map(|agent| agent.0 )
-      .collect();
-
-    let agents_len = agents.len();
-    let agents_ptr = agents.as_mut_ptr();
-
-    let mut agent_ptr: *mut u8 = ptr::null_mut();
-    {
-      let bytes = self.as_u8_slice();
-      check_err!(ffi::hsa_amd_memory_lock(bytes.as_ptr() as *mut _,
-                                          bytes.len(),
-                                          agents_ptr,
-                                          agents_len as _,
-                                          transmute(&mut agent_ptr)))?;
-      assert_ne!(agent_ptr, ptr::null_mut());
-    }
-
-    Ok(HostLockedAgentPtr {
-      host: HostPtr::Obj(self),
-      agent_ptr: unsafe { NonNull::new_unchecked(agent_ptr as *mut _) },
-    })
-  }
-}
-impl<'a, T> HostLockedAgentMemory for &'a T
-  where T: Sized,
-{ }
-/// TODO document why this is at least somewhat safe.
-impl<'a, T> HostLockedAgentMemory for &'a mut T
-  where T: Sized,
-{ }
-impl<T> HostLockedAgentMemory for Box<T>
-  where T: Sized,
-{ }
-impl<T> HostLockedAgentMemory for Box<[T]>
-  where T: Sized,
-{ }
-impl<T, D> HostLockedAgentMemory for nd::ArrayBase<T, D>
-  where T: nd::DataOwned,
-        D: nd::Dimension,
-{ }
 
 pub fn lock_nullable_ptr<T>(ptr: *mut T, count: usize,
                             agents: &[Agent])

@@ -10,14 +10,13 @@ use std::rc::Rc;
 use std::slice::from_raw_parts_mut;
 use std::sync::Arc;
 
-use nd::{self, Dimension, };
-
 use crate::ApiContext;
 use crate::agent::Agent;
 use crate::error::Error;
 use crate::ffi;
 use crate::mem::region::Region;
 use crate::signal::{Signal, ConditionOrdering, WaitState, SignalRef, };
+use utils::uninit;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum QueueType {
@@ -151,7 +150,7 @@ impl Agent {
       .unwrap_or(u32::max_value());
     let callback_data_ptr = 0 as *mut _;
 
-    let mut out: *mut ffi::hsa_queue_t = unsafe { ::std::mem::uninitialized() };
+    let mut out: *mut ffi::hsa_queue_t = unsafe { uninit() };
     check_err!(ffi::hsa_queue_create(self.0, size as _, queue_type,
                                      None, callback_data_ptr,
                                      private_segment_size, group_segment_size,
@@ -174,7 +173,7 @@ impl Agent {
       .unwrap_or(u32::max_value());
     let callback_data_ptr = 0 as *mut _;
 
-    let mut out: *mut ffi::hsa_queue_t = unsafe { ::std::mem::uninitialized() };
+    let mut out: *mut ffi::hsa_queue_t = unsafe { uninit() };
     check_err!(ffi::hsa_queue_create(self.0, size as _, queue_type,
                                      None, callback_data_ptr,
                                      private_segment_size, group_segment_size,
@@ -219,7 +218,7 @@ impl Agent {
       })
       .unwrap_or(0 as *mut _);
 
-    let mut out: *mut ffi::hsa_queue_t = unsafe { ::std::mem::uninitialized() };
+    let mut out: *mut ffi::hsa_queue_t = unsafe { uninit() };
     check_err!(ffi::hsa_queue_create(self.0, size as _, queue_type,
                                      callback_ffi_fn, callback_data_ptr,
                                      private_segment_size, group_segment_size,
@@ -266,7 +265,7 @@ impl Agent {
       })
       .unwrap_or(0 as *mut _);
 
-    let mut out: *mut ffi::hsa_queue_t = unsafe { ::std::mem::uninitialized() };
+    let mut out: *mut ffi::hsa_queue_t = unsafe { uninit() };
     check_err!(ffi::hsa_queue_create(self.0, size as _, queue_type,
                                      callback_ffi_fn, callback_data_ptr,
                                      private_segment_size, group_segment_size,
@@ -404,10 +403,8 @@ pub trait IQueue<T>
 
     Ok(())
   }
-  fn try_enqueue_kernel_dispatch<'a, WGDim, GridDim, Args>(&self, dispatch: DispatchPacket<'a, WGDim, GridDim, Args>)
+  fn try_enqueue_kernel_dispatch<'a, Args>(&self, dispatch: DispatchPacket<'a, Args>)
     -> Result<(), QueueError>
-    where WGDim: nd::IntoDimension + Clone,
-          GridDim: nd::IntoDimension + Clone,
   {
     // check the packet params before we get a write index.
     dispatch.check()?;
@@ -546,7 +543,7 @@ impl ApiContext {
     if agent_dispatch {
       features |= ffi::hsa_queue_feature_t_HSA_QUEUE_FEATURE_AGENT_DISPATCH;
     }
-    let mut out: *mut ffi::hsa_queue_t = unsafe { ::std::mem::uninitialized() };
+    let mut out: *mut ffi::hsa_queue_t = unsafe { uninit() };
     let out = check_err!(ffi::hsa_soft_queue_create(region.0,
                                                     size as _,
                                                     queue_type,
@@ -654,12 +651,9 @@ pub type KernelSingleQueue = KernelQueue<SingleQueueType>;
 pub type KernelMultiQueue = KernelQueue<MultiQueueType>;
 
 #[derive(Debug)]
-pub struct DispatchPacket<'a, WGDim, GridDim, KernArg>
-  where WGDim: nd::IntoDimension,
-        GridDim: nd::IntoDimension,
-{
-  pub workgroup_size: WGDim,
-  pub grid_size: GridDim,
+pub struct DispatchPacket<'a, KernArg> {
+  pub workgroup_size: (u16, u16, u16),
+  pub grid_size: (u32, u32, u32),
   pub private_segment_size: u32,
   pub group_segment_size: u32,
   pub ordered: bool,
@@ -670,23 +664,15 @@ pub struct DispatchPacket<'a, WGDim, GridDim, KernArg>
   pub completion_signal: Option<&'a SignalRef>,
 }
 
-impl<'a, WGDim, GridDim, KernArg> DispatchPacket<'a, WGDim, GridDim, KernArg>
-  where WGDim: nd::IntoDimension + Clone,
-        GridDim: nd::IntoDimension + Clone,
-{
+impl<'a, KernArg> DispatchPacket<'a, KernArg> {
   fn check(&self) -> Result<(), QueueError> {
-    let workgroup_size =
-      self.workgroup_size.clone().into_dimension();
-    let grid_size =
-      self.grid_size.clone().into_dimension();
+    let wg = self.workgroup_size.clone();
+    let grid = self.grid_size.clone();
 
-    let workgroup_size = workgroup_size.slice();
-    let grid = grid_size.slice();
-
-    if workgroup_size.len() > 3 || workgroup_size.len() == 0 {
+    if wg.0 == 0 || wg.1 == 0 || wg.2 == 0 {
       return Err(QueueError::WorkgroupDimSize);
     }
-    if grid.len() > 3 || grid.len() == 0 {
+    if grid.0 == 0 || grid.1 == 0 || grid.2 == 0 {
       return Err(QueueError::GridDimSize);
     }
 
@@ -695,22 +681,15 @@ impl<'a, WGDim, GridDim, KernArg> DispatchPacket<'a, WGDim, GridDim, KernArg>
   fn initialize_packet(&self, p: &mut ffi::hsa_kernel_dispatch_packet_t)
     -> usize
   {
-    let workgroup_size =
-      self.workgroup_size.clone()
-        .into_dimension();
-    let grid_size =
-      self.grid_size.clone()
-        .into_dimension();
+    let workgroup_size = self.workgroup_size;
+    let grid = self.grid_size;
 
-    let workgroup_size = workgroup_size.slice();
-    let grid = grid_size.slice();
-
-    p.workgroup_size_x = *workgroup_size.get(0).unwrap_or(&1) as u16;
-    p.workgroup_size_y = *workgroup_size.get(1).unwrap_or(&1) as u16;
-    p.workgroup_size_z = *workgroup_size.get(2).unwrap_or(&1) as u16;
-    p.grid_size_x = *grid.get(0).unwrap_or(&1) as u32;
-    p.grid_size_y = *grid.get(1).unwrap_or(&1) as u32;
-    p.grid_size_z = *grid.get(2).unwrap_or(&1) as u32;
+    p.workgroup_size_x = workgroup_size.0;
+    p.workgroup_size_y = workgroup_size.1;
+    p.workgroup_size_z = workgroup_size.2;
+    p.grid_size_x = grid.0;
+    p.grid_size_y = grid.1;
+    p.grid_size_z = grid.2;
 
     p.private_segment_size = self.private_segment_size;
     p.group_segment_size   = self.group_segment_size;
@@ -722,7 +701,15 @@ impl<'a, WGDim, GridDim, KernArg> DispatchPacket<'a, WGDim, GridDim, KernArg>
       .map(|cs| cs.0 )
       .unwrap_or_default();
 
-    grid.len()
+    if grid.0 == 1 && grid.1 == 1 && grid.2 == 1 {
+      0
+    } else if grid.1 == 1 && grid.2 == 1 {
+      1
+    } else if grid.2 == 1 {
+      2
+    } else {
+      3
+    }
   }
 }
 

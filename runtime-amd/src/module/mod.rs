@@ -14,7 +14,7 @@ use arrayvec::ArrayVec;
 
 use log::{error, };
 
-use nd;
+use num_traits::{ToPrimitive, };
 
 use geobacter_core::kernel::{KernelInstance, };
 
@@ -179,6 +179,7 @@ pub enum CallError {
   Compile(Box<dyn Error>),
   Oom,
   CompletionSignal(Box<dyn Error>),
+  Overflow,
 }
 impl fmt::Display for CallError {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -192,18 +193,54 @@ impl From<QueueError> for CallError {
 }
 
 /// A trait so downstream crates don't need ndarray to use generic dims.
-pub trait LaunchDims: nd::IntoDimension + Clone {
+pub trait LaunchDims: Copy {
   fn default_unit() -> Self;
+  fn workgroup(self) -> Result<(u16, u16, u16), CallError>;
+  fn grid(self) -> Result<(u32, u32, u32), CallError>;
 }
 // HSA/AMDGPUs only support up to 3d, so that's all we're going to support here.
 impl LaunchDims for (usize, ) {
   fn default_unit() -> Self { (1, ) }
+  fn workgroup(self) -> Result<(u16, u16, u16), CallError> {
+    Ok((self.0.to_u16().ok_or(CallError::Overflow)?, 1, 1, ))
+  }
+  fn grid(self) -> Result<(u32, u32, u32), CallError> {
+    Ok((self.0.to_u32().ok_or(CallError::Overflow)?, 1, 1, ))
+  }
 }
 impl LaunchDims for (usize, usize, ) {
   fn default_unit() -> Self { (1, 1, ) }
+  fn workgroup(self) -> Result<(u16, u16, u16), CallError> {
+    Ok((
+      self.0.to_u16().ok_or(CallError::Overflow)?,
+      self.1.to_u16().ok_or(CallError::Overflow)?,
+      1,
+    ))
+  }
+  fn grid(self) -> Result<(u32, u32, u32), CallError> {
+    Ok((
+      self.0.to_u32().ok_or(CallError::Overflow)?,
+      self.1.to_u32().ok_or(CallError::Overflow)?,
+      1,
+    ))
+  }
 }
 impl LaunchDims for (usize, usize, usize, ) {
   fn default_unit() -> Self { (1, 1, 1, ) }
+  fn workgroup(self) -> Result<(u16, u16, u16), CallError> {
+    Ok((
+      self.0.to_u16().ok_or(CallError::Overflow)?,
+      self.1.to_u16().ok_or(CallError::Overflow)?,
+      self.2.to_u16().ok_or(CallError::Overflow)?,
+    ))
+  }
+  fn grid(self) -> Result<(u32, u32, u32), CallError> {
+    Ok((
+      self.0.to_u32().ok_or(CallError::Overflow)?,
+      self.1.to_u32().ok_or(CallError::Overflow)?,
+      self.2.to_u32().ok_or(CallError::Overflow)?,
+    ))
+  }
 }
 
 #[derive(Clone)]
@@ -381,8 +418,8 @@ impl<A, Dim, MD> Invoc<A, Dim, MD>
       let group = kernel.desc.group_segment_size as u32;
       let private = kernel.desc.private_segment_size as u32;
       let dispatch = DispatchPacket {
-        workgroup_size: workgroup_dim.clone(),
-        grid_size: grid_dim.clone(),
+        workgroup_size: workgroup_dim.workgroup()?,
+        grid_size: grid_dim.grid()?,
         group_segment_size: fmod.dynamic_group_size + group,
         private_segment_size: fmod.dynamic_private_size + private,
         scaquire_scope: fmod.begin_fence.clone(),

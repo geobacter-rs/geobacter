@@ -26,7 +26,6 @@
 extern crate any_key;
 extern crate goblin;
 extern crate log;
-extern crate ndarray as nd;
 extern crate serde;
 extern crate rmp_serde as rmps;
 
@@ -66,7 +65,7 @@ use hsa_rt::agent::{Agent, Profiles, DefaultFloatRoundingModes, IsaInfo,
 use hsa_rt::code_object::CodeObjectReaderRef;
 pub use hsa_rt::error::Error as HsaError;
 use hsa_rt::executable::{Executable, CommonExecutable};
-use hsa_rt::ext::amd::{self, MemoryPool, MemoryPoolPtr, AgentAccess, async_copy, unlock_memory};
+use hsa_rt::ext::amd::{MemoryPool, MemoryPoolPtr, AgentAccess, async_copy, unlock_memory};
 use hsa_rt::mem::region::{Region, Segment};
 use hsa_rt::queue::{KernelSingleQueue, KernelMultiQueue};
 use hsa_rt::signal::{SignalRef, Signal};
@@ -571,35 +570,6 @@ impl HsaAmdGpuAccel {
       .new_kernel_multi_queue(queue_size, Some(private),
                               Some(group))?;
     Ok(q)
-  }
-
-  /// Locks the memory corresponding to `ptr` in memory (ie can't be sent
-  /// to the page file) and gives all devices access.
-  /// There will be a corresponding "agent ptr" which you will need to
-  /// use on the device side (ie in your kernels)
-  #[deprecated]
-  #[allow(deprecated)]
-  pub fn lock_globally<T>(ptr: T)
-    -> Result<amd::HostLockedAgentPtr<T>, HsaError>
-    where T: amd::HostLockedAgentMemory,
-          T::Target: Sized,
-  {
-    ptr.lock_memory_globally()
-  }
-
-  /// Locks the memory corresponding to `ptr` in memory (ie can't be sent
-  /// to the page file) and gives this device access. Other accelerators
-  /// on this system will not have access with this method.
-  /// There will be a corresponding "agent ptr" which you will need to
-  /// use on the device side (ie in your kernels).
-  #[deprecated]
-  #[allow(deprecated)]
-  pub fn lock_memory<T>(&self, ptr: T)
-    -> Result<amd::HostLockedAgentPtr<T>, HsaError>
-    where T: amd::HostLockedAgentMemory,
-          T::Target: Sized,
-  {
-    ptr.lock_memory(Some(&self.device_agent).into_iter())
   }
 }
 impl Accelerator for HsaAmdGpuAccel {

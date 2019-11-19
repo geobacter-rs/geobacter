@@ -10,10 +10,8 @@ use std::cmp::{self, PartialEq, PartialOrd, Ord, };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub extern crate hsa_rt_sys as ffi;
-#[macro_use]
-extern crate serde_derive;
+#[cfg(feature = "serde")]
 extern crate serde;
-extern crate ndarray as nd;
 extern crate log;
 
 macro_rules! check_err {

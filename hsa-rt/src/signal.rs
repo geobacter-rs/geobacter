@@ -5,6 +5,7 @@ use std::ptr::null;
 use crate::agent::Agent;
 use crate::error::Error;
 use crate::ffi;
+use utils::uninit;
 
 pub use std::sync::atomic::Ordering;
 
@@ -57,7 +58,7 @@ impl Signal {
     } else {
       null()
     };
-    let mut out: ffi::hsa_signal_t = unsafe { ::std::mem::uninitialized() };
+    let mut out: ffi::hsa_signal_t = unsafe { uninit() };
     let out = check_err!(ffi::hsa_signal_create(initial,
                                                 len as _,
                                                 consumers_ptr,
@@ -249,7 +250,7 @@ impl SignalGroup {
     let signals_ptr = signals.as_ptr() as *const ffi::hsa_signal_t;
     let consumers_ptr = consumers.as_ptr() as *const ffi::hsa_agent_t;
 
-    let mut out: ffi::hsa_signal_group_t = unsafe { ::std::mem::uninitialized() };
+    let mut out: ffi::hsa_signal_group_t = unsafe { uninit() };
     let out = check_err!(ffi::hsa_signal_group_create(signals_len as _, signals_ptr,
                                                       consumers_len as _, consumers_ptr,
                                                       &mut out as *mut _) => out)?;

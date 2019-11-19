@@ -6,6 +6,9 @@ use std::result::Result;
 use std::str::from_utf8;
 use std::mem::transmute;
 
+#[cfg(feature = "serde")]
+use serde::{Serialize, Deserialize, };
+
 use ApiContext;
 use crate::error::Error;
 use ffi;
@@ -47,24 +50,28 @@ macro_rules! wavefront_info {
   }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Feature {
   Agent,
   Kernel,
 }
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum QueueType {
   Single,
   Multiple,
 }
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum DeviceType {
   Cpu,
   Gpu,
   Dsp,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct MachineModels(bool, bool);
 impl MachineModels {
   pub fn supports_small(&self) -> bool {
@@ -74,7 +81,8 @@ impl MachineModels {
     self.1
   }
 }
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Profiles(pub(crate) bool, pub(crate) bool);
 impl Profiles {
   pub fn base() -> Self {
@@ -97,7 +105,8 @@ impl Into<ffi::hsa_profile_t> for Profiles {
   }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct DefaultFloatRoundingModes(pub(crate) bool,
                                      pub(crate) bool,
                                      pub(crate) bool);
@@ -163,7 +172,8 @@ impl Cache {
     })
   }
 }
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CacheInfo {
   pub name: String,
   pub level: u8,
@@ -184,7 +194,8 @@ impl Wavefront {
     })
   }
 }
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct WavefrontInfo {
   pub size: u32,
 }
@@ -320,7 +331,8 @@ impl fmt::Debug for Isa {
   }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct IsaInfo {
   pub name: String,
   pub machine_model: MachineModels,
@@ -483,7 +495,8 @@ impl fmt::Debug for Agent {
     write!(f, "Agent({}, \"{}\")", self.0.handle, name)
   }
 }
-#[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct AgentInfo {
   pub name: String,
   pub vendor: String,

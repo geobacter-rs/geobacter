@@ -7,3 +7,11 @@ pub unsafe fn set_data_ptr<T: ?Sized, U>(mut ptr: *mut T, data: *mut U) -> *mut 
   ::std::ptr::write(&mut ptr as *mut _ as *mut *mut u8, data as *mut u8);
   ptr
 }
+
+pub unsafe fn uninit<T>() -> T
+  where T: Copy,
+{
+  use std::mem::MaybeUninit;
+
+  MaybeUninit::uninit().assume_init()
+}

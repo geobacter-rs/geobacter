@@ -39,3 +39,6 @@ rpath = true
 rpath = true
 [profile.bench]
 rpath = true
+
+[patch.crates-io]
+hsa-rt-sys = { path = "hsa-rt-sys" }
