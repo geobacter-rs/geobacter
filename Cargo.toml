@@ -48,3 +48,5 @@ geobacter-shared-defs = { path = "shared-defs" }
 geobacter-core = { path = "geobacter-core" }
 geobacter-rustc-help = { path = "rustc-help" }
 geobacter-vk-core = { path = "vk-core" }
+geobacter-amdgpu-intrinsics = { path = "shared-intrinsics/amdgpu" }
+geobacter-vk-intrinsics = { path = "shared-intrinsics/vk" }

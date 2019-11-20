@@ -367,7 +367,7 @@ dependencies = [
  "geobacter-amdgpu-std 0.1.0",
  "geobacter-core 1.0.0",
  "geobacter-runtime-amd 0.1.0",
- "geobacter-runtime-core 0.1.0",
+ "geobacter-runtime-core 1.0.0",
  "hsa-rt 0.1.0",
  "lodepng 2.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -382,7 +382,7 @@ dependencies = [
  "env_logger 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "geobacter-amdgpu-std 0.1.0",
  "geobacter-runtime-amd 0.1.0",
- "geobacter-runtime-core 0.1.0",
+ "geobacter-runtime-core 1.0.0",
  "ndarray 0.12.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "ndarray-parallel 0.9.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "packed_simd 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -431,7 +431,7 @@ version = "0.1.0"
 dependencies = [
  "env_logger 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "geobacter-core 1.0.0",
- "geobacter-runtime-core 0.1.0",
+ "geobacter-runtime-core 1.0.0",
  "geobacter-vk-std 0.1.0",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.5.6 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -517,7 +517,7 @@ dependencies = [
  "geobacter-core 1.0.0",
  "geobacter-intrinsics-common 1.0.0",
  "geobacter-runtime-amd-macros 0.1.0",
- "geobacter-runtime-core 0.1.0",
+ "geobacter-runtime-core 1.0.0",
  "geobacter-shared-defs 1.0.0",
  "goblin 0.0.23 (registry+https://github.com/rust-lang/crates.io-index)",
  "hsa-rt 0.1.0",
@@ -539,7 +539,7 @@ dependencies = [
 
 [[package]]
 name = "geobacter-runtime-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "any_key 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "crossbeam 0.7.3 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -564,7 +564,7 @@ dependencies = [
 name = "geobacter-runtime-nv"
 version = "0.1.0"
 dependencies = [
- "geobacter-runtime-core 0.1.0",
+ "geobacter-runtime-core 1.0.0",
 ]
 
 [[package]]
@@ -572,7 +572,7 @@ name = "geobacter-runtime-vk"
 version = "0.1.0"
 dependencies = [
  "geobacter-intrinsics-common 1.0.0",
- "geobacter-runtime-core 0.1.0",
+ "geobacter-runtime-core 1.0.0",
  "vulkano 0.16.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -900,7 +900,7 @@ dependencies = [
  "geobacter-amdgpu-std 0.1.0",
  "geobacter-core 1.0.0",
  "geobacter-runtime-amd 0.1.0",
- "geobacter-runtime-core 0.1.0",
+ "geobacter-runtime-core 1.0.0",
  "hsa-rt 0.1.0",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -1503,7 +1503,7 @@ version = "0.1.0"
 dependencies = [
  "env_logger 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "geobacter-core 1.0.0",
- "geobacter-runtime-core 0.1.0",
+ "geobacter-runtime-core 1.0.0",
  "geobacter-vk-std 0.1.0",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "vulkano 0.16.0 (registry+https://github.com/rust-lang/crates.io-index)",
