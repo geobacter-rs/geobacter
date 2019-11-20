@@ -20,7 +20,7 @@ use crossbeam::sync::WaitGroup;
 use geobacter_core::kernel::{KernelInstance, };
 
 use gintrinsics::{DriverData as GIDriverData, };
-use gintrinsics::help::*;
+use gintrinsics::*;
 
 use crate::{AcceleratorTargetDesc, };
 use crate::codegen::*;
