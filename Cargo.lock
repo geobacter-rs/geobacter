@@ -342,7 +342,7 @@ name = "examples-amdgpu-fractal"
 version = "0.1.0"
 dependencies = [
  "env_logger 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "geobacter-amdgpu-std 0.1.0",
+ "geobacter-amd-std 1.0.0",
  "geobacter-core 1.0.0",
  "geobacter-runtime-amd 1.0.0",
  "geobacter-runtime-core 1.0.0",
@@ -358,7 +358,7 @@ name = "examples-amdgpu-trivial"
 version = "0.1.0"
 dependencies = [
  "env_logger 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "geobacter-amdgpu-std 0.1.0",
+ "geobacter-amd-std 1.0.0",
  "geobacter-runtime-amd 1.0.0",
  "geobacter-runtime-core 1.0.0",
  "ndarray 0.12.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -430,20 +430,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "geobacter-amd-std"
+version = "1.0.0"
+dependencies = [
+ "geobacter-core 1.0.0",
+ "hsa-rt 0.1.0",
+]
+
+[[package]]
 name = "geobacter-amdgpu-intrinsics"
 version = "1.0.0"
 dependencies = [
  "geobacter-core 1.0.0",
  "geobacter-intrinsics-common 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "geobacter-rustc-help 1.0.0",
-]
-
-[[package]]
-name = "geobacter-amdgpu-std"
-version = "0.1.0"
-dependencies = [
- "geobacter-core 1.0.0",
- "hsa-rt 0.1.0",
 ]
 
 [[package]]
@@ -867,7 +867,7 @@ name = "mut-slice-ub"
 version = "0.1.0"
 dependencies = [
  "env_logger 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "geobacter-amdgpu-std 0.1.0",
+ "geobacter-amd-std 1.0.0",
  "geobacter-core 1.0.0",
  "geobacter-runtime-amd 1.0.0",
  "geobacter-runtime-core 1.0.0",

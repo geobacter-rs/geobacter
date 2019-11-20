@@ -54,3 +54,6 @@ geobacter-amdgpu-intrinsics = { path = "shared-intrinsics/amdgpu" }
 geobacter-vk-intrinsics = { path = "shared-intrinsics/vk" }
 geobacter-runtime-core = { path = "runtime-core" }
 geobacter-runtime-amd-macros = { path = "runtime-amd-macros" }
+geobacter-runtime-amd = { path = "runtime-amd" }
+geobacter-runtime-nv = { path = "runtime-nv" }
+geobacter-runtime-vk = { path = "runtime-vk" }

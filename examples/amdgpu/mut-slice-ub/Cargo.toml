@@ -11,5 +11,5 @@ log = "0.4.7"
 geobacter-core = { path = "../../../geobacter-core" }
 geobacter-runtime-core = { path = "../../../runtime-core" }
 geobacter-runtime-amd = { path = "../../../runtime-amd" }
-geobacter-amdgpu-std = { path = "../../../amdgpu-std" }
+geobacter-amd-std = { path = "../../../amdgpu-std" }
 hsa-rt = { path = "../../../hsa-rt" }
