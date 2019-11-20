@@ -1,11 +1,11 @@
 [package]
 name = "geobacter-runtime-amd"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 edition = "2018"
 license = "MIT / Apache-2.0"
 description = "Geobacter AMDGPU specific runtime. Requires the Geobacter Rust compiler."
-repository = "https://github.com/geobacter-rs/geobacter/tree/master/runtime-amd-macros"
+repository = "https://github.com/geobacter-rs/geobacter/tree/master/runtime-amd"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
