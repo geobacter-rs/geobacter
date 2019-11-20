@@ -52,3 +52,5 @@ geobacter-rustc-help = { path = "rustc-help" }
 geobacter-vk-core = { path = "vk-core" }
 geobacter-amdgpu-intrinsics = { path = "shared-intrinsics/amdgpu" }
 geobacter-vk-intrinsics = { path = "shared-intrinsics/vk" }
+geobacter-runtime-core = { path = "runtime-core" }
+geobacter-runtime-amd-macros = { path = "runtime-amd-macros" }

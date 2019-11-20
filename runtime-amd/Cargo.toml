@@ -3,6 +3,9 @@ name = "geobacter-runtime-amd"
 version = "0.1.0"
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 edition = "2018"
+license = "MIT / Apache-2.0"
+description = "Geobacter AMDGPU specific runtime. Requires the Geobacter Rust compiler."
+repository = "https://github.com/geobacter-rs/geobacter/tree/master/runtime-amd-macros"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -11,14 +14,14 @@ rmp-serde = "0.13.7"
 log = "0.4.7"
 any_key = "0.1.1"
 
-amd-comgr = { path = "../amd-comgr" }
-geobacter-core = { path = "../geobacter-core" }
-hsa-rt = { path = "../hsa-rt", features = ["serde"] }
-geobacter-runtime-core = { path = "../runtime-core" }
-geobacter-shared-defs = { path = "../shared-defs" }
-geobacter-intrinsics-common = { path = "../shared-intrinsics/common" }
-geobacter-amdgpu-intrinsics = { path = "../shared-intrinsics/amdgpu" }
-geobacter-runtime-amd-macros = { path = "../runtime-amd-macros" }
+amd-comgr = "1.0.0"
+geobacter-core = "1.0.0"
+hsa-rt = { version = "0.1.0", features = ["serde"] }
+geobacter-runtime-core = "1.0.0"
+geobacter-shared-defs = "1.0.0"
+geobacter-intrinsics-common = "1.0.0"
+geobacter-amdgpu-intrinsics = "1.0.0"
+geobacter-runtime-amd-macros = "1.0.0"
 arrayvec = "0.5.0"
 packed_simd = { version = "0.3.3", optional = true }
 num-traits = "0.2.9"
