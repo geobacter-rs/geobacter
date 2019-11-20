@@ -6,5 +6,5 @@ license = "MIT / Apache-2.0"
 edition = "2018"
 
 [dependencies]
-geobacter-shared-defs = { path = "../shared-defs" }
-geobacter-rustc-help = { path = "../rustc-help" }
+geobacter-shared-defs = "1.0.0"
+geobacter-rustc-help = "1.0.0"

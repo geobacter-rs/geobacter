@@ -358,7 +358,7 @@ name = "examples-amdgpu-trivial"
 version = "0.1.0"
 dependencies = [
  "env_logger 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "geobacter-amd-std 1.0.0",
+ "geobacter-amd-std 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "geobacter-runtime-amd 1.0.0",
  "geobacter-runtime-core 1.0.0",
  "ndarray 0.12.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -432,6 +432,15 @@ dependencies = [
 [[package]]
 name = "geobacter-amd-std"
 version = "1.0.0"
+dependencies = [
+ "geobacter-core 1.0.0",
+ "hsa-rt 0.1.0",
+]
+
+[[package]]
+name = "geobacter-amd-std"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "geobacter-core 1.0.0",
  "hsa-rt 0.1.0",
@@ -1655,6 +1664,7 @@ dependencies = [
 "checksum flate2 1.0.13 (registry+https://github.com/rust-lang/crates.io-index)" = "6bd6d6f4752952feb71363cffc9ebac9411b75b87c6ab6058c40c8900cf43c0f"
 "checksum fnv 1.0.6 (registry+https://github.com/rust-lang/crates.io-index)" = "2fad85553e09a6f881f739c29f0b00b0f01357c743266d478b68951ce23285f3"
 "checksum fuchsia-cprng 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "a06f77d526c1a601b7c4cdd98f54b5eaabffc14d5f2f0296febdc7f357c6d3ba"
+"checksum geobacter-amd-std 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "84d5cd4d24dddd4808e3ceba26e022a4d5fc2b71f50b9ce6ff21f9e00630a2c8"
 "checksum geobacter-intrinsics-common 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "b2bb70bf727cd4acbe196d0e5e898481349f55191829d13ae29f9a3c0882d8f2"
 "checksum getrandom 0.1.13 (registry+https://github.com/rust-lang/crates.io-index)" = "e7db7ca94ed4cd01190ceee0d8a8052f08a247aa1b469a7f68c6a3b71afcf407"
 "checksum git2 0.9.2 (registry+https://github.com/rust-lang/crates.io-index)" = "8cb400360e8a4d61b10e648285bbfa919bbf9519d0d5d5720354456f44349226"

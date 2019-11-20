@@ -12,4 +12,4 @@ packed_simd = "0.3.3"
 rand = { version = "0.7.0", features = ["small_rng", "simd_support", ] }
 geobacter-runtime-core = "1.0.0"
 geobacter-runtime-amd = "1.0.0"
-geobacter-amd-std = { path = "../../../amdgpu-std" }
+geobacter-amd-std = "1.0.0"
