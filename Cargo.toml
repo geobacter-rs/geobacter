@@ -42,6 +42,8 @@ rpath = true
 rpath = true
 
 [patch.crates-io]
+amd-comgr-sys = { path = "amd-comgr-sys" }
+amd-comgr = { path = "amd-comgr" }
 hsa-rt-sys = { path = "hsa-rt-sys" }
 hsa-rt = { path = "hsa-rt" }
 geobacter-shared-defs = { path = "shared-defs" }

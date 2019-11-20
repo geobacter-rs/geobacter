@@ -4,8 +4,8 @@ version = "1.0.0"
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 edition = "2018"
 license = "MIT / Apache-2.0"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+repository = "https://github.com/geobacter-rs/geobacter/tree/master/amd-comgr"
+description = "Rust wrapper for AMD comgr. Part of the Geobacter project."
 
 [dependencies]
-amd-comgr-sys = { version = "1.0.0", path = "../amd-comgr-sys" }
+amd-comgr-sys = "1.0.0"
