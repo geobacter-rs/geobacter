@@ -100,7 +100,7 @@ impl CrateMetadataLoader {
       },
       Entry::Vacant(v) => {
         let cnum = cstore.alloc_new_crate_num();
-        info!("crate_num: {}, source: {}, symbol_name: {}",
+        debug!("crate_num: {}, source: {}, symbol_name: {}",
               cnum,
               Path::new(src.file_name().unwrap()).display(),
               symbol_name);
@@ -125,7 +125,7 @@ impl CrateMetadataLoader {
 
     self.name_to_blob.clear();
     'outer: for object in allmd.iter() {
-      info!("scanning object {:?}", object.src);
+      debug!("scanning object {:?}", object.src);
       // First we need to find the owning crate for this object and
       // see if it is a rustc plugin. If so, we must skip it!
       let root = object.owner_blob().get_root();
@@ -135,7 +135,7 @@ impl CrateMetadataLoader {
       }
 
       for (symbol_name, dep_blob) in object.all.iter() {
-        info!("parsing metadata from {}", symbol_name);
+        debug!("parsing metadata from {}", symbol_name);
         let root = dep_blob.get_root();
         let name = CrateNameHash {
           name: root.name,
@@ -169,7 +169,7 @@ impl CrateMetadataLoader {
                       cstore)?;
     }
 
-    info!("finished loading metadata");
+    debug!("finished loading metadata");
 
     Ok(out)
   }
@@ -204,7 +204,7 @@ impl CrateMetadataLoader {
 
     let root = shared_krate.get_root();
 
-    info!("loading from: {}, name: {}, cnum: {}",
+    debug!("loading from: {}, name: {}, cnum: {}",
            Path::new(src.file_name().unwrap()).display(),
            root.name, cnum);
 
@@ -233,7 +233,7 @@ impl CrateMetadataLoader {
             continue;
           },
           None => {
-            info!("crate num not found for `{:?}`, finding manually", dep.name);
+            debug!("crate num not found for `{:?}`, finding manually", dep.name);
           },
         }
 
@@ -529,7 +529,7 @@ pub fn context_metadata() -> Result<LoadedCrateMetadata, Box<dyn Error>> {
     }
 
     for search_dir in dylib_search_paths()?.into_iter() {
-      info!("adding dylibs in search path {}", search_dir.display());
+      debug!("adding dylibs in search path {}", search_dir.display());
       for entry in search_dir.read_dir()? {
         let entry = match entry {
           Ok(v) => v,
