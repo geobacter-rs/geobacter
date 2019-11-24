@@ -125,6 +125,7 @@ fn derive_struct_args(input: &DeriveInput) -> Vec<TokenStream> {
           }
         }
       } else {
+        let idx = syn::Index::from(idx);
         quote! {
           {
             self.#idx.iter_deps(f)?;
