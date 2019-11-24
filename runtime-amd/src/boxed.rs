@@ -1,5 +1,6 @@
 
 use std::alloc::Layout;
+use std::cmp::{Ordering, };
 use std::convert::TryFrom;
 use std::fmt;
 use std::intrinsics::type_name;
@@ -378,6 +379,32 @@ impl<T> LocallyAccessiblePoolBox<T>
     forget(self);
 
     b
+  }
+}
+impl<T, U> PartialEq<LocallyAccessiblePoolBox<U>> for LocallyAccessiblePoolBox<T>
+  where T: PartialEq<U> + ?Sized,
+        U: ?Sized,
+{
+  fn eq(&self, rhs: &LocallyAccessiblePoolBox<U>) -> bool {
+    (&**self).eq(&**rhs)
+  }
+}
+impl<T> Eq for LocallyAccessiblePoolBox<T>
+  where T: Eq,
+{ }
+impl<T, U> PartialOrd<LocallyAccessiblePoolBox<U>> for LocallyAccessiblePoolBox<T>
+  where T: PartialOrd<U> + ?Sized,
+        U: ?Sized,
+{
+  fn partial_cmp(&self, rhs: &LocallyAccessiblePoolBox<U>) -> Option<Ordering> {
+    (&**self).partial_cmp(&**rhs)
+  }
+}
+impl<T> Ord for LocallyAccessiblePoolBox<T>
+  where T: Ord,
+{
+  fn cmp(&self, rhs: &LocallyAccessiblePoolBox<T>) -> Ordering {
+    (&**self).cmp(&**rhs)
   }
 }
 
