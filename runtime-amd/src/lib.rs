@@ -787,6 +787,7 @@ impl HsaAmdGpuAccel {
     target.options.is_builtin = true;
     target.options.simd_types_indirect = false;
     target.options.stack_probes = false;
+    target.options.code_model = Some("small".into());
     {
       let addr_spaces = &mut target.options.addr_spaces;
       addr_spaces.clear();
