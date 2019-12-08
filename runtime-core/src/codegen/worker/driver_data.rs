@@ -25,7 +25,6 @@ use gintrinsics::*;
 use crate::{AcceleratorTargetDesc, };
 use crate::codegen::*;
 use crate::context::{Context};
-use crate::passes::{Pass, PassType, };
 
 use super::HostQueryMessage;
 use crate::utils::UnsafeSyncSender;
@@ -48,8 +47,6 @@ pub struct DriverData<'tcx, P>
   roots: RwLock<Vec<PCodegenDesc<'tcx, P>>>,
   /// Needs to be initialized after the TyCtxt is created.
   root_conditions: RwLock<Vec<P::Condition>>,
-
-  pub passes: &'tcx [Box<dyn Pass<P>>],
 
   pub replaced_def_ids: RwLock<FxHashMap<DefId, DefId>>,
   /// maps `LOCAL_CRATE` (ie generated MIR wrappers) to their type.
@@ -79,7 +76,6 @@ impl<'tcx, P> PlatformDriverData<'tcx, P>
                     accels: &'tcx [Weak<P::Device>],
                     host_codegen: Option<Sender<HostQueryMessage>>,
                     target_desc: &'tcx Arc<AcceleratorTargetDesc>,
-                    passes: &'tcx [Box<dyn Pass<P>>],
                     intrinsics: FxHashMap<Symbol, Lrc<dyn CustomIntrinsicMirGen>>,
                     platform: &'tcx P)
     -> Self
@@ -94,8 +90,6 @@ impl<'tcx, P> PlatformDriverData<'tcx, P>
       // XXX? never initialized for host codegen query mode.
       roots: RwLock::new(vec![]),
       root_conditions: RwLock::new(vec![]),
-
-      passes,
 
       replaced_def_ids: RwLock::new(Default::default()),
       type_of: RwLock::new(Default::default()),
@@ -244,43 +238,6 @@ impl<'tcx, P> DriverData<'tcx, P>
       .expect("host type layout failed")
   }
 
-  pub fn passes(&self) -> &[Box<dyn Pass<P>>] { self.passes.as_ref() }
-  pub fn replace_def_id(&self, tcx: TyCtxt<'tcx>,
-                        id: DefId) -> DefId {
-    let replaced = {
-      let r = self.replaced_def_ids.read();
-      r.get(&id).cloned()
-    };
-    if let Some(replaced) = replaced {
-      return replaced;
-    }
-
-    debug!("running passes on {}", tcx.def_path_str(id));
-
-    let mut new_def_id = id;
-    for pass in self.passes.iter() {
-      let ty = pass.pass_type();
-      let replaced = match ty {
-        PassType::Replacer(f) => {
-          f(tcx, self, new_def_id)
-        },
-      };
-      match replaced {
-        Some(id) => {
-          new_def_id = id;
-          break;
-        },
-        None => { continue; }
-      }
-    }
-
-    let new_def_id = new_def_id;
-
-    self.replaced_def_ids
-      .write()
-      .insert(id, new_def_id);
-    new_def_id
-  }
   pub fn instance_of<F, Args, Ret>(&self, tcx: TyCtxt<'tcx>,
                                    f: &F) -> Instance<'tcx>
     where F: Fn<Args, Output = Ret>,

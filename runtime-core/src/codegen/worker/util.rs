@@ -83,7 +83,7 @@ pub fn default_provide_extern(providers: &mut ty::query::Providers<'_>) {
   cstore::provide_extern(providers);
 }
 
-pub fn spawn_thread_pool<F, R>(threads: Option<usize>, f: F) -> R
+pub fn spawn_thread_pool<F, R>(f: F) -> R
   where F: FnOnce() -> R + Send,
         R: Send,
 {
@@ -95,7 +95,7 @@ pub fn spawn_thread_pool<F, R>(threads: Option<usize>, f: F) -> R
 
   let config = ThreadPoolBuilder::new()
     // Our modules are usually pretty small; no need to go wild here.
-    .num_threads(threads.unwrap_or(2))
+    .num_threads(2)
     // give us a huge stack:
     .stack_size(32 * 1024 * 1024)
     .deadlock_handler(|| unsafe { ty::query::handle_deadlock() });

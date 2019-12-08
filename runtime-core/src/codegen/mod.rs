@@ -3,12 +3,10 @@ use std::any::Any;
 use std::cmp::{Eq, PartialEq, };
 use std::error::Error;
 use std::fmt::{self, Debug, };
-use std::io;
 use std::hash;
 use std::ops::Deref;
 use std::path::{Path, };
 use std::sync::Arc;
-use std::sync::mpsc::{Sender, channel, };
 
 use crate::rustc::hir::{def_id::DefId, CodegenFnAttrs, };
 use crate::rustc::ty::*;
@@ -21,14 +19,12 @@ use crate::gintrinsics::{GeobacterCustomIntrinsicMirGen, attrs::ConditionItem,
 use crate::geobacter_core::kernel::KernelInstance;
 
 use crate::{Accelerator, AcceleratorTargetDesc, };
-use crate::context::Context;
-use self::worker::*;
 use self::products::{PlatformCodegenDesc, };
-use crate::utils::UnsafeSyncSender;
 use crate::codegen::products::PCodegenResults;
 
 pub use self::worker::error;
 pub use self::worker::DriverData;
+pub use self::worker::{CodegenComms, CodegenUnsafeSyncComms, };
 
 use crate::any_key::AnyHash;
 
@@ -45,16 +41,16 @@ pub struct KernelDesc<P>
 }
 
 impl<P> Eq for KernelDesc<P>
-  where P: PlatformKernelDesc,
+  where P: PlatformKernelDesc + Eq,
 { }
 impl<LP, RP> PartialEq<KernelDesc<RP>> for KernelDesc<LP>
-  where LP: PlatformKernelDesc,
+  where LP: PlatformKernelDesc + PartialEq<RP>,
         RP: PlatformKernelDesc,
 {
   fn eq(&self, rhs: &KernelDesc<RP>) -> bool {
-    let lhs = &self.platform_desc as &dyn AnyHash;
-    let rhs = &rhs.platform_desc as &dyn AnyHash;
-    AnyHash::eq(lhs, rhs)
+    if self.instance != rhs.instance { return false; }
+
+    self.platform_desc == rhs.platform_desc
   }
 }
 impl<P> hash::Hash for KernelDesc<P>
@@ -92,7 +88,7 @@ impl<'tcx, P> Deref for CodegenDesc<'tcx, P> {
 /// Typically, a description of used resources and their binding locations,
 /// runtime device requirements.
 /// Currently, this data is required to be statically allocated.
-pub trait PlatformKernelDesc: AnyHash + Any + Debug + Send + Sync + 'static { }
+pub trait PlatformKernelDesc: AnyHash + Any + Debug + Eq + Send + Sync + 'static { }
 
 /// Helper type to reduce typing.
 pub type PKernelDesc<P> = KernelDesc<<P as PlatformCodegen>::KernelDesc>;
@@ -219,68 +215,4 @@ pub trait PlatformCodegen: Sized + Clone + Debug + Send + Sync + 'static {
                             _id: DefId,
                             _attrs: &mut CodegenFnAttrs)
   { }
-}
-
-#[derive(Clone)]
-pub struct CodegenComms<P>(Sender<Message<P>>)
-  where P: PlatformCodegen;
-impl<P> CodegenComms<P>
-  where P: PlatformCodegen,
-{
-  pub fn new(context: &Context,
-             accel_desc: Arc<AcceleratorTargetDesc>,
-             platform: P)
-    -> io::Result<Self>
-  {
-    WorkerTranslatorData::new(context, accel_desc, platform)
-  }
-
-  pub fn codegen(&self, desc: PKernelDesc<P>)
-    -> Result<Arc<PCodegenResults<P>>, error::Error>
-  {
-    let (tx, rx) = channel();
-
-    let msg = Message::Codegen {
-      desc,
-      ret: tx,
-    };
-
-    self.0.send(msg)
-      .expect("the codegen thread crashed/exited");
-
-    let ret = rx.recv()
-      .expect("the codegen thread crashed/exited")?;
-
-    Ok(ret)
-  }
-  pub fn add_accel(&self, accel: &Arc<P::Device>) {
-    let msg = Message::AddAccel(Arc::downgrade(accel));
-    self.0.send(msg)
-      .expect("the codegen thread crashed/exited");
-  }
-
-  #[doc(hidden)]
-  pub unsafe fn sync_comms(self) -> CodegenUnsafeSyncComms<P> {
-    let CodegenComms(this) = self;
-    CodegenUnsafeSyncComms(UnsafeSyncSender(this))
-  }
-}
-#[derive(Clone)]
-pub struct CodegenUnsafeSyncComms<P>(UnsafeSyncSender<Message<P>>)
-  where P: PlatformCodegen;
-impl<P> From<CodegenUnsafeSyncComms<P>> for CodegenComms<P>
-  where P: PlatformCodegen,
-{
-  fn from(v: CodegenUnsafeSyncComms<P>) -> Self {
-    let CodegenUnsafeSyncComms(UnsafeSyncSender(v)) = v;
-    CodegenComms(v)
-  }
-}
-impl<'a, P> From<&'a CodegenUnsafeSyncComms<P>> for CodegenComms<P>
-  where P: PlatformCodegen,
-{
-  fn from(v: &'a CodegenUnsafeSyncComms<P>) -> Self {
-    let CodegenUnsafeSyncComms(UnsafeSyncSender(v)) = v.clone();
-    CodegenComms(v)
-  }
 }

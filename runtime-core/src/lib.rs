@@ -31,7 +31,6 @@ extern crate rustc_typeck;
 extern crate rustc_traits;
 extern crate syntax;
 extern crate syntax_pos;
-extern crate compiler_builtins;
 extern crate serde;
 #[macro_use]
 extern crate erased_serde;
@@ -70,7 +69,6 @@ use crate::codegen::products::PCodegenResults;
 
 pub mod context;
 pub mod codegen;
-pub mod passes;
 mod metadata;
 mod platform;
 mod serde_utils;

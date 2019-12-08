@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, };
 use std::error::{Error, };
 use std::io::{self, };
 use std::marker::{PhantomData, };
-use std::mem;
+use std::mem::{self, drop, };
 use std::sync::mpsc::{channel, Sender, Receiver, RecvTimeoutError, };
 use std::sync::{Arc, Weak, };
 use std::time::Duration;
@@ -47,13 +47,13 @@ use gintrinsics::{DriverData as GIDriverData, GetDriverData,
                   GeobacterCustomIntrinsicMirGen,
                   GeobacterMirGen, };
 
+use parking_lot::RwLock;
+
 use tempfile::{Builder as TDBuilder, };
 
 use crate::{AcceleratorTargetDesc, context::Context,
             context::WeakContext, };
 use crate::utils::{HashMap, StableHash, };
-
-use crate::passes::{Pass, };
 
 use self::error::IntoErrorWithKernelInstance;
 pub use self::driver_data::{DriverData, PlatformDriverData, };
@@ -63,7 +63,7 @@ pub mod error;
 mod driver_data;
 mod util;
 
-use super::{PlatformCodegen, CodegenComms, PKernelDesc, };
+use super::{PlatformCodegen, PKernelDesc, };
 use super::products::*;
 use crate::codegen::{PlatformIntrinsicInsert, };
 use crate::metadata::{CrateMetadataLoader, CrateMetadata, CrateNameHash, DummyMetadataLoader};
@@ -76,6 +76,62 @@ const CRATE_NAME: &'static str = "geobacter-cross-codegen";
 // TODO XXX only one codegen query is allowed at a time.
 // TODO codegen worker workers (ie codegen multiple functions concurrently)
 // Note: recreate the session/tyctxt on *every* codegen. It is not safe to reuse.
+
+#[derive(Clone)]
+pub struct CodegenComms<P>(Arc<WorkerTranslatorData<P>>)
+  where P: PlatformCodegen;
+impl<P> CodegenComms<P>
+  where P: PlatformCodegen,
+{
+  pub fn new(context: &Context,
+             accel_desc: Arc<AcceleratorTargetDesc>,
+             platform: P)
+    -> io::Result<Self>
+  {
+    let inner = WorkerTranslatorData {
+      context: context.clone(),
+      platform,
+      target_desc: accel_desc,
+      accels: Default::default(),
+      cache: Default::default(),
+    };
+    Ok(CodegenComms(Arc::new(inner)))
+  }
+
+  pub fn codegen(&self, desc: PKernelDesc<P>)
+    -> Result<Arc<PCodegenResults<P>>, error::Error>
+  {
+    self.0.codegen_kernel(desc)
+  }
+  pub fn add_accel(&self, accel: &Arc<P::Device>) {
+    let mut this = self.0.accels.write();
+    this.push(Arc::downgrade(accel));
+  }
+
+  #[doc(hidden)]
+  pub unsafe fn sync_comms(self) -> CodegenUnsafeSyncComms<P> {
+    CodegenUnsafeSyncComms(self)
+  }
+}
+#[derive(Clone)]
+pub struct CodegenUnsafeSyncComms<P>(CodegenComms<P>)
+  where P: PlatformCodegen;
+impl<P> From<CodegenUnsafeSyncComms<P>> for CodegenComms<P>
+  where P: PlatformCodegen,
+{
+  fn from(v: CodegenUnsafeSyncComms<P>) -> Self {
+    let CodegenUnsafeSyncComms(v) = v;
+    v
+  }
+}
+impl<'a, P> From<&'a CodegenUnsafeSyncComms<P>> for CodegenComms<P>
+  where P: PlatformCodegen,
+{
+  fn from(v: &'a CodegenUnsafeSyncComms<P>) -> Self {
+    let CodegenUnsafeSyncComms(v) = v.clone();
+    v
+  }
+}
 
 /// Since we can't send MIR directly, or even serialized (we'd have to
 /// serialize the whole crate too), the host codegenner will be responsible
@@ -153,6 +209,23 @@ impl<'a, P> PlatformIntrinsicInsert for PlatformIntrinsicInserter<'a, P>
   }
 }
 
+enum MaybeInProgress<P>
+  where P: PlatformCodegen,
+{
+  InProgress(WaitGroup),
+  Done(Arc<PCodegenResults<P>>),
+}
+impl<P> Clone for MaybeInProgress<P>
+  where P: PlatformCodegen,
+{
+  fn clone(&self) -> Self {
+    match self {
+      MaybeInProgress::InProgress(p) => MaybeInProgress::InProgress(p.clone()),
+      MaybeInProgress::Done(r) => MaybeInProgress::Done(r.clone()),
+    }
+  }
+}
+
 enum MaybeWeakContext {
   Weak(WeakContext),
   Strong(Context),
@@ -193,12 +266,11 @@ impl MaybeWeakContext {
 pub struct WorkerTranslatorData<P>
   where P: PlatformCodegen,
 {
-  pub(self) context: MaybeWeakContext,
+  pub(self) context: Context,
   pub(crate) platform: P,
   pub target_desc: Arc<AcceleratorTargetDesc>,
-  pub accels: Vec<Weak<P::Device>>,
-  pub passes: Vec<Box<dyn Pass<P>>>,
-  cache: HashMap<PKernelDesc<P>, Arc<PCodegenResults<P>>>,
+  pub accels: RwLock<Vec<Weak<P::Device>>>,
+  cache: RwLock<HashMap<PKernelDesc<P>, MaybeInProgress<P>>>,
 }
 impl<P> WorkerTranslatorData<P>
   where P: PlatformCodegen,
@@ -221,11 +293,10 @@ impl<P> WorkerTranslatorData<P>
             target_desc.target.llvm_target);
 
       let mut data = WorkerTranslatorData {
-        context: MaybeWeakContext::Strong(context),
+        context,
         platform,
         target_desc,
-        accels: vec![],
-        passes: vec![],
+        accels: Default::default(),
         cache: Default::default(),
       };
 
@@ -236,9 +307,10 @@ impl<P> WorkerTranslatorData<P>
       .name(name)
       .spawn(f)?;
 
-    Ok(CodegenComms(tx))
+    unimplemented!("TODO: host codegen queries");
   }
 
+  /// Only used for host codegen queries.
   fn thread(&mut self, rx: &Receiver<Message<P>>) {
 
     /// Our code here runs amok of Rust's borrow checker. Which is why
@@ -262,7 +334,6 @@ impl<P> WorkerTranslatorData<P>
         let msg = recv_msg
           .take()
           .unwrap_or_else(|| {
-            self.context.downgrade();
             rx.recv_timeout(to)
           });
         let msg = match msg {
@@ -272,14 +343,6 @@ impl<P> WorkerTranslatorData<P>
           },
           Err(error) => {
             warn!("receive error: {:?}", error);
-            return;
-          },
-        };
-        let context = match self.context.upgrade() {
-          Some(ctxt) => ctxt.clone(),
-          None => {
-            // the context can't be resurrected.
-            trace!("context died; bailing");
             return;
           },
         };
@@ -315,24 +378,27 @@ impl<P> WorkerTranslatorData<P>
             desc,
             //host_codegen,
             ret,
-          } => self.codegen_kernel(&context, desc, ret),
+          } => {
+            let result = self.codegen_kernel(desc);
+            let _ = ret.send(result);
+          },
         }
       };
 
       match internal_msg {
         InternalMessage::Timeout => { },
         InternalMessage::AddAccel(accel) => {
-          self.accels.push(accel);
+          self.accels.write().push(accel);
           continue 'outer;
         },
       }
 
-      let live = self.context.upgrade().is_some();
-      let live = live && self.accels.iter()
-        .any(|a| a.upgrade().is_some());
+      let live = {
+        let accels = self.accels.read();
+        accels.iter()
+          .any(|a| a.upgrade().is_some())
+      };
       if !live && !first_msg { return; }
-
-      self.context.downgrade();
 
       // else wait for the next message, at which point we will reinitialize.
       match rx.recv() {
@@ -346,12 +412,11 @@ impl<P> WorkerTranslatorData<P>
       }
     }
   }
-
-  fn initialize_sess<F, R>(&self, context: &Context, f: F) -> R
+  fn initialize_sess<F, R>(&self, f: F) -> R
     where F: FnOnce(Session, CStore) -> R + Send,
           R: Send,
   {
-    context.syntax_globals().with(|| {
+    self.context.syntax_globals().with(|| {
       with_rustc_session(|mut sess| {
         sess.crate_types.set(sess.opts.crate_types.clone());
         sess.recursion_limit.set(512);
@@ -373,7 +438,7 @@ impl<P> WorkerTranslatorData<P>
         let mut cstore = CStore::default();
         {
           let mut loader = CrateMetadataLoader::default();
-          let CrateMetadata(meta) = loader.build(context.mapped_metadata(),
+          let CrateMetadata(meta) = loader.build(self.context.mapped_metadata(),
                                                  &mut cstore)
             .expect("metadata error");
           for meta in meta.into_iter() {
@@ -392,16 +457,47 @@ impl<P> WorkerTranslatorData<P>
       })
     })
   }
-  fn codegen_kernel(&mut self, context: &Context,
-                    desc: PKernelDesc<P>,
-                    ret: Sender<Result<Arc<PCodegenResults<P>>, error::Error>>)
+  fn codegen_kernel(&self, desc: PKernelDesc<P>)
+    -> Result<Arc<PCodegenResults<P>>, error::Error>
   {
-    if let Some(results) = self.cache.get(&desc) {
-      let _ = ret.send(Ok(results.clone()));
+    use std::collections::hash_map::Entry;
+    loop {
+      loop {
+        let cache = self.cache.read();
+        if let Some(results) = cache.get(&desc).cloned() {
+          // we *MUST* drop the read lock before waiting on in progress codegen.
+          drop(cache);
+
+          let progress = match results {
+            MaybeInProgress::InProgress(progress) => progress,
+            MaybeInProgress::Done(results) => {
+              return Ok(results);
+            },
+          };
+
+          debug!("{:?}: waiting for existing codegen..", desc.instance);
+
+          progress.wait();
+          continue;
+        } else {
+          break;
+        }
+      }
+
+      let mut cache = self.cache.write();
+      match cache.entry(desc.clone()) {
+        Entry::Occupied(_) => {
+          // someone beat us.
+          continue;
+        },
+        Entry::Vacant(v) => {
+          v.insert(MaybeInProgress::InProgress(WaitGroup::new()));
+          break;
+        },
+      }
     }
 
-    let result = self.initialize_sess(context,
-                                      |sess, cstore, | {
+    let result = self.initialize_sess(|sess, cstore, | {
       let (host_codegen, _) = channel();
 
       let krate = create_empty_hir_crate();
@@ -410,7 +506,6 @@ impl<P> WorkerTranslatorData<P>
       let mut forest = rustc::hir::map::Forest::new(krate, &dep_graph);
       let mut arenas = rustc::ty::AllArenas::new();
       self.codegen_kernel_inner(desc.clone(),
-                                context,
                                 sess,
                                 cstore,
                                 &mut arenas,
@@ -419,17 +514,23 @@ impl<P> WorkerTranslatorData<P>
                                 host_codegen)
           .map(Arc::new)
     });
+
+    let mut cache = self.cache.write();
     match result {
       Ok(ref result) => {
-        self.cache.insert(desc, result.clone());
+        let entry = cache.get_mut(&desc).unwrap();
+        *entry = MaybeInProgress::Done(result.clone());
       },
-      Err(_) => { },
+      Err(_) => {
+        // we still need to unblock other threads
+        cache.remove(&desc);
+      },
     }
-    let _ = ret.send(result);
+
+    result
   }
   fn codegen_kernel_inner<'a>(&'a self,
                               desc: PKernelDesc<P>,
-                              context: &Context,
                               sess: Session,
                               cstore: CStore,
                               arenas: &mut ty::AllArenas,
@@ -440,10 +541,12 @@ impl<P> WorkerTranslatorData<P>
   {
     use self::util::get_codegen_backend;
 
+    let context = &self.context;
+
     let instance = desc.instance;
-    let hash = desc.instance.stable_hash();
+    let hash = instance.stable_hash();
     info!("translating {:?}, hash: 0x{:x}",
-          desc.instance, hash);
+          instance, hash);
 
     let codegen = get_codegen_backend(&sess);
 
@@ -483,11 +586,7 @@ impl<P> WorkerTranslatorData<P>
       span: DUMMY_SP,
     };
     let resolver_arenas = Resolver::arenas();
-    let crate_name = if let Some(name) = desc.instance.name() {
-      name
-    } else {
-      "geobacter-jit-methods"
-    };
+    let crate_name = CRATE_NAME;
     let crate_loader = CrateLoader::new_from_cstore(&sess, &DummyMetadataLoader,
                                                     crate_name, cstore);
     let resolver = Resolver::new_with_cloader(&sess, &krate, crate_name,
@@ -508,12 +607,13 @@ impl<P> WorkerTranslatorData<P>
         .insert_kernel_intrinsics(&desc, &mut inserter);
     }
 
+    let accels = { self.accels.read().clone() };
+
     let driver_data: PlatformDriverData<P> =
       PlatformDriverData::new(context.clone(),
-                              &self.accels,
+                              &accels,
                               Some(host_codegen),
                               &self.target_desc,
-                              &self.passes,
                               intrinsics,
                               &self.platform);
     let driver_data: PlatformDriverData<'static, P> = unsafe {
@@ -607,7 +707,7 @@ pub fn with_rustc_session<F, R>(f: F) -> R
   use crate::rustc_interface::util::diagnostics_registry;
 
   let opts = create_rustc_options();
-  spawn_thread_pool(Some(1), move || {
+  spawn_thread_pool(move || {
     let registry = diagnostics_registry();
     let sess = rustc::session::build_session(opts, None, registry);
     f(sess)
@@ -727,9 +827,7 @@ impl<P> WorkerTranslatorData<P>
   where P: PlatformCodegen,
 {
   fn replace(tcx: TyCtxt, def_id: DefId) -> DefId {
-    PlatformDriverData::<P>::with(tcx, |tcx, pd| {
-      pd.dd().replace_def_id(tcx, def_id)
-    })
+    def_id
   }
 
   pub fn provide_mir_overrides(providers: &mut Providers) {
