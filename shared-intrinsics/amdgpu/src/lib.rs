@@ -56,6 +56,8 @@ pub fn insert_all_intrinsics<F, U>(marker: &U, mut into: F)
   into(k, v);
   let (k, v) = GeobacterMirGen::new(WaveBarrier, marker);
   into(k, v);
+  let (k, v) = GeobacterMirGen::new(ReadFirstLane, marker);
+  into(k, v);
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -387,6 +389,58 @@ impl fmt::Display for WaveBarrier {
     write!(f, "__geobacter_amdgpu_wave_barrier")
   }
 }
+pub struct ReadFirstLane;
+impl ReadFirstLane {
+  fn kernel_instance(&self) -> KernelInstance {
+    amdgcn_intrinsics::amdgcn_readfirstlane
+      .kernel_instance()
+      .unwrap()
+  }
+}
+impl GeobacterCustomIntrinsicMirGen for ReadFirstLane {
+  fn mirgen_simple_intrinsic<'tcx>(&self,
+                                   _stubs: &stubbing::Stubber,
+                                   _dd: &dyn DriverData,
+                                   tcx: TyCtxt<'tcx>,
+                                   _instance: ty::Instance<'tcx>,
+                                   mir: &mut mir::Body<'tcx>)
+  {
+    info!("mirgen intrinsic {}", self);
+
+    common::redirect_or_panic(tcx, mir, move || {
+      // panic if not running on an AMDGPU
+      match &tcx.sess.target.target.arch[..] {
+        "amdgpu" => { },
+        _ => { return None; },
+      };
+
+      let id = self.kernel_instance();
+      let instance = tcx.convert_kernel_instance(id)
+        .expect("failed to convert kernel instance to rustc instance");
+      Some(instance)
+    });
+  }
+
+  fn generic_parameter_count(&self, _tcx: TyCtxt) -> usize {
+    0
+  }
+  /// The types of the input args.
+  fn inputs<'tcx>(&self, tcx: TyCtxt<'tcx>)
+    -> &'tcx ty::List<ty::Ty<'tcx>>
+  {
+    tcx.intern_type_list(&[tcx.types.u32])
+  }
+  /// The return type.
+  fn output<'tcx>(&self, tcx: TyCtxt<'tcx>) -> ty::Ty<'tcx> {
+    tcx.types.u32
+  }
+}
+
+impl fmt::Display for ReadFirstLane {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "__geobacter_amdgpu_readfirstlane")
+  }
+}
 
 pub struct AmdGcnKillDetail;
 impl common::PlatformImplDetail for AmdGcnKillDetail {
@@ -426,6 +480,7 @@ mod amdgcn_intrinsics {
   def_id_intrinsic!(fn amdgcn_barrier()      => "llvm.amdgcn.s.barrier");
   def_id_intrinsic!(fn amdgcn_wave_barrier() => "llvm.amdgcn.wave.barrier");
   def_id_intrinsic!(fn amdgcn_kill(b: bool) -> ! => "llvm.amdgcn.kill");
+  def_id_intrinsic!(fn amdgcn_readfirstlane(b: u32) -> u32 => "llvm.amdgcn.readfirstlane");
 
   /// This one is an actual Rust intrinsic; the LLVM intrinsic returns
   /// a pointer in the constant address space, which we can't correctly

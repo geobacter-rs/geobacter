@@ -241,3 +241,42 @@ impl DispatchPacket {
     (self.global_id_x(), self.global_id_y(), self.global_id_z())
   }
 }
+
+pub trait ReadFirstLane {
+  unsafe fn read_first_lane(self) -> Self;
+}
+extern "rust-intrinsic" {
+  fn __geobacter_amdgpu_readfirstlane(v: u32) -> u32;
+}
+macro_rules! read_first_lane_sprim {
+  ($($prim:ty, )*) => {$(
+    impl ReadFirstLane for $prim {
+      unsafe fn read_first_lane(self) -> Self {
+        __geobacter_amdgpu_readfirstlane(self as _) as _
+      }
+    }
+  )*}
+}
+read_first_lane_sprim!(i8, u8, i16, u16, i32, u32, );
+
+#[cfg(target_pointer_width = "32")]
+read_first_lane_sprim!(usize, isize, );
+
+macro_rules! read_first_lane_x64 {
+  ($($prim:ty, )*) => {$(
+    impl ReadFirstLane for $prim {
+      unsafe fn read_first_lane(self) -> Self {
+        let h1 = (self & (0xffffffff << 32)) >> 32;
+        let h2 = self & 0xffffffff;
+
+        let h1 = __geobacter_amdgpu_readfirstlane(h1 as _) as Self;
+        let h2 = __geobacter_amdgpu_readfirstlane(h2 as _) as Self;
+
+        (h1 << 32) | h2
+      }
+    }
+  )*}
+}
+read_first_lane_x64!(i64, u64, );
+#[cfg(target_pointer_width = "64")]
+read_first_lane_x64!(usize, isize, );
