@@ -3,7 +3,7 @@ use std::error::Error;
 use std::fs::File;
 use std::io::Read;
 use std::mem::transmute;
-use std::sync::{Weak, Arc, mpsc::Sender, mpsc::channel, };
+use std::sync::{Weak, Arc, };
 use std::path::Path;
 
 use rustc::hir::def_id::{DefId, };
@@ -12,10 +12,7 @@ use rustc::ty::{self, TyCtxt, };
 use rustc::session::config::OutputFilenames;
 use rustc_data_structures::fx::{FxHashMap, };
 use rustc_data_structures::sync::{Lrc, RwLock, ReadGuard, MappedReadGuard, };
-use rustc_target::abi::{LayoutDetails, };
 use syntax::symbol::{Symbol, };
-
-use crossbeam::sync::WaitGroup;
 
 use geobacter_core::kernel::{KernelInstance, };
 
@@ -26,8 +23,6 @@ use crate::{AcceleratorTargetDesc, };
 use crate::codegen::*;
 use crate::context::{Context};
 
-use super::HostQueryMessage;
-use crate::utils::UnsafeSyncSender;
 use crate::codegen::products::{PCodegenResults, CodegenResults, EntryDesc};
 
 // TODO move this in with shared driver stuffs.
@@ -37,9 +32,6 @@ pub struct DriverData<'tcx, P>
 {
   pub context: Context,
   pub accels: &'tcx [Weak<P::Device>],
-
-  /// DO NOT USE DIRECTLY. Use `dd.host_codegen()`
-  host_codegen: Option<UnsafeSyncSender<HostQueryMessage>>,
 
   pub target_desc: &'tcx Arc<AcceleratorTargetDesc>,
 
@@ -74,7 +66,6 @@ impl<'tcx, P> PlatformDriverData<'tcx, P>
 {
   pub(crate) fn new(context: Context,
                     accels: &'tcx [Weak<P::Device>],
-                    host_codegen: Option<Sender<HostQueryMessage>>,
                     target_desc: &'tcx Arc<AcceleratorTargetDesc>,
                     intrinsics: FxHashMap<Symbol, Lrc<dyn CustomIntrinsicMirGen>>,
                     platform: &'tcx P)
@@ -84,8 +75,6 @@ impl<'tcx, P> PlatformDriverData<'tcx, P>
       context,
       accels,
       target_desc,
-
-      host_codegen: host_codegen.map(|h| UnsafeSyncSender(h) ),
 
       // XXX? never initialized for host codegen query mode.
       roots: RwLock::new(vec![]),
@@ -214,36 +203,6 @@ impl<'tcx, P> PlatformDriverData<'tcx, P>
 impl<'tcx, P> DriverData<'tcx, P>
   where P: PlatformCodegen,
 {
-  fn host_codegen(&self) -> Sender<HostQueryMessage> {
-    let sync = self.host_codegen
-      .as_ref()
-      .expect("no host codegen (is this a host codegen worker?)")
-      .clone();
-
-    let UnsafeSyncSender(unsync) = sync;
-    unsync
-  }
-  pub fn host_layout_of(&self, ty: ty::Ty<'tcx>) -> LayoutDetails {
-    let (tx, rx) = channel();
-    let wait = WaitGroup::new();
-    let msg = HostQueryMessage::TyLayout {
-      ty: unsafe { transmute(ty) },
-      wait: wait.clone(),
-      ret: tx,
-    };
-
-    let host = self.host_codegen();
-    host.send(msg)
-      .expect("host codegen crashed?");
-
-    wait.wait();
-
-    // We *MUST* wait here. Otherwise we risk a segfault.
-    rx.recv()
-      .expect("host codegen crashed?")
-      .expect("host type layout failed")
-  }
-
   pub fn instance_of<F, Args, Ret>(&self, tcx: TyCtxt<'tcx>,
                                    f: &F) -> Instance<'tcx>
     where F: Fn<Args, Output = Ret>,

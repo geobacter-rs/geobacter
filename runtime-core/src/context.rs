@@ -11,7 +11,7 @@ use indexvec::{Idx, IndexVec};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard, };
 
 use crate::{Accelerator, AcceleratorId, AcceleratorTargetDesc, Device};
-use crate::codegen::{PlatformCodegen, CodegenComms, PKernelDesc};
+use crate::codegen::{PlatformCodegen, CodegenDriver, PKernelDesc};
 use crate::utils::{HashMap, };
 
 pub use rustc::session::config::OutputType;
@@ -276,7 +276,7 @@ impl ModuleData {
   pub fn compile<D, P>(&self,
                        accel: &Arc<D>,
                        desc: PKernelDesc<P>,
-                       codegen: &CodegenComms<P>)
+                       codegen: &CodegenDriver<P>)
     -> Result<Arc<D::ModuleData>, Box<dyn Error>>
     where D: Device<Codegen = P>,
           P: PlatformCodegen<Device = D>,

@@ -72,7 +72,7 @@ use hsa_rt::signal::{SignalRef, Signal};
 
 use grt_core::{Accelerator, AcceleratorTargetDesc,
                PlatformTargetDesc, Device, };
-use grt_core::codegen::{CodegenComms, CodegenUnsafeSyncComms, };
+use grt_core::codegen::CodegenDriver;
 use grt_core::codegen::products::PCodegenResults;
 use shared_defs::platform::{Platform, host_platform, hsa, };
 use shared_defs::platform::hsa::AmdGpu;
@@ -111,7 +111,7 @@ pub struct HsaAmdGpuAccel {
 
   // TODO need to create a `geobacter_runtime_host` crate
   //host_codegen: CodegenUnsafeSyncComms<Self>,
-  self_codegen: Option<Arc<CodegenUnsafeSyncComms<Codegenner>>>,
+  self_codegen: Option<Arc<CodegenDriver<Codegenner>>>,
 }
 
 impl HsaAmdGpuAccel {
@@ -591,15 +591,15 @@ impl Accelerator for HsaAmdGpuAccel {
     -> Result<Arc<dyn Any + Send + Sync + 'static>, Box<dyn Error>>
     where Self: Sized,
   {
-    let cg = CodegenComms::new(ctxt,
-                               self.accel_target_desc().clone(),
+    let cg = CodegenDriver::new(ctxt,
+                                self.accel_target_desc().clone(),
                                 Default::default())?;
-    let cg_sync = Arc::new(unsafe { cg.clone().sync_comms() });
+    let cg_sync = Arc::new(cg);
     Arc::get_mut(self)
       .expect("there should only be a single ref at this point")
       .self_codegen = Some(cg_sync.clone());
 
-    cg.add_accel(self);
+    cg_sync.add_accel(self);
 
     Ok(cg_sync)
   }
@@ -659,11 +659,10 @@ impl Device for HsaAmdGpuAccel {
   type TargetDesc = TargetDesc;
   type ModuleData = module::HsaModuleData;
 
-  fn codegen(&self) -> CodegenComms<Self::Codegen> {
-    (&**self.self_codegen
+  fn codegen(&self) -> &Arc<CodegenDriver<Self::Codegen>> {
+    self.self_codegen
       .as_ref()
-      .expect("we are uninitialized?"))
-      .into()
+      .expect("we are uninitialized?")
   }
 
   fn load_kernel(self: &Arc<Self>, codegen: &PCodegenResults<Self::Codegen>)

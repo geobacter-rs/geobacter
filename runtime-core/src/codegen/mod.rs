@@ -24,7 +24,7 @@ use crate::codegen::products::PCodegenResults;
 
 pub use self::worker::error;
 pub use self::worker::DriverData;
-pub use self::worker::{CodegenComms, CodegenUnsafeSyncComms, };
+pub use self::worker::{CodegenDriver, };
 
 use crate::any_key::AnyHash;
 

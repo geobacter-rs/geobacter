@@ -12,7 +12,6 @@
 
 use std::any::Any;
 use std::collections::{BTreeMap, };
-use std::error::{Error, };
 use std::io::{self, };
 use std::marker::{PhantomData, };
 use std::mem::{self, drop, };
@@ -35,7 +34,6 @@ use rustc_data_structures::sync::{self, Lrc, };
 use rustc_metadata;
 use rustc_metadata::{creader::CrateLoader, cstore::CStore, };
 use rustc_incremental;
-use rustc_target::abi::{LayoutDetails, };
 use rustc_resolve::Resolver;
 use syntax::{ast, feature_gate, };
 use syntax_pos::DUMMY_SP;
@@ -51,8 +49,7 @@ use parking_lot::RwLock;
 
 use tempfile::{Builder as TDBuilder, };
 
-use crate::{AcceleratorTargetDesc, context::Context,
-            context::WeakContext, };
+use crate::{AcceleratorTargetDesc, context::Context, };
 use crate::utils::{HashMap, StableHash, };
 
 use self::error::IntoErrorWithKernelInstance;
@@ -77,10 +74,9 @@ const CRATE_NAME: &'static str = "geobacter-cross-codegen";
 // TODO codegen worker workers (ie codegen multiple functions concurrently)
 // Note: recreate the session/tyctxt on *every* codegen. It is not safe to reuse.
 
-#[derive(Clone)]
-pub struct CodegenComms<P>(Arc<WorkerTranslatorData<P>>)
+pub struct CodegenDriver<P>(WorkerTranslatorData<P>)
   where P: PlatformCodegen;
-impl<P> CodegenComms<P>
+impl<P> CodegenDriver<P>
   where P: PlatformCodegen,
 {
   pub fn new(context: &Context,
@@ -95,7 +91,7 @@ impl<P> CodegenComms<P>
       accels: Default::default(),
       cache: Default::default(),
     };
-    Ok(CodegenComms(Arc::new(inner)))
+    Ok(CodegenDriver(inner))
   }
 
   pub fn codegen(&self, desc: PKernelDesc<P>)
@@ -107,69 +103,16 @@ impl<P> CodegenComms<P>
     let mut this = self.0.accels.write();
     this.push(Arc::downgrade(accel));
   }
-
-  #[doc(hidden)]
-  pub unsafe fn sync_comms(self) -> CodegenUnsafeSyncComms<P> {
-    CodegenUnsafeSyncComms(self)
-  }
-}
-#[derive(Clone)]
-pub struct CodegenUnsafeSyncComms<P>(CodegenComms<P>)
-  where P: PlatformCodegen;
-impl<P> From<CodegenUnsafeSyncComms<P>> for CodegenComms<P>
-  where P: PlatformCodegen,
-{
-  fn from(v: CodegenUnsafeSyncComms<P>) -> Self {
-    let CodegenUnsafeSyncComms(v) = v;
-    v
-  }
-}
-impl<'a, P> From<&'a CodegenUnsafeSyncComms<P>> for CodegenComms<P>
-  where P: PlatformCodegen,
-{
-  fn from(v: &'a CodegenUnsafeSyncComms<P>) -> Self {
-    let CodegenUnsafeSyncComms(v) = v.clone();
-    v
-  }
 }
 
-/// Since we can't send MIR directly, or even serialized (we'd have to
-/// serialize the whole crate too), the host codegenner will be responsible
-/// for creating wrapping code to extract host kernel args.
-/// Initially, no MIR will be created, eg by extracting a part of a function,
-/// so this won't result in new host functions being codegenned (any function
-/// we can reach would also be reachable in the original compilation).
-pub enum HostCreateFuncMessage {
-  /// A unmodified function in some crate
-  ImplDefId(TyCtxtLessKernelId),
-
-}
-
-/// DefId is used here because they *should* be identical over every
-/// codegen, due to the shared CStore.
-/// Additionally, we require all these queries to block, so that we can send
-/// references of things. Normally, we would have no assertion that accel tcx
-/// outlives the refs sent. It is still unsafe here!
-pub(crate) enum HostQueryMessage {
-  TyLayout { ty: &'static ty::Ty<'static>,
-    wait: WaitGroup,
-    ret: Sender<Result<LayoutDetails, Box<dyn Error + Sync + Send>>>,
-  },
-}
-
+#[allow(dead_code)]
 pub(crate) enum Message<P>
   where P: PlatformCodegen,
 {
   /// So we can know when to exit.
   AddAccel(Weak<P::Device>),
-  StartHostQuery {
-    rx: Receiver<HostQueryMessage>,
-  },
   Codegen {
     desc: PKernelDesc<P>,
-
-    //host_codegen: Sender<HostQueryMessage>,
-
     ret: Sender<Result<Arc<PCodegenResults<P>>, error::Error>>,
   },
 }
@@ -226,43 +169,6 @@ impl<P> Clone for MaybeInProgress<P>
   }
 }
 
-enum MaybeWeakContext {
-  Weak(WeakContext),
-  Strong(Context),
-}
-impl MaybeWeakContext {
-  fn upgrade(&mut self) -> Option<&Context> {
-    let ctx = match self {
-      MaybeWeakContext::Weak(ctx) => ctx.upgrade(),
-      MaybeWeakContext::Strong(ctx) => {
-        return Some(ctx);
-      },
-    };
-
-    if let Some(ctx) = ctx {
-      let mut this = MaybeWeakContext::Strong(ctx);
-      mem::swap(&mut this, self);
-      match self {
-        MaybeWeakContext::Strong(ctx) => Some(ctx),
-        _ => unreachable!(),
-      }
-    } else {
-      None
-    }
-  }
-  fn downgrade(&mut self) {
-    let ctx = match self {
-      MaybeWeakContext::Weak(_) => {
-        return;
-      },
-      MaybeWeakContext::Strong(ctx) => ctx.downgrade_ref(),
-    };
-
-    let mut this = MaybeWeakContext::Weak(ctx);
-    mem::swap(&mut this, self);
-  }
-}
-
 pub struct WorkerTranslatorData<P>
   where P: PlatformCodegen,
 {
@@ -278,11 +184,11 @@ impl<P> WorkerTranslatorData<P>
   pub fn new(ctx: &Context,
              target_desc: Arc<AcceleratorTargetDesc>,
              platform: P)
-    -> io::Result<CodegenComms<P>>
+    -> io::Result<CodegenDriver<P>>
   {
     use std::thread::Builder;
 
-    let (tx, rx) = channel();
+    let (_tx, rx) = channel();
     let context = ctx.clone();
 
     let name = format!("codegen thread for {}",
@@ -356,27 +262,8 @@ impl<P> WorkerTranslatorData<P>
             panic!("first message must be Message::AddAccel; \
                     fix your Accelerator impl");
           },
-          Message::StartHostQuery { .. } => {
-            // ignore any errors
-            /*let _ = {
-                self.host_queries(context.clone(),
-                                  context.cstore(),
-                                  unsafe {
-                                    ::std::mem::transmute(&mut arena)
-                                  },
-                                  unsafe {
-                                    ::std::mem::transmute(&mut forest)
-                                  },
-                                  unsafe {
-                                    ::std::mem::transmute(&defs)
-                                  },
-                                  &dep_graph,
-                                  rx)
-              };*/
-          },
           Message::Codegen {
             desc,
-            //host_codegen,
             ret,
           } => {
             let result = self.codegen_kernel(desc);
@@ -498,8 +385,6 @@ impl<P> WorkerTranslatorData<P>
     }
 
     let result = self.initialize_sess(|sess, cstore, | {
-      let (host_codegen, _) = channel();
-
       let krate = create_empty_hir_crate();
       let dep_graph = rustc::dep_graph::DepGraph::new(Default::default(),
                                                       Default::default());
@@ -510,8 +395,7 @@ impl<P> WorkerTranslatorData<P>
                                 cstore,
                                 &mut arenas,
                                 &mut forest,
-                                &dep_graph,
-                                host_codegen)
+                                &dep_graph)
           .map(Arc::new)
     });
 
@@ -535,8 +419,7 @@ impl<P> WorkerTranslatorData<P>
                               cstore: CStore,
                               arenas: &mut ty::AllArenas,
                               forest: &mut rustc::hir::map::Forest,
-                              dep_graph: &rustc::dep_graph::DepGraph,
-                              host_codegen: Sender<HostQueryMessage>)
+                              dep_graph: &rustc::dep_graph::DepGraph)
     -> Result<PCodegenResults<P>, error::Error>
   {
     use self::util::get_codegen_backend;
@@ -612,7 +495,6 @@ impl<P> WorkerTranslatorData<P>
     let driver_data: PlatformDriverData<P> =
       PlatformDriverData::new(context.clone(),
                               &accels,
-                              Some(host_codegen),
                               &self.target_desc,
                               intrinsics,
                               &self.platform);
@@ -829,10 +711,6 @@ pub fn create_empty_hir_crate() -> rustc::hir::Crate {
 impl<P> WorkerTranslatorData<P>
   where P: PlatformCodegen,
 {
-  fn replace(tcx: TyCtxt, def_id: DefId) -> DefId {
-    def_id
-  }
-
   pub fn provide_mir_overrides(providers: &mut Providers) {
     *providers = Providers {
       is_mir_available: |tcx, def_id| {
@@ -930,7 +808,6 @@ impl<P> WorkerTranslatorData<P>
         rustc_metadata::cstore::provide_extern(&mut providers);
 
         // no stubbing here. We want the original fn sig
-        let def_id = Self::replace(tcx, def_id);
 
         let sig = (providers.fn_sig)(tcx, def_id);
 
@@ -965,17 +842,15 @@ impl<P> WorkerTranslatorData<P>
         let mut providers = Providers::default();
         rustc_typeck::provide(&mut providers);
 
-        let id = Self::replace(tcx, def_id);
-
-        let mut attrs = (providers.codegen_fn_attrs)(tcx, id);
+        let mut attrs = (providers.codegen_fn_attrs)(tcx, def_id);
 
         PlatformDriverData::<P>::with(tcx, move |tcx, pd| {
           pd.platform.codegen_fn_attrs(tcx, &pd.driver_data,
-                                       id, &mut attrs);
+                                       def_id, &mut attrs);
 
 
           if let Some(ref spirv) = attrs.spirv {
-            info!("spirv attrs for {:?}: {:#?}", id, spirv);
+            info!("spirv attrs for {:?}: {:#?}", def_id, spirv);
           }
 
           attrs

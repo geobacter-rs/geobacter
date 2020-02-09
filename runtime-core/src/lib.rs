@@ -64,7 +64,7 @@ use crate::rustc::session::config::host_triple;
 use crate::rustc_target::spec::{Target, TargetTriple, abi::Abi, };
 
 use crate::context::{Context, PlatformModuleData, };
-use crate::codegen::{PlatformCodegen, CodegenComms};
+use crate::codegen::{PlatformCodegen, CodegenDriver};
 use crate::codegen::products::PCodegenResults;
 
 pub mod context;
@@ -169,7 +169,7 @@ pub trait Device: Accelerator + Sized {
   type TargetDesc: PlatformTargetDesc;
   type ModuleData: PlatformModuleData;
 
-  fn codegen(&self) -> CodegenComms<Self::Codegen>;
+  fn codegen(&self) -> &Arc<CodegenDriver<Self::Codegen>>;
 
   /// Load the result of `post_codegen` into whatever platform/API
   /// specific structure is required.
