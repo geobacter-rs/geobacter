@@ -273,7 +273,7 @@ impl<T, U> CoerceUnsized<RawPoolBox<U>> for RawPoolBox<T>
   where T: Unsize<U> + ?Sized,
         U: ?Sized,
 { }
-impl<T> CopyDataObject<T> for RawPoolBox<T>
+impl<T> CopyDataObject for RawPoolBox<T>
   where T: ?Sized + Unpin,
 {
   #[doc(hidden)]
@@ -454,7 +454,7 @@ impl<T, U> CoerceUnsized<LocallyAccessiblePoolBox<U>> for LocallyAccessiblePoolB
         U: ?Sized,
 { }
 
-impl<T> CopyDataObject<T> for LocallyAccessiblePoolBox<T>
+impl<T> CopyDataObject for LocallyAccessiblePoolBox<T>
   where T: ?Sized + Unpin,
 {
   #[doc(hidden)]

@@ -1,31 +1,29 @@
 
 use hsa_rt::ext::amd::{MemoryPoolPtr, };
 
-pub trait CopyDataObject<T>
-  where T: ?Sized + Unpin,
-{
+use crate::{HsaAmdGpuAccel, HsaError, };
+
+pub trait CopyDataObject {
   #[doc(hidden)]
   unsafe fn pool_copy_region(&self) -> Option<MemoryPoolPtr<[u8]>>;
 }
-impl<'a, T, U> CopyDataObject<U> for &'a T
-  where T: ?Sized + CopyDataObject<U> + 'a,
-        U: ?Sized + Unpin,
+impl<'a, T> CopyDataObject for &'a T
+  where T: ?Sized + CopyDataObject + Unpin + 'a,
 {
   #[doc(hidden)]
   unsafe fn pool_copy_region(&self) -> Option<MemoryPoolPtr<[u8]>> {
     (&**self).pool_copy_region()
   }
 }
-impl<'a, T, U> CopyDataObject<U> for &'a mut T
-  where T: ?Sized + CopyDataObject<U> + 'a,
-        U: ?Sized + Unpin,
+impl<'a, T> CopyDataObject for &'a mut T
+  where T: ?Sized + CopyDataObject + Unpin + 'a,
 {
   #[doc(hidden)]
   unsafe fn pool_copy_region(&self) -> Option<MemoryPoolPtr<[u8]>> {
     (&**self).pool_copy_region()
   }
 }
-impl<T> CopyDataObject<[T]> for MemoryPoolPtr<[T]>
+impl<T> CopyDataObject for MemoryPoolPtr<[T]>
   where T: Unpin,
 {
   #[doc(hidden)]

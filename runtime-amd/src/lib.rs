@@ -65,7 +65,8 @@ use hsa_rt::agent::{Agent, Profiles, DefaultFloatRoundingModes, IsaInfo,
 use hsa_rt::code_object::CodeObjectReaderRef;
 pub use hsa_rt::error::Error as HsaError;
 use hsa_rt::executable::{Executable, CommonExecutable};
-use hsa_rt::ext::amd::{MemoryPool, MemoryPoolPtr, AgentAccess, async_copy, unlock_memory};
+use hsa_rt::ext::amd::{MemoryPool, MemoryPoolPtr, AgentAccess,
+                       async_copy, unlock_memory, MemoryPoolAlloc, };
 use hsa_rt::mem::region::{Region, Segment};
 use hsa_rt::queue::{KernelSingleQueue, KernelMultiQueue};
 use hsa_rt::signal::{SignalRef, Signal};
@@ -103,11 +104,11 @@ pub struct HsaAmdGpuAccel {
   platform: Platform,
 
   host_agent: Agent,
-  host_lock_pool: MemoryPool,
+  host_lock_pool: MemoryPoolAlloc,
 
   device_agent: Agent,
   kernarg_region: Region,
-  alloc_pool: MemoryPool,
+  alloc_pool: MemoryPoolAlloc,
 
   // TODO need to create a `geobacter_runtime_host` crate
   //host_codegen: CodegenUnsafeSyncComms<Self>,
@@ -145,7 +146,9 @@ impl HsaAmdGpuAccel {
           .unwrap_or_default()
       })
       .max_by_key(|pool| pool.total_size().unwrap_or_default())
-      .ok_or_else(|| "no allocatable host local global pool")?;
+      .ok_or_else(|| "no allocatable host local global pool")?
+      .allocator_ty()
+      .unwrap();
 
     let alloc_pool = device_agent.amd_memory_pools()?
       .into_iter()
@@ -157,7 +160,9 @@ impl HsaAmdGpuAccel {
           .map(|seg| seg == Segment::Global)
           .unwrap_or_default()
       })
-      .ok_or_else(|| "no allocatable device local global pool")?;
+      .ok_or_else(|| "no allocatable device local global pool")?
+      .allocator_ty()
+      .unwrap();
 
     let isa = device_agent.isas()?
       .get(0)
@@ -279,15 +284,14 @@ impl HsaAmdGpuAccel {
   /// then the result is undefined.
   ///
   /// The HSA runtime internally uses a device queue to implement waiting on `deps`.
-  pub unsafe fn unchecked_async_copy_into<T, U, R, CS>(&self,
-                                                       from: T,
-                                                       into: U,
-                                                       deps: &[&dyn DeviceConsumable],
-                                                       completion: &CS)
+  pub unsafe fn unchecked_async_copy_into<T, U, CS>(&self,
+                                                    from: T,
+                                                    into: U,
+                                                    deps: &[&dyn DeviceConsumable],
+                                                    completion: &CS)
     -> Result<(), Box<dyn Error>>
-    where T: CopyDataObject<R>,
-          U: CopyDataObject<R>,
-          R: ?Sized + Unpin,
+    where T: CopyDataObject,
+          U: CopyDataObject,
           CS: SignalHandle,
   {
     let from = from.pool_copy_region();
@@ -321,7 +325,12 @@ impl HsaAmdGpuAccel {
     }
 
     // TODO avoid allocation.
-    let deps: Vec<&SignalRef> = deps.iter().map(|dep| dep.signal_ref()).collect();
+    let deps: Vec<&SignalRef> = deps.iter()
+      .map(|dep| {
+        dep.mark_consumed();
+        dep.signal_ref()
+      })
+      .collect();
 
     let dst_agent = self.agent();
     let src_agent = &self.host_agent;
@@ -336,15 +345,14 @@ impl HsaAmdGpuAccel {
 
     Ok(())
   }
-  pub unsafe fn unchecked_async_copy_from<T, U, R, CS>(&self,
-                                                       from: T,
-                                                       into: U,
-                                                       deps: &[&dyn DeviceConsumable],
-                                                       completion: &CS)
+  pub unsafe fn unchecked_async_copy_from<T, U, CS>(&self,
+                                                    from: T,
+                                                    into: U,
+                                                    deps: &[&dyn DeviceConsumable],
+                                                    completion: &CS)
     -> Result<(), Box<dyn Error>>
-    where T: CopyDataObject<R>,
-          U: CopyDataObject<R>,
-          R: ?Sized + Unpin,
+    where T: CopyDataObject,
+          U: CopyDataObject,
           CS: SignalHandle,
   {
     let from = from.pool_copy_region();
@@ -390,16 +398,15 @@ impl HsaAmdGpuAccel {
 
     Ok(())
   }
-  pub unsafe fn unchecked_async_copy_from_p2p<T, U, R, CS>(&self,
-                                                           from: T,
-                                                           into_dev: &HsaAmdGpuAccel,
-                                                           into: U,
-                                                           deps: &[&dyn DeviceConsumable],
-                                                           completion: &CS)
+  pub unsafe fn unchecked_async_copy_from_p2p<T, U, CS>(&self,
+                                                        from: T,
+                                                        into_dev: &HsaAmdGpuAccel,
+                                                        into: U,
+                                                        deps: &[&dyn DeviceConsumable],
+                                                        completion: &CS)
     -> Result<(), Box<dyn Error>>
-    where T: CopyDataObject<R>,
-          U: CopyDataObject<R>,
-          R: ?Sized + Unpin,
+    where T: CopyDataObject,
+          U: CopyDataObject,
           CS: SignalHandle,
   {
     let from = from.pool_copy_region();
