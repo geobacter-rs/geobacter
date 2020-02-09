@@ -6,7 +6,7 @@ use std::marker::{PhantomData, Unsize, };
 use std::mem::{transmute, size_of, };
 use std::num::NonZeroU64;
 use std::ops::{CoerceUnsized, Deref, DerefMut, };
-use std::ptr::{NonNull, };
+use std::ptr::{Unique, };
 use std::sync::{Arc, atomic, };
 use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool, };
 
@@ -17,6 +17,7 @@ use log::{error, };
 use num_traits::{ToPrimitive, };
 
 use geobacter_core::kernel::{KernelInstance, };
+use gcore::ref_::*;
 
 use hsa_rt::agent::Agent;
 use hsa_rt::executable::FrozenExecutable;
@@ -34,7 +35,7 @@ use crate::grt_core::context::{ModuleContextData, PlatformModuleData, };
 
 use crate::HsaAmdGpuAccel;
 use crate::codegen::{Codegenner, KernelDesc, CodegenDesc};
-use crate::signal::{DeviceConsumable, HostConsumable, SignalHandle, SignaledDeref, };
+use crate::signal::{DeviceConsumable, HostConsumable, SignalHandle, SignaledDeref, Value};
 use hsa_rt::signal::SignalRef;
 
 pub use self::deps::Deps;
@@ -434,15 +435,14 @@ impl<A, Dim, MD> Invoc<A, Dim, MD>
         .try_enqueue_kernel_dispatch(dispatch)?;
     }
 
-    let inner = InvocCompletionInner {
-      storage: args_pool,
-      queue: queue.take().unwrap(),
+    let inner = InvocCompletion {
+      _storage: args_pool,
+      _queue: queue.take().unwrap(),
       signal: completion.take().unwrap(),
       waited: AtomicBool::new(false),
       args: kernargs,
-      _lt: PhantomData,
     };
-    Ok(InvocCompletion(Some(inner)))
+    Ok(inner)
   }
 }
 impl<A, WGDim, MD> Deref for Invoc<A, WGDim, MD>
@@ -550,7 +550,7 @@ impl ArgsPool {
   /// Allocate a single `Args` block. Returns `None` when out of space.
   /// `args` must be Some. If allocation is successful, the returned
   /// pointer will be uninitialized.
-  pub unsafe fn alloc<A>(&self) -> Option<NonNull<A>>
+  pub unsafe fn alloc<A>(&self) -> Option<Unique<A>>
     where A: Sized,
   {
     fn alignment_padding(size: usize, align: usize) -> usize {
@@ -592,7 +592,7 @@ impl ArgsPool {
       }
 
       let ptr: *mut A = transmute(allocated_start);
-      return Some(NonNull::new_unchecked(ptr));
+      return Some(Unique::new_unchecked(ptr));
     }
   }
 
@@ -616,68 +616,74 @@ impl Drop for ArgsPool {
   }
 }
 
-/// Note, in contrast to above, this must not require Sized Args.
-/// We really only require Args impl drop (which is given in Rust)
-/// and don't want to constrain downstream if type erasure is desired.
-#[must_use]
-pub struct InvocCompletion<P, A, Q, S>(Option<InvocCompletionInner<P, A, Q, S>>)
+unsafe impl<P, A, Q, S> deps::Deps for InvocCompletion<P, A, Q, S>
   where P: Deref<Target = ArgsPool>,
-        S: SignalHandle,
-        A: ?Sized;
-
-pub struct InvocCompletionInner<P, A, Q, S>
+        S: DeviceConsumable,
+        A: ?Sized,
+{
+  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+    -> Result<(), CallError>
+  {
+    f(&self.signal)
+  }
+}
+impl<P, A, Q, S> Deref for InvocCompletion<P, A, Q, S>
   where P: Deref<Target = ArgsPool>,
         S: SignalHandle,
         A: ?Sized,
 {
-  storage: P,
-  queue: Q,
+  type Target = A;
+  fn deref(&self) -> &Self::Target {
+    unsafe {
+      self.args
+        .as_ref()
+    }
+  }
+}
+#[must_use]
+pub struct InvocCompletion<P, A, Q, S>
+  where P: Deref<Target = ArgsPool>,
+        S: SignalHandle,
+        A: ?Sized,
+{
+  _storage: P,
+  _queue: Q,
   signal: S,
   /// a flag which we will set when we get used as a dep in
   /// another invoc. Only used when our completion signal
   /// is a device signal.
   waited: AtomicBool,
-  /// Keep this last so we can be unsized into `dyn Drop`.
-  args: NonNull<A>,
-  _lt: PhantomData<A>,
+  /// Keep this last so we can be unsized
+  args: Unique<A>,
 }
 impl<P, A, Q, S> InvocCompletion<P, A, Q, S>
   where P: Deref<Target = ArgsPool>,
         S: SignalHandle,
         A: ?Sized,
 {
-  fn inner(&self) -> &InvocCompletionInner<P, A, Q, S> {
-    self.0.as_ref()
-      .expect("dropped?")
-  }
-
   pub unsafe fn wait_ref<F, R>(&self, f: F) -> SignaledDeref<R, &S>
     where F: FnOnce(&A) -> R,
           S: HostConsumable,
   {
-    let inner = self.inner();
-    let args = inner.args.as_ref();
-    let signal = &inner.signal;
+    let args = self.args.as_ref();
+    let signal = &self.signal;
     let r = f(args);
 
     SignaledDeref::new(r, signal)
+  }
+
+  pub fn ret<R>(self, ret: R) -> InvocCompletionReturn<P, A, Q, S, R> {
+    InvocCompletionReturn {
+      ret,
+      invoc: self,
+    }
   }
 }
 impl<P, A, Q, S> InvocCompletion<P, A, Q, S>
   where P: Deref<Target = ArgsPool>,
         S: HostConsumable,
         A: ?Sized,
-{
-  pub fn wait(mut self, active: bool) {
-    let inner = self.0.take().unwrap();
-    inner.signal.wait_for_zero(active)
-      // XXX should we return a result here too?
-      .expect("device signaled error via signal");
-
-    // Run `self.args`' drop code
-    unsafe { std::intrinsics::drop_in_place(inner.args.as_ptr()); }
-  }
-}
+{ }
 // impl the signal traits so that invoc completions can be reused for multiple
 // kernel dispatches.
 impl<P, A, Q, S> SignalHandle for InvocCompletion<P, A, Q, S>
@@ -686,20 +692,17 @@ impl<P, A, Q, S> SignalHandle for InvocCompletion<P, A, Q, S>
         A: ?Sized,
 {
   fn signal_ref(&self) -> &SignalRef {
-    self.inner()
-      .signal
+    self.signal
       .signal_ref()
   }
 
   unsafe fn mark_consumed(&self) {
-    self.inner()
-      .waited
+    self.waited
       .store(true, Ordering::Release)
   }
 
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
-    self.inner()
-      .signal
+    self.signal
       .as_host_consumable()
   }
 }
@@ -709,8 +712,7 @@ impl<P, A, Q, S> DeviceConsumable for InvocCompletion<P, A, Q, S>
         A: ?Sized,
 {
   fn usable_on_device(&self, id: AcceleratorId) -> bool {
-    self.inner()
-      .signal
+    self.signal
       .usable_on_device(id)
   }
 }
@@ -719,6 +721,16 @@ impl<P, A, Q, S> HostConsumable for InvocCompletion<P, A, Q, S>
         S: HostConsumable,
         A: ?Sized,
 {
+  unsafe fn wait_for_zero_relaxed(&self, spin: bool) -> Result<(), Value> {
+    self.signal.wait_for_zero_relaxed(spin)?;
+    self.mark_consumed();
+    Ok(())
+  }
+  fn wait_for_zero(&self, spin: bool) -> Result<(), Value> {
+    self.signal.wait_for_zero(spin)?;
+    unsafe { self.mark_consumed() };
+    Ok(())
+  }
 }
 impl<P, A, Q, S> Drop for InvocCompletion<P, A, Q, S>
   where P: Deref<Target = ArgsPool>,
@@ -726,36 +738,115 @@ impl<P, A, Q, S> Drop for InvocCompletion<P, A, Q, S>
         A: ?Sized,
 {
   fn drop(&mut self) {
-    if let Some(mut inner) = self.0.take() {
-      let waited = inner.waited.get_mut();
-      if !*waited {
-        if let Some(host) = inner.signal.as_host_consumable() {
-          if let Err(code) = host.wait_for_zero(false) {
-            error!("got negative signal from dispatch: {}", code);
-          }
-
-          *waited = true;
+    let mut waited = self.waited.load(Ordering::Acquire);
+    if !waited {
+      if let Some(host) = self.signal.as_host_consumable() {
+        if let Err(code) = host.wait_for_zero(false) {
+          error!("got negative signal from dispatch: {}", code);
         }
-      }
 
-      if *waited {
-        // Run `self.args`' drop code
-        unsafe { std::intrinsics::drop_in_place(inner.args.as_ptr()); }
-        return;
+        waited = true;
       }
+    }
 
-      if !*waited && !::std::thread::panicking() {
-        // fail loudly
-        panic!("InvocCompletion w/ device completion signal \
-                unconsumed (ie not used as a dep in another dispatch)!");
-      } else {
-        log::warn!("host panic has probably caused some leaked data! \
-                    Program execution is undefined now!");
-      }
+    if waited {
+      // Run `self.args`' drop code
+      unsafe { std::intrinsics::drop_in_place(self.args.as_ptr()); }
+      return;
+    }
+
+    if !waited && !::std::thread::panicking() {
+      // fail loudly; we can't safely run the argument drop code as the device could
+      // still be using it!
+      panic!("InvocCompletion w/ device completion signal \
+              unconsumed (ie not used as a dep in another dispatch)!");
+    } else {
+      log::warn!("host panic has probably caused some leaked data! \
+                  Program execution is undefined now!");
     }
   }
 }
-impl<P, A1, A2, Q, S> CoerceUnsized<InvocCompletionInner<P, A2, Q, S>> for InvocCompletionInner<P, A1, Q, S>
+impl<P, A1, A2, Q, S> CoerceUnsized<InvocCompletion<P, A2, Q, S>> for InvocCompletion<P, A1, Q, S>
+  where P: Deref<Target = ArgsPool>,
+        S: SignalHandle,
+        A1: Unsize<A2> + ?Sized,
+        A2: ?Sized,
+{ }
+
+pub struct InvocCompletionReturn<P, A, Q, S, R>
+  where P: Deref<Target = ArgsPool>,
+        S: SignalHandle,
+        A: ?Sized,
+{
+  ret: R,
+  invoc: InvocCompletion<P, A, Q, S>,
+}
+impl<P, A, Q, S, R> SignalHandle for InvocCompletionReturn<P, A, Q, S, R>
+  where P: Deref<Target = ArgsPool>,
+        S: SignalHandle,
+        A: ?Sized,
+{
+  fn signal_ref(&self) -> &SignalRef {
+    self.invoc.signal_ref()
+  }
+
+  unsafe fn mark_consumed(&self) {
+    self.invoc.mark_consumed()
+  }
+
+  fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
+    self.invoc.as_host_consumable()
+  }
+}
+impl<P, A, Q, S, R> DeviceConsumable for InvocCompletionReturn<P, A, Q, S, R>
+  where P: Deref<Target = ArgsPool>,
+        S: DeviceConsumable,
+        A: ?Sized,
+{
+  fn usable_on_device(&self, id: AcceleratorId) -> bool {
+    self.invoc.usable_on_device(id)
+  }
+}
+impl<P, A, Q, S, R> HostConsumable for InvocCompletionReturn<P, A, Q, S, R>
+  where P: Deref<Target = ArgsPool>,
+        S: HostConsumable,
+        A: ?Sized,
+{
+  unsafe fn wait_for_zero_relaxed(&self, spin: bool) -> Result<(), Value> {
+    self.invoc.wait_for_zero_relaxed(spin)
+  }
+  fn wait_for_zero(&self, spin: bool) -> Result<(), Value> {
+    self.invoc.wait_for_zero(spin)
+  }
+}
+unsafe impl<P, A, Q, S, R> deps::Deps for InvocCompletionReturn<P, A, Q, S, R>
+  where P: Deref<Target = ArgsPool>,
+        S: DeviceConsumable,
+        A: ?Sized,
+        R: deps::Deps,
+{
+  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+    -> Result<(), CallError>
+  {
+    self.ret.iter_deps(f)?;
+    self.invoc.iter_deps(f)
+  }
+}
+/// We are only *safely* deref-able on the device, where the command process will ensure
+/// this invocation is complete.
+impl<P, A, Q, S, R> Deref for InvocCompletionReturn<P, A, Q, S, R>
+  where P: Deref<Target = ArgsPool>,
+        S: DeviceConsumable,
+        A: ?Sized,
+{
+  type Target = AccelRefRaw<R>;
+  fn deref(&self) -> &Self::Target {
+    unsafe { transmute(&self.ret) }
+  }
+}
+impl<P, A1, A2, Q, S, R>
+  CoerceUnsized<InvocCompletionReturn<P, A2, Q, S, R>> for
+    InvocCompletionReturn<P, A1, Q, S, R>
   where P: Deref<Target = ArgsPool>,
         S: SignalHandle,
         A1: Unsize<A2> + ?Sized,
