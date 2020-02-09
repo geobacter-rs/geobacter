@@ -132,6 +132,12 @@ impl<'tcx, P> PlatformDriverData<'tcx, P>
 
     Ok(())
   }
+  pub(super) fn pre_codegen(&self, tcx: TyCtxt<'tcx>)
+    -> Result<(), Box<dyn Error + Send + Sync + 'static>>
+  {
+    let dd = unsafe { transmute(&self.driver_data) };
+    self.platform.pre_codegen(tcx, dd)
+  }
   pub(super) fn post_codegen(&self, tcx: TyCtxt<'tcx>,
                              tmpdir: &Path,
                              out: &OutputFilenames)

@@ -647,7 +647,10 @@ impl<P> WorkerTranslatorData<P>
                  .map_err(error::Error::InitRoot)?;
 
                pd.init_conditions(tcx)
-                 .map_err(error::Error::InitConditions)
+                 .map_err(error::Error::InitConditions)?;
+
+               pd.pre_codegen(tcx)
+                 .map_err(error::Error::PreCodegen)
              })
            })?;
 

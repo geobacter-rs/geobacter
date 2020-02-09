@@ -65,12 +65,26 @@ impl<P> hash::Hash for KernelDesc<P>
   }
 }
 
+#[derive(Clone, Eq, PartialEq, Debug, Hash)]
+pub struct CodegenKernelInstance {
+  pub name: String,
+  pub instance: Vec<u8>,
+}
+impl From<KernelInstance> for CodegenKernelInstance {
+  fn from(v: KernelInstance) -> Self {
+    CodegenKernelInstance {
+      name: v.name().unwrap_or_default().to_owned(),
+      instance: v.instance.to_owned(),
+    }
+  }
+}
+
 /// This type is used in the codegen worker context to communicate
 /// with platform runtime crate. It is analogous to `KernelDesc` above.
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct CodegenDesc<'tcx, P> {
   pub instance: Instance<'tcx>,
-  pub kernel_instance: KernelInstance,
+  pub kernel_instance: CodegenKernelInstance,
   pub platform_desc: P,
 }
 
@@ -174,7 +188,6 @@ pub trait PlatformCodegen: Sized + Clone + Debug + Send + Sync + 'static {
   /// ahead of any of the query system queries, like types of generated
   /// DefIds, or adding extra kernel roots for device side enqueue.
   fn pre_codegen<'tcx>(&self,
-                       desc: &PCodegenDesc<'tcx, Self>,
                        tcx: TyCtxt<'tcx>,
                        dd: &DriverData<'tcx, Self>)
     -> Result<(), Box<dyn Error + Send + Sync + 'static>>;

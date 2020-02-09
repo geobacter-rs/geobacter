@@ -72,7 +72,7 @@ impl PlatformCodegen for Codegenner {
   {
     Ok(core_codegen::CodegenDesc {
       instance,
-      kernel_instance: desc.instance,
+      kernel_instance: desc.instance.into(),
       // filled post-codegen
       platform_desc: Default::default(),
     })
@@ -84,11 +84,10 @@ impl PlatformCodegen for Codegenner {
                            _dd: &DriverData<'tcx, Self>)
     -> Result<Vec<Self::Condition>, Box<dyn Error + Send + Sync + 'static>>
   {
-    Ok(vec![])
+    Ok(vec![attrs::Condition::Platform])
   }
 
   fn pre_codegen<'tcx>(&self,
-                       _desc: &PCodegenDesc<'tcx, Self>,
                        _tcx: TyCtxt<'tcx>,
                        _dd: &DriverData<'tcx, Self>)
     -> Result<(), Box<dyn Error + Send + Sync + 'static>>

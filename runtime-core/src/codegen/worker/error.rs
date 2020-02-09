@@ -11,6 +11,7 @@ pub enum Error {
   Codegen(KernelInstance),
   InitRoot(Box<dyn StdError + Send + Sync + 'static>),
   InitConditions(Box<dyn StdError + Send + Sync + 'static>),
+  PreCodegen(Box<dyn StdError + Send + Sync + 'static>),
   PostCodegen(Box<dyn StdError + Send + Sync + 'static>),
   ContextDead,
 }

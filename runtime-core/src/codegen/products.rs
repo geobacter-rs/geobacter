@@ -10,13 +10,11 @@ use any_key::AnyHash;
 
 use rustc::session::config::{OutputType, };
 
-use geobacter_core::kernel::{KernelInstance, };
-
-use super::{PlatformCodegen, };
+use super::{PlatformCodegen, CodegenKernelInstance, };
 
 #[derive(Debug)]
 pub struct EntryDesc<CD> {
-  pub kernel_instance: KernelInstance,
+  pub kernel_instance: CodegenKernelInstance,
   /// Rust uses a hash of a bunch of different values in `Session`
   /// in all symbols, which means we'll have different symbol names
   /// for different accelerators.
