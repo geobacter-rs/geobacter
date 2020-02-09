@@ -1,7 +1,7 @@
 
 use std::marker::{PhantomData, PhantomPinned, };
 use std::rc::{Rc, };
-use std::sync::{Arc, };
+use std::sync::{Arc, atomic::*, };
 
 use gcore::ptr::*;
 
@@ -68,6 +68,8 @@ unsafe impl Deps for $prim {
 }
 impl_prim!(i8, u8, i16, u16, i32, u32, i64, u64, i128, u128, usize, isize,
            f32, f64, bool, (), );
+impl_prim!(AtomicU8, AtomicI8, AtomicU16, AtomicI16, AtomicU32, AtomicI32,
+           AtomicU64, AtomicI64, AtomicUsize, AtomicIsize, );
 
 macro_rules! impl_simd {
   ($($prim:ident,)*) => {$(
