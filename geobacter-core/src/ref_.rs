@@ -94,12 +94,12 @@ impl<'a, T> fmt::Debug for Mut<'a, T>
   }
 }
 
-/// A newtype which asserts on deref if the host attemps to read from the
+/// A newtype which asserts on deref if the host attempts to read from the
 /// wrapped inner data. This is intended to be used behind a reference;
-/// ie via `&AccelRefRaw2<T>` or `&mut AccelRefRaw2<T>`
+/// ie via `&AccelRefRaw<T>` or `&mut AccelRefRaw<T>`
 ///
 /// This type should never be constructed. It should always be "created"
-/// by transmuting a `&T` into `&AccelRefRaw2<T>`.
+/// by transmuting a `&T` into `&AccelRefRaw<T>`.
 ///
 /// Such references are often only dereferencable
 /// on the specific accelerator it is associated with.
