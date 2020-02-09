@@ -9,7 +9,7 @@ use std::ffi::c_void;
 use std::fmt;
 use std::marker::Unsize;
 use std::mem::{size_of, transmute, size_of_val, };
-use std::ops::{CoerceUnsized, };
+use std::ops::{CoerceUnsized, Deref, };
 use std::ptr::{self, NonNull, slice_from_raw_parts_mut, };
 
 #[cfg(feature = "serde")]
@@ -207,6 +207,21 @@ impl MemoryPool {
                   out.as_mut_ptr() as *mut _) => out[0])?)
   }
 
+  #[cfg(feature = "alloc-wg")]
+  pub fn allocator_ty(&self) -> Result<MemoryPoolAlloc, Error> {
+    if !self.alloc_allowed() {
+      return Err(Error::General);
+    }
+
+    let granule = self.alloc_granule()?.unwrap();
+    let alignment = self.alloc_alignment()?.unwrap();
+    Ok(MemoryPoolAlloc {
+      pool: self.clone(),
+      granule,
+      alignment,
+    })
+  }
+
   /// This allocation will always be aligned to `self.alloc_alignment()`. No
   /// other alignment is possible, sorry.
   pub fn alloc_in_pool(&self, bytes: usize) -> Result<MemoryPoolPtr<[u8]>, Error> {
@@ -276,6 +291,87 @@ impl MemoryPool {
     Ok(MemoryPoolPtr(agent_ptr, *self))
   }
 }
+
+#[cfg(feature = "alloc-wg")]
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Debug, Hash)]
+pub struct MemoryPoolAlloc {
+  pool: MemoryPool,
+  granule: usize,
+  alignment: usize,
+}
+#[cfg(feature = "alloc-wg")]
+impl MemoryPoolAlloc {
+  pub fn alloc_allowed(&self) -> bool { true }
+  pub fn alloc_granule(&self) -> usize { self.granule }
+  pub fn alloc_alignment(&self) -> usize { self.alignment }
+  pub fn pool(&self) -> MemoryPool { self.pool }
+}
+
+#[cfg(feature = "alloc-wg")]
+impl alloc_wg::alloc::AllocRef for MemoryPoolAlloc {
+  type Error = Error;
+
+  fn alloc(&mut self, layout: alloc_wg::alloc::NonZeroLayout)
+    -> Result<NonNull<u8>, Self::Error>
+  {
+    let bytes = layout.size().get();
+    let align = layout.align().get();
+    if align > self.alignment {
+      return Err(Error::InvalidAllocation);
+    }
+
+    let len = ((bytes - 1) / self.granule + 1) * self.granule;
+
+    let mut dest = 0 as *mut c_void;
+    let dest_ptr = &mut dest as *mut *mut c_void;
+    check_err!(ffi::hsa_amd_memory_pool_allocate(self.pool.0, len,
+                                                 0, dest_ptr))?;
+
+    let agent_ptr = NonNull::new(dest as *mut u8)
+      .ok_or(Error::General)?;
+    Ok(agent_ptr)
+  }
+
+  #[inline]
+  fn usable_size(&self, layout: alloc_wg::alloc::NonZeroLayout) -> (usize, usize) {
+    let len = layout.size().get();
+    let min = ((len - 1) / self.granule + 0) * self.granule;
+    let max = ((len - 1) / self.granule + 1) * self.granule;
+    (min, max)
+  }
+}
+#[cfg(feature = "alloc-wg")]
+impl alloc_wg::alloc::DeallocRef for MemoryPoolAlloc {
+  type BuildAlloc = Self;
+  fn get_build_alloc(&mut self) -> Self::BuildAlloc {
+    *self
+  }
+  unsafe fn dealloc(&mut self, ptr: NonNull<u8>,
+                    _layout: alloc_wg::alloc::NonZeroLayout) {
+    self.pool.dealloc_from_pool(ptr)
+      // Should errors be ignored instead of panicking?
+      .expect("deallocation failure");
+  }
+}
+#[cfg(feature = "alloc-wg")]
+impl alloc_wg::alloc::BuildAllocRef for MemoryPoolAlloc {
+  type Ref = Self;
+  unsafe fn build_alloc_ref(&mut self,
+                            _ptr: NonNull<u8>,
+                            _layout: Option<alloc_wg::alloc::NonZeroLayout>)
+    -> Self::Ref
+  {
+    *self
+  }
+}
+#[cfg(feature = "alloc-wg")]
+impl alloc_wg::alloc::ReallocRef for MemoryPoolAlloc { }
+#[cfg(feature = "alloc-wg")]
+impl Deref for MemoryPoolAlloc {
+  type Target = MemoryPool;
+  fn deref(&self) -> &MemoryPool { &self.pool }
+}
+
 /// Note: we deliberately do not offer ergonomic access to the value
 /// stored. It is possible for this pointer to alias other memory.
 #[derive(Eq, PartialEq, Ord, PartialOrd, Hash)]
