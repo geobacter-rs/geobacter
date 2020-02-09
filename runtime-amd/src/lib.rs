@@ -384,7 +384,12 @@ impl HsaAmdGpuAccel {
     }
 
     // TODO avoid allocation.
-    let deps: Vec<&SignalRef> = deps.iter().map(|dep| dep.signal_ref()).collect();
+    let deps: Vec<&SignalRef> = deps.iter()
+      .map(|dep| {
+        dep.mark_consumed();
+        dep.signal_ref()
+      })
+      .collect();
 
     let dst_agent = &self.host_agent;
     let src_agent = self.agent();
@@ -445,7 +450,12 @@ impl HsaAmdGpuAccel {
     }
 
     // TODO avoid allocation.
-    let deps: Vec<&SignalRef> = deps.iter().map(|dep| dep.signal_ref()).collect();
+    let deps: Vec<&SignalRef> = deps.iter()
+      .map(|dep| {
+        dep.mark_consumed();
+        dep.signal_ref()
+      })
+      .collect();
 
     let dst_agent = into_dev.agent();
     let src_agent = self.agent();
