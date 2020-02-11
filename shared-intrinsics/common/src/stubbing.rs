@@ -10,12 +10,12 @@
 ///
 /// TODO refactor this into an interface and move into lrt_core.
 
-use crate::rustc::hir::def_id::DefId;
 use crate::rustc::ty::{TyCtxt, Instance, InstanceDef, };
 use crate::rustc_data_structures::fx::{FxHashMap};
 
 use crate::geobacter_core::kernel::{KernelInstance, };
 use crate::rustc_help::*;
+use rustc_hir::def_id::DefId;
 
 use self::stubs::*;
 use crate::{DriverData, };

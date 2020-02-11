@@ -3,7 +3,6 @@
 #![feature(unsize)]
 #![feature(coerce_unsized)]
 #![feature(allocator_api)]
-#![feature(slice_from_raw_parts)]
 #![feature(alloc_layout_extra)]
 
 use std::cmp::{self, PartialEq, PartialOrd, Ord, };

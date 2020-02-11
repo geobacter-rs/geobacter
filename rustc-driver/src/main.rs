@@ -12,12 +12,7 @@ extern crate geobacter_rustc_driver_base;
 
 extern crate geobacter_core;
 extern crate rustc;
-extern crate rustc_codegen_utils;
 extern crate rustc_data_structures;
-extern crate rustc_driver;
-extern crate rustc_metadata;
-extern crate syntax;
-extern crate syntax_pos;
 
 use self::rustc::mir::{CustomIntrinsicMirGen, };
 use self::rustc::ty::{TyCtxt, };

@@ -8,11 +8,12 @@
 #[macro_use]
 extern crate rustc;
 extern crate rustc_data_structures;
+extern crate rustc_hir;
 extern crate rustc_index;
 extern crate rustc_target;
+extern crate rustc_span;
 extern crate serialize as rustc_serialize;
 extern crate syntax;
-extern crate syntax_pos;
 #[macro_use]
 extern crate log;
 
@@ -28,17 +29,20 @@ use crate::codec::GeobacterDecoder;
 use crate::shared_defs::{kernel::KernelDesc,
                          platform::*, };
 
+use rustc::middle::lang_items::{self, LangItem, };
 use crate::rustc::mir::{Constant, Operand, Rvalue, Statement,
-                        StatementKind, };
+                        StatementKind, Place, };
 use crate::rustc::mir::interpret::{ConstValue, Scalar, Pointer,
                                    ScalarMaybeUndef, AllocId,
                                    Allocation, };
 use crate::rustc::mir::{self, CustomIntrinsicMirGen, };
-use crate::rustc::ty::{self, TyCtxt, layout::Size, };
-use crate::rustc::ty::{Const, ParamEnv, Tuple, Array, Instance, };
+use crate::rustc::ty::{self, TyCtxt, layout::Size, Instance, InstanceDef, };
+use crate::rustc::ty::{Const, ParamEnv, Tuple, Array, ConstKind, };
+use rustc_hir::def_id::DefId;
+use rustc_index::vec::Idx;
 use crate::rustc_serialize::Decodable;
 use crate::rustc_target::abi::{FieldPlacement, Align, HasDataLayout, };
-use crate::syntax_pos::{DUMMY_SP, };
+use rustc_span::{DUMMY_SP, Span, };
 
 pub mod codec;
 
@@ -63,7 +67,7 @@ impl CustomIntrinsicMirGen for CurrentPlatform {
   fn mirgen_simple_intrinsic<'tcx>(&self,
                                    tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
-                                   mir: &mut mir::Body<'tcx>) {
+                                   mir: &mut mir::BodyAndCache<'tcx>) {
     let align = Align::from_bits(64).unwrap(); // XXX arch dependent.
     let data = &self.data()[..];
     let alloc = Allocation::from_bytes(data, align);
@@ -92,7 +96,7 @@ impl CustomIntrinsicMirGen for CurrentPlatform {
     let const_val = ConstValue::Scalar(ptr.into());
     let constant = tcx.mk_const_op(source_info.clone(), Const {
       ty: self.output(tcx),
-      val: const_val,
+      val: ConstKind::Value(const_val),
     });
     let rvalue = Rvalue::Use(constant);
 
@@ -117,6 +121,95 @@ impl CustomIntrinsicMirGen for CurrentPlatform {
     let arr = tcx.mk_array(tcx.types.u8, size_of::<Platform>() as _);
     tcx.mk_imm_ref(tcx.lifetimes.re_static, arr)
   }
+}
+
+pub fn call_device_func<'tcx, F>(tcx: TyCtxt<'tcx>,
+                                 mir: &mut mir::BodyAndCache<'tcx>,
+                                 f: F)
+  where F: FnOnce() -> Option<Instance<'tcx>>,
+{
+  redirect_or_panic(tcx, mir, "Device function called on the host", f);
+}
+
+/// Either call the instance returned from `f` or insert code to panic.
+/// TODO this should probably be turned into an attribute so it's more systematic.
+pub fn redirect_or_panic<'tcx, F>(tcx: TyCtxt<'tcx>,
+                                  mir: &mut mir::BodyAndCache<'tcx>,
+                                  msg: &str, f: F)
+  where F: FnOnce() -> Option<Instance<'tcx>>,
+{
+  fn langcall(tcx: TyCtxt,
+                  span: Option<Span>,
+                  msg: &str,
+                  li: LangItem)
+    -> DefId
+  {
+    tcx.lang_items().require(li).unwrap_or_else(|s| {
+      let msg = format!("{} {}", msg, s);
+      match span {
+        Some(span) => tcx.sess.span_fatal(span, &msg[..]),
+        None => tcx.sess.fatal(&msg[..]),
+      }
+    })
+  }
+
+  let source_info = mir::SourceInfo {
+    span: DUMMY_SP,
+    scope: mir::OUTERMOST_SOURCE_SCOPE,
+  };
+
+  let mut bb = mir::BasicBlockData {
+    statements: Vec::new(),
+    terminator: Some(mir::Terminator {
+      source_info: source_info.clone(),
+      kind: mir::TerminatorKind::Return,
+    }),
+
+    is_cleanup: false,
+  };
+
+  let (real_instance, args, term_kind) = match f() {
+    Some(instance) => {
+      (instance, vec![], mir::TerminatorKind::Return)
+    },
+    None => {
+      // call `panic` from `libcore`
+      let lang_item = lang_items::PanicFnLangItem;
+
+      let def_id = langcall(tcx, None, "", lang_item);
+      let mut instance = Instance::mono(tcx, def_id);
+      instance.def = InstanceDef::ReifyShim(def_id);
+      let desc = tcx.mk_static_str_operand(source_info, msg);
+
+      (instance, vec![desc, ], mir::TerminatorKind::Unreachable)
+    },
+  };
+
+  debug!("mirgen intrinsic into {}", real_instance);
+
+  let success = mir::BasicBlock::new(mir.basic_blocks().next_index().index() + 1);
+  let fn_ty = real_instance.monomorphic_ty(tcx);
+  bb.terminator.as_mut()
+    .unwrap()
+    .kind = mir::TerminatorKind::Call {
+    func: tcx.mk_const_op(source_info.clone(),
+                          *ty::Const::zero_sized(tcx, fn_ty)),
+    args,
+    destination: Some((Place::return_place(), success)),
+    cleanup: None,
+    from_hir_call: false,
+  };
+  mir.basic_blocks_mut().push(bb);
+  let bb = mir::BasicBlockData {
+    statements: Vec::new(),
+    terminator: Some(mir::Terminator {
+      source_info: source_info.clone(),
+      kind: term_kind,
+    }),
+
+    is_cleanup: false,
+  };
+  mir.basic_blocks_mut().push(bb);
 }
 
 // TODO report a helpful message if a closure is given.
@@ -225,7 +318,7 @@ pub trait GeobacterTyCtxtHelp<'tcx>: Copy {
   fn mk_usize_c(self, v: impl Into<u128>) -> &'tcx ty::Const<'tcx> {
     self.as_tcx().mk_const(ty::Const {
       ty: self.as_tcx().types.usize,
-      val: self.mk_usize_cv(v),
+      val: ConstKind::Value(self.mk_usize_cv(v)),
     })
   }
 
@@ -242,7 +335,7 @@ pub trait GeobacterTyCtxtHelp<'tcx>: Copy {
     };
     let v = tcx.mk_const(Const {
       ty: tcx.mk_static_str(),
-      val: v,
+      val: ConstKind::Value(v),
     });
     let v = Constant {
       span: source_info.span,
@@ -260,7 +353,7 @@ pub trait GeobacterTyCtxtHelp<'tcx>: Copy {
     let v = self.mk_u64_cv(v);
     let v = tcx.mk_const(Const {
       ty: tcx.types.u64,
-      val: v,
+      val: ConstKind::Value(v),
     });
     let v = Constant {
       span: source_info.span,
@@ -361,7 +454,7 @@ pub fn const_value_rvalue<'tcx>(tcx: TyCtxt<'tcx>,
 
   let constant = tcx.mk_const(Const {
     ty,
-    val: const_val,
+    val: ConstKind::Value(const_val),
   });
   let constant = Constant {
     span: source_info.span,

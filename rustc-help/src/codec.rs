@@ -10,9 +10,6 @@
 
 use std::mem;
 
-use crate::rustc::hir;
-use crate::rustc::hir::def_id::{CrateNum, DefIndex, DefId, LocalDefId,
-                                LOCAL_CRATE};
 use crate::rustc::hir::map::definitions::DefPathHash;
 use crate::rustc::mir::interpret::{AllocId, specialized_encode_alloc_id,
                                    AllocDecodingState, AllocDecodingSession, };
@@ -22,6 +19,9 @@ use crate::rustc::ty::codec as ty_codec;
 use crate::rustc::ty::codec::{TyEncoder, TyDecoder, };
 use crate::rustc_data_structures::fingerprint::Fingerprint;
 use crate::rustc_data_structures::fx::{FxHashMap, };
+use rustc_hir as hir;
+use rustc_hir::def_id::{CrateNum, DefIndex, DefId, LocalDefId,
+                                LOCAL_CRATE};
 use crate::rustc_index::vec::*;
 
 use crate::rustc_serialize::{Decodable, Decoder, Encodable, Encoder, opaque,

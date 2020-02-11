@@ -11,8 +11,9 @@ use std::sync::Arc;
 
 use crate::log::{info, };
 
-use crate::rustc::hir::{def_id::DefId, CodegenFnAttrs, };
+use rustc::middle::codegen_fn_attrs::CodegenFnAttrs;
 use crate::rustc::ty::{TyCtxt, Instance, };
+use rustc_hir::def_id::DefId;
 
 use amd_comgr::{set::DataSet, data::RelocatableData,
                 data::Data, action::*, };
@@ -282,7 +283,7 @@ impl PlatformCodegen for Codegenner {
                             id: DefId,
                             attrs: &mut CodegenFnAttrs)
   {
-    use syntax::attr::InlineAttr;
+    use rustc_attr::InlineAttr;
     use rustc::session::config::*;
 
     if dd.is_root(id) { return; }

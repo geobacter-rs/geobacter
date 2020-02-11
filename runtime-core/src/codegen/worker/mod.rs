@@ -20,24 +20,24 @@ use std::sync::{Arc, Weak, };
 use std::time::Duration;
 
 use rustc;
-use rustc::hir::def_id::{CrateNum, DefId};
+use rustc::arena::Arena;
 use rustc::middle::cstore::EncodedMetadata;
 use rustc::middle::exported_symbols::{SymbolExportLevel, };
 use rustc::mir::{CustomIntrinsicMirGen, };
 use rustc::ty::query::Providers;
 use crate::rustc::ty::{self, TyCtxt, subst::SubstsRef, };
 use rustc::session::Session;
-use rustc::util::common::{time, };
-use rustc::util::nodemap::DefIdMap;
+use rustc::session::config::OutputFilenames;
 use rustc_data_structures::fx::{FxHashMap};
-use rustc_data_structures::sync::{self, Lrc, };
+use rustc_data_structures::sync::{self, Lrc, WorkerLocal, };
+use rustc_feature as feature_gate;
+use rustc_hir::def_id::{CrateNum, DefId, DefIdMap };
 use rustc_metadata;
-use rustc_metadata::{creader::CrateLoader, cstore::CStore, };
+use rustc_metadata::{creader::CrateLoader, creader::CStore, };
 use rustc_incremental;
 use rustc_resolve::Resolver;
-use syntax::{ast, feature_gate, };
-use syntax_pos::DUMMY_SP;
-use syntax_pos::symbol::{Symbol, };
+use rustc_span::DUMMY_SP;
+use rustc_span::symbol::{Symbol, };
 
 use crossbeam::sync::WaitGroup;
 
@@ -307,9 +307,8 @@ impl<P> WorkerTranslatorData<P>
       with_rustc_session(|mut sess| {
         sess.crate_types.set(sess.opts.crate_types.clone());
         sess.recursion_limit.set(512);
-        sess.allocator_kind.set(None);
 
-        sess.init_features(feature_gate::Features::new());
+        sess.init_features(feature_gate::Features::default());
 
         // TODO hash the accelerator target desc
         let dis = self::util::compute_crate_disambiguator(&sess);
@@ -330,8 +329,8 @@ impl<P> WorkerTranslatorData<P>
             .expect("metadata error");
           for meta in meta.into_iter() {
             let name = CrateNameHash {
-              name: meta.root.name,
-              hash: meta.root.hash.as_u64(),
+              name: meta.root.name(),
+              hash: meta.root.hash().as_u64(),
             };
             let cnum = loader.lookup_cnum(&name)
               .unwrap();
@@ -385,17 +384,9 @@ impl<P> WorkerTranslatorData<P>
     }
 
     let result = self.initialize_sess(|sess, cstore, | {
-      let krate = create_empty_hir_crate();
-      let dep_graph = rustc::dep_graph::DepGraph::new(Default::default(),
-                                                      Default::default());
-      let mut forest = rustc::hir::map::Forest::new(krate, &dep_graph);
-      let mut arenas = rustc::ty::AllArenas::new();
       self.codegen_kernel_inner(desc.clone(),
                                 sess,
-                                cstore,
-                                &mut arenas,
-                                &mut forest,
-                                &dep_graph)
+                                cstore)
           .map(Arc::new)
     });
 
@@ -413,16 +404,14 @@ impl<P> WorkerTranslatorData<P>
 
     result
   }
-  fn codegen_kernel_inner<'a>(&'a self,
-                              desc: PKernelDesc<P>,
-                              sess: Session,
-                              cstore: CStore,
-                              arenas: &mut ty::AllArenas,
-                              forest: &mut rustc::hir::map::Forest,
-                              dep_graph: &rustc::dep_graph::DepGraph)
+  fn codegen_kernel_inner(&self,
+                          desc: PKernelDesc<P>,
+                          sess: Session,
+                          cstore: CStore)
     -> Result<PCodegenResults<P>, error::Error>
   {
     use self::util::get_codegen_backend;
+    use syntax::ast;
 
     let context = &self.context;
 
@@ -451,15 +440,20 @@ impl<P> WorkerTranslatorData<P>
       .tempdir()
       .with_kernel_instance(desc.instance)?;
 
-    let out = rustc::session::config::OutputFilenames {
-      out_directory: tmpdir.path().into(),
-      out_filestem: "codegen.elf".into(),
-      single_output_file: None,
-      extra: "".into(),
-      outputs: sess.opts.output_types.clone(),
-    };
+    let out = OutputFilenames::new(
+      tmpdir.path().into(),
+      "codegen.elf".into(),
+      None,
+      Default::default(),
+      sess.opts.output_types.clone(),
+    );
 
-    let krate = ast::Crate {
+    let krate = create_empty_hir_crate();
+    let dep_graph = rustc::dep_graph::DepGraph::new(Default::default(),
+                                                    Default::default());
+    let arenas = WorkerLocal::new(|_| Arena::default());
+
+    let ast_krate = ast::Crate {
       module: ast::Mod {
         inner: DUMMY_SP,
         items: vec![],
@@ -472,13 +466,14 @@ impl<P> WorkerTranslatorData<P>
     let crate_name = CRATE_NAME;
     let crate_loader = CrateLoader::new_from_cstore(&sess, &DummyMetadataLoader,
                                                     crate_name, cstore);
-    let resolver = Resolver::new_with_cloader(&sess, &krate, crate_name,
+    let resolver = Resolver::new_with_cloader(&sess, &ast_krate, crate_name,
                                               &resolver_arenas, crate_loader);
     let mut resolutions = resolver.into_outputs();
     let definitions = mem::take(&mut resolutions.definitions);
 
     let map_crate = rustc::hir::map::map_crate(&sess, &*resolutions.cstore,
-                                               forest, &definitions);
+                                               &krate, dep_graph.clone(),
+                                               definitions);
 
     let mut intrinsics = IntrinsicsMap::default();
     {
@@ -505,7 +500,7 @@ impl<P> WorkerTranslatorData<P>
 
     let gcx = TyCtxt::create_global_ctxt(
       &sess,
-      Lrc::new(rustc::lint::LintStore::new()),
+      Lrc::new(rustc_lint::LintStore::new()),
       local_providers,
       extern_providers,
       &arenas,
@@ -520,9 +515,9 @@ impl<P> WorkerTranslatorData<P>
     let results: Result<PCodegenResults<P>, error::Error> = ty::tls::enter_global(&gcx, |tcx| {
       // Do some initialization of the DepGraph that can only be done with the
       // tcx available.
-      time(tcx.sess, "dep graph tcx init", || rustc_incremental::dep_graph_tcx_init(tcx));
+      tcx.sess.time("dep graph tcx init", || rustc_incremental::dep_graph_tcx_init(tcx));
 
-      time(tcx.sess, "platform root and condition init",
+      tcx.sess.time("platform root and condition init",
            move || {
              PlatformDriverData::<P>::with(tcx, |tcx, pd| {
                pd.init_root(desc, tcx)
@@ -539,20 +534,27 @@ impl<P> WorkerTranslatorData<P>
       let metadata = EncodedMetadata::new();
       let need_metadata_module = false;
 
-      let ongoing_codegen = time(tcx.sess, "codegen", || {
+      let ongoing_codegen = tcx.sess.time("codegen", || {
         let _prof_timer = tcx.prof.generic_activity("codegen_crate");
         codegen.codegen_crate(tcx, metadata, need_metadata_module)
       });
 
-      time(tcx.sess, "LLVM codegen",
+      let codegen_results = tcx.sess.time("LLVM codegen",
            || {
-             codegen.join_codegen_and_link(ongoing_codegen, &sess,
-                                           dep_graph, &out)
-               .map_err(|err| {
-                 error!("codegen failed: `{:?}`!", err);
+             codegen.join_codegen(ongoing_codegen, &sess, &dep_graph)
+               .map_err(|_| {
+                 error!("codegen failed!");
                  error::Error::Codegen(instance)
                })
            })?;
+      tcx.sess.time("link",
+                    || {
+                      codegen.link(&sess, codegen_results, &out)
+                        .map_err(|_| {
+                          error!("linking failed!");
+                          error::Error::Codegen(instance)
+                        })
+                    })?;
 
       let results = PlatformDriverData::<P>::with(tcx, |tcx, pd| {
         pd.post_codegen(tcx, &tmpdir.path(), &out)
@@ -589,11 +591,10 @@ pub fn with_rustc_session<F, R>(f: F) -> R
         R: sync::Send,
 {
   use self::util::spawn_thread_pool;
-  use crate::rustc_interface::util::diagnostics_registry;
 
   let opts = create_rustc_options();
   spawn_thread_pool(move || {
-    let registry = diagnostics_registry();
+    let registry = rustc_driver::diagnostics_registry();
     let sess = rustc::session::build_session(opts, None, registry);
     f(sess)
   })
@@ -603,7 +604,6 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
   use rustc_target::spec::*;
 
   let mut opts = Options::default();
-  opts.crate_types.push(CrateType::Cdylib);
   // We need to have the tcx build the def_path_hash_to_def_id map:
   opts.debugging_opts.query_dep_graph = true;
   opts.optimize = OptLevel::No;
@@ -629,6 +629,9 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
   if print_remarks {
     opts.debuginfo = DebugInfo::Limited;
   }
+  // Avoid a mystery warning about not being about to remove a temp
+  // object after codegen.
+  opts.cg.save_temps = true;
   opts.cg.lto = LtoCli::No;
   opts.cg.panic = Some(PanicStrategy::Abort);
   opts.cg.incremental = None;
@@ -673,17 +676,17 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
   opts
 }
 
-pub fn create_empty_hir_crate() -> rustc::hir::Crate {
-  use rustc::hir::*;
+pub fn create_empty_hir_crate<'hir>() -> rustc_hir::Crate<'hir> {
+  use rustc_hir::*;
 
   let m = Mod {
     inner: DUMMY_SP,
-    item_ids: HirVec::from(vec![]),
+    item_ids: Default::default(),
   };
 
-  let attrs = HirVec::from(vec![]);
+  let attrs = Default::default();
   let span = DUMMY_SP;
-  let exported_macros = HirVec::from(vec![]);
+  let exported_macros = Default::default();
   let items = BTreeMap::new();
   let trait_items = BTreeMap::new();
   let impl_items = BTreeMap::new();
@@ -716,7 +719,7 @@ impl<P> WorkerTranslatorData<P>
     *providers = Providers {
       is_mir_available: |tcx, def_id| {
         let mut providers = Providers::default();
-        rustc_metadata::cstore::provide_extern(&mut providers);
+        rustc_metadata::provide_extern(&mut providers);
 
         let stubber = gintrinsics::stubbing::Stubber::default();
         let def_id = PlatformDriverData::<P>::with(tcx, |tcx, pd| {
@@ -727,7 +730,7 @@ impl<P> WorkerTranslatorData<P>
       },
       optimized_mir: |tcx, def_id| {
         let mut providers = Providers::default();
-        rustc_metadata::cstore::provide_extern(&mut providers);
+        rustc_metadata::provide_extern(&mut providers);
 
         let stubber = gintrinsics::stubbing::Stubber::default();
         let def_id = PlatformDriverData::<P>::with(tcx, |tcx, pd| {
@@ -756,8 +759,8 @@ impl<P> WorkerTranslatorData<P>
   }
 
   pub fn providers_local(providers: &mut Providers) {
-    use rustc::hir::def_id::{LOCAL_CRATE};
     use rustc_data_structures::svh::Svh;
+    use rustc_hir::def_id::{LOCAL_CRATE};
 
     *providers = Providers {
       crate_hash: |_tcx, cnum| {
@@ -787,10 +790,15 @@ impl<P> WorkerTranslatorData<P>
         })
       },
       dependency_formats: |tcx, cnum| {
+        use rustc::middle::dependency_format::Linkage;
+        use rustc::session::config::CrateType;
+
         assert_eq!(cnum, LOCAL_CRATE);
-        let o = vec![(tcx.sess.crate_types.borrow()[0],
-                      Default::default())];
-        o.into()
+        let fake = tcx.all_crate_nums(LOCAL_CRATE)
+          .iter()
+          .map(|_| Linkage::NotLinked )
+          .collect();
+        vec![(CrateType::Cdylib, fake)].into()
       },
       ..*providers
     };
@@ -806,7 +814,7 @@ impl<P> WorkerTranslatorData<P>
         use rustc::ty::{Binder, FnSig, };
 
         let mut providers = Providers::default();
-        rustc_metadata::cstore::provide_extern(&mut providers);
+        rustc_metadata::provide_extern(&mut providers);
 
         // no stubbing here. We want the original fn sig
 
@@ -859,7 +867,7 @@ impl<P> WorkerTranslatorData<P>
       },
       item_attrs: |tcx, def_id| {
         let mut providers = Providers::default();
-        rustc_metadata::cstore::provide_extern(&mut providers);
+        rustc_metadata::provide_extern(&mut providers);
 
         // Note: no replace here. For one, we'll introduce a cycle. And
         // we don't want to use the attributes of a different item anyway.

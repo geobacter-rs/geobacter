@@ -6,10 +6,10 @@ use crate::num_traits::cast::{cast, NumCast, };
 
 use crate::syntax::attr::{mk_attr_outer, };
 use crate::syntax::ast::{self, NestedMetaItem, MetaItem, MetaItemKind, };
-use crate::syntax_pos::{Span, symbol::sym, Symbol, };
-use crate::rustc::hir::{def_id::DefId, };
+use crate::rustc_span::{Span, sym, Symbol, };
 use crate::rustc::ty::{TyCtxt, };
 use crate::rustc_data_structures::sync::{Lrc, };
+use rustc_hir::{def_id::DefId, };
 
 /// Implementers need to implement one of `parse_name_value` or `parse_word`.
 pub trait ConditionItem: Debug + PartialEq<Self> + Sized {

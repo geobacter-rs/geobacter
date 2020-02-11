@@ -25,7 +25,7 @@ type Translators = HashMap<
 
 /// This structure should be used like you'd use a singleton.
 pub struct ContextData {
-  syntax_globals: syntax::Globals,
+  syntax_globals: syntax::attr::Globals,
   mapped: Vec<Metadata>,
 
   next_accel_id: AtomicUsize,
@@ -79,7 +79,7 @@ impl Context {
   pub(crate) fn mapped_metadata(&self) -> &[Metadata] {
     &self.0.mapped
   }
-  pub(crate) fn syntax_globals(&self) -> &syntax::Globals {
+  pub(crate) fn syntax_globals(&self) -> &syntax::attr::Globals {
     &self.0.syntax_globals
   }
 
@@ -356,7 +356,7 @@ impl ModuleContextData {
     use std::intrinsics::unlikely;
 
     let mut cached = self.upgrade(context);
-    if unsafe { unlikely(cached.is_none()) } {
+    if unlikely(cached.is_none()) {
       let data = ModuleData::new(context);
       let data = Arc::new(data);
       let data_ptr = Arc::into_raw(data.clone());

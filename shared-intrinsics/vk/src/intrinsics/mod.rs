@@ -6,7 +6,7 @@ use crate::rustc::mir::interpret::{ConstValue, Scalar, };
 use crate::rustc::mir::{self, };
 use crate::rustc::ty::{self, TyCtxt, layout::Size, };
 use crate::rustc::ty::{Const, };
-use crate::syntax_pos::{DUMMY_SP, };
+use rustc_span::{DUMMY_SP, };
 
 use crate::grustc_help::*;
 
@@ -24,7 +24,7 @@ impl GeobacterCustomIntrinsicMirGen for ExeModel {
                                    _kid_did: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
-                                   mir: &mut mir::Body<'tcx>)
+                                   mir: &mut mir::BodyAndCache<'tcx>)
   {
     info!("mirgen intrinsic {}", self);
 
@@ -38,7 +38,7 @@ impl GeobacterCustomIntrinsicMirGen for ExeModel {
       let v = ConstValue::Scalar(v);
       tcx.mk_const_op(source_info.clone(), Const {
         ty: tcx.types.u32,
-        val: v,
+        val: ty::ConstKind::Value(v),
       })
     };
 

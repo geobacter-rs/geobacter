@@ -16,9 +16,9 @@ extern crate rustc_metadata;
 extern crate rustc_mir;
 extern crate rustc_codegen_utils;
 extern crate rustc_data_structures;
+extern crate rustc_span;
 extern crate rustc_target;
 extern crate syntax;
-extern crate syntax_pos;
 
 #[macro_use]
 extern crate log;
@@ -107,8 +107,8 @@ pub struct AxisId {
 impl AxisId {
   pub fn permutations() -> Vec<Self> {
     let mut out = vec![];
-    for &block in [BlockLevel::Group, BlockLevel::Item, ].into_iter() {
-      for &dim in [Dim::X, Dim::Y, Dim::Z, ].into_iter() {
+    for &block in [BlockLevel::Group, BlockLevel::Item, ].iter() {
+      for &dim in [Dim::X, Dim::Y, Dim::Z, ].iter() {
         out.push(AxisId {
           block,
           dim,
@@ -188,11 +188,11 @@ impl GeobacterCustomIntrinsicMirGen for AxisId {
                                    dd: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
-                                   mir: &mut mir::Body<'tcx>)
+                                   mir: &mut mir::BodyAndCache<'tcx>)
   {
     info!("mirgen intrinsic {}", self);
 
-    common::redirect_or_panic(tcx, mir, move || {
+    common::call_device_func(tcx, mir, move || {
       self.instance(dd, tcx)
     });
   }
@@ -225,7 +225,7 @@ impl DispatchPtr {
   // WOWIE. Okay, so the intrinsic wrappers can't be referenced in
   // anything other than "trivial" functions.
   // For example, if the body of this function is placed in the closure
-  // passed to `redirect_or_panic` in `DispatchPtr::mirgen_simple_intrinsic`,
+  // passed to `call_device_func` in `DispatchPtr::mirgen_simple_intrinsic`,
   // rustc tries to codegen `amdgcn_intrinsics::amdgcn_dispatch_ptr`, which
   // contains a call to the platform specific intrinsic `amdgcn_dispatch_ptr`
   // which can't be defined correctly, as on, eg, x86_64, the readonly address
@@ -246,11 +246,11 @@ impl GeobacterCustomIntrinsicMirGen for DispatchPtr {
                                    _dd: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
-                                   mir: &mut mir::Body<'tcx>)
+                                   mir: &mut mir::BodyAndCache<'tcx>)
   {
     info!("mirgen intrinsic {}", self);
 
-    common::redirect_or_panic(tcx, mir, move || {
+    common::call_device_func(tcx, mir, move || {
       // panic if not running on an AMDGPU
       match &tcx.sess.target.target.arch[..] {
         "amdgpu" => { },
@@ -299,11 +299,11 @@ impl GeobacterCustomIntrinsicMirGen for Barrier {
                                    _dd: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
-                                   mir: &mut mir::Body<'tcx>)
+                                   mir: &mut mir::BodyAndCache<'tcx>)
   {
     info!("mirgen intrinsic {}", self);
 
-    common::redirect_or_panic(tcx, mir, move || {
+    common::call_device_func(tcx, mir, move || {
       // panic if not running on an AMDGPU
       match &tcx.sess.target.target.arch[..] {
         "amdgpu" => { },
@@ -351,11 +351,11 @@ impl GeobacterCustomIntrinsicMirGen for WaveBarrier {
                                    _dd: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
-                                   mir: &mut mir::Body<'tcx>)
+                                   mir: &mut mir::BodyAndCache<'tcx>)
   {
     info!("mirgen intrinsic {}", self);
 
-    common::redirect_or_panic(tcx, mir, move || {
+    common::call_device_func(tcx, mir, move || {
       // panic if not running on an AMDGPU
       match &tcx.sess.target.target.arch[..] {
         "amdgpu" => { },
@@ -403,11 +403,11 @@ impl GeobacterCustomIntrinsicMirGen for ReadFirstLane {
                                    _dd: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
-                                   mir: &mut mir::Body<'tcx>)
+                                   mir: &mut mir::BodyAndCache<'tcx>)
   {
     info!("mirgen intrinsic {}", self);
 
-    common::redirect_or_panic(tcx, mir, move || {
+    common::call_device_func(tcx, mir, move || {
       // panic if not running on an AMDGPU
       match &tcx.sess.target.target.arch[..] {
         "amdgpu" => { },

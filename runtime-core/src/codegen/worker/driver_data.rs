@@ -6,13 +6,13 @@ use std::mem::transmute;
 use std::sync::{Weak, Arc, };
 use std::path::Path;
 
-use rustc::hir::def_id::{DefId, };
 use rustc::mir::CustomIntrinsicMirGen;
 use rustc::ty::{self, TyCtxt, };
 use rustc::session::config::OutputFilenames;
 use rustc_data_structures::fx::{FxHashMap, };
 use rustc_data_structures::sync::{Lrc, RwLock, ReadGuard, MappedReadGuard, };
-use syntax::symbol::{Symbol, };
+use rustc_hir::def_id::{DefId, };
+use rustc_span::symbol::{Symbol, };
 
 use geobacter_core::kernel::{KernelInstance, };
 
@@ -144,7 +144,7 @@ impl<'tcx, P> PlatformDriverData<'tcx, P>
         },
         _ => { },
       }
-      let filename = Path::new(&out.out_filestem)
+      let filename = Path::new("codegen.elf")
         .with_extension(output_type.extension());
       let output = tmpdir.join(filename);
       debug!("reading output {}", output.display());

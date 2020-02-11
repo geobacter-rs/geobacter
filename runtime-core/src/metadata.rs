@@ -10,13 +10,15 @@ use std::sync::{Arc, };
 use rustc_data_structures::fx::{FxHashMap, };
 use rustc_data_structures::sync::{Lock, MetadataRef, AtomicCell, Once, };
 use rustc_data_structures::owning_ref::{OwningRef, };
-use rustc::hir::def_id::{CrateNum,};
+use rustc_hir::def_id::{CrateNum, };
 use rustc::middle::cstore::{MetadataLoader, CrateSource as RustcCrateSource, };
-use rustc_metadata::cstore::{self, MetadataBlob, CStore, };
-use rustc_metadata::schema::{self, METADATA_HEADER};
+use rustc_metadata::creader::CStore;
+use rustc_metadata::rmeta::{METADATA_HEADER, decoder,
+                            decoder::MetadataBlob, CrateRoot,
+                            decoder::CrateNumMap, };
 use rustc::mir::interpret::AllocDecodingState;
 use rustc_target;
-use syntax_pos::symbol::{Symbol};
+use rustc_span::symbol::{Symbol};
 use flate2::read::DeflateDecoder;
 
 use crate::utils::{new_hash_set, };
@@ -30,21 +32,19 @@ pub enum MetadataLoadingError {
   Deflate(PathBuf, String, io::Error),
   Elf(goblin::error::Error),
 }
-impl Error for MetadataLoadingError {
-  fn description(&self) -> &str {
-    match self {
-      &MetadataLoadingError::Generic(ref e) => e.description(),
-      &MetadataLoadingError::Io(ref e) => e.description(),
-      &MetadataLoadingError::SectionMissing => "metadata section missing from file",
-      &MetadataLoadingError::SymbolUtf(ref e) => e.description(),
-      &MetadataLoadingError::Deflate(_, _, ref e) => e.description(),
-      &MetadataLoadingError::Elf(ref e) => e.description(),
-    }
-  }
-}
+impl Error for MetadataLoadingError { }
 impl fmt::Display for MetadataLoadingError {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    f.pad(self.description())
+    match self {
+      &MetadataLoadingError::Generic(ref e) => fmt::Display::fmt(e, f),
+      &MetadataLoadingError::Io(ref e) => fmt::Display::fmt(e, f),
+      &MetadataLoadingError::SectionMissing => {
+        f.pad("metadata section missing from file")
+      },
+      &MetadataLoadingError::SymbolUtf(ref e) => fmt::Display::fmt(e, f),
+      &MetadataLoadingError::Deflate(_, _, ref e) => fmt::Display::fmt(e, f),
+      &MetadataLoadingError::Elf(ref e) => fmt::Display::fmt(e, f),
+    }
   }
 }
 impl From<Box<dyn Error + Send + Sync + 'static>> for MetadataLoadingError {
@@ -77,7 +77,7 @@ pub struct CrateMetadataLoader {
   name_to_blob: FxHashMap<CrateNameHash, (CrateSource, String, SharedMetadataBlob)>,
 
   crate_nums: FxHashMap<CrateNameHash, CrateNum>,
-  roots: FxHashMap<CrateNameHash, Option<schema::CrateRoot<'static>>>,
+  roots: FxHashMap<CrateNameHash, Option<CrateRoot<'static>>>,
 }
 impl CrateMetadataLoader {
   fn process_crate_metadata(&mut self,
@@ -91,8 +91,8 @@ impl CrateMetadataLoader {
 
     let root = krate.get_root();
     let name = CrateNameHash {
-      name: root.name,
-      hash: root.hash.as_u64(),
+      name: root.name(),
+      hash: root.hash().as_u64(),
     };
     let cnum = match self.crate_nums.entry(name.clone()) {
       Entry::Occupied(o) => {
@@ -138,8 +138,8 @@ impl CrateMetadataLoader {
         debug!("parsing metadata from {}", symbol_name);
         let root = dep_blob.get_root();
         let name = CrateNameHash {
-          name: root.name,
-          hash: root.hash.as_u64(),
+          name: root.name(),
+          hash: root.hash().as_u64(),
         };
 
         let value = (object.src.clone(),
@@ -206,18 +206,18 @@ impl CrateMetadataLoader {
 
     debug!("loading from: {}, name: {}, cnum: {}",
            Path::new(src.file_name().unwrap()).display(),
-           root.name, cnum);
+           root.name(), cnum);
 
     // Some notes: a specific dep can be found inside an arbitrary dylib.
     // On top of that, we won't get any linkage to a dep crate if all of
     // a dependee crate's symbols are inlined into the dependent crate.
     // This means we have to load all possible dylibs in our search paths
     // and look inside everyone.
-    let cnum_map: cstore::CrateNumMap = {
-      let mut map: cstore::CrateNumMap = Default::default();
+    let cnum_map: CrateNumMap = {
+      let mut map: CrateNumMap = Default::default();
       map.push(cnum);
 
-      for dep in root.crate_deps.decode(&*shared_krate) {
+      for dep in root.decode_crate_deps(&*shared_krate) {
         if dep.kind.macros_only() {
           map.push(cnum);
           continue;
@@ -262,7 +262,7 @@ impl CrateMetadataLoader {
       .def_path_table
       .decode(&*shared_krate);
 
-    let cmeta = cstore::CrateMetadata {
+    let cmeta = decoder::CrateMetadata {
       extern_crate: Lock::new(None),
       def_path_table,
       trait_impls,
@@ -306,7 +306,7 @@ impl Default for CrateMetadataLoader {
 }
 
 #[derive(Default)]
-pub struct CrateMetadata(pub Vec<cstore::CrateMetadata>);
+pub struct CrateMetadata(pub Vec<decoder::CrateMetadata>);
 
 pub struct SharedMetadataBlob(Arc<Vec<u8>>, MetadataBlob);
 impl SharedMetadataBlob {
@@ -321,7 +321,7 @@ impl SharedMetadataBlob {
     let inner = inner.map(|v| &v[..] )
       .map_owner_box()
       .erase_send_sync_owner();
-    MetadataBlob(inner)
+    MetadataBlob::new(inner)
   }
 
   pub fn unwrap(self) -> MetadataBlob {
@@ -486,7 +486,7 @@ impl MetadataLoader for DummyMetadataLoader {
   }
 }
 pub struct LoadedCrateMetadata {
-  pub globals: syntax::Globals,
+  pub globals: syntax::attr::Globals,
   pub mapped: Vec<Metadata>,
 }
 
@@ -494,13 +494,13 @@ pub struct LoadedCrateMetadata {
 /// you'll probably want to store it somewhere and reuse it a lot.
 pub fn context_metadata() -> Result<LoadedCrateMetadata, Box<dyn Error>> {
   use crate::platform::os::{get_mapped_files, dylib_search_paths};
-  use crate::syntax::source_map::edition::Edition;
+  use crate::rustc_span::edition::Edition;
 
   use std::env::consts::DLL_EXTENSION;
   use std::ffi::OsStr;
   use std::path::Component;
 
-  let syntax_globals = syntax::Globals::new(Edition::Edition2018);
+  let syntax_globals = syntax::attr::Globals::new(Edition::Edition2018);
 
   let mapped = syntax_globals.with(|| -> Result<_, Box<dyn Error>> {
     let mapped = get_mapped_files()?;
@@ -519,8 +519,8 @@ pub fn context_metadata() -> Result<LoadedCrateMetadata, Box<dyn Error>> {
         let owner = metadata.owner_blob();
         let owner = owner.get_root();
         let name = CrateNameHash {
-          name: owner.name,
-          hash: owner.hash.as_u64(),
+          name: owner.name(),
+          hash: owner.hash().as_u64(),
         };
         if !unique_metadata.insert(name) { continue; }
       }
@@ -556,8 +556,8 @@ pub fn context_metadata() -> Result<LoadedCrateMetadata, Box<dyn Error>> {
           let owner = metadata.owner_blob();
           let owner = owner.get_root();
           let name = CrateNameHash {
-            name: owner.name,
-            hash: owner.hash.as_u64(),
+            name: owner.name(),
+            hash: owner.hash().as_u64(),
           };
           if !unique_metadata.insert(name) { continue; }
         }

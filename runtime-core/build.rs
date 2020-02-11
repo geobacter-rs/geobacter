@@ -11,7 +11,6 @@
 extern crate rustc;
 extern crate rustc_driver;
 extern crate syntax;
-extern crate syntax_pos;
 
 use std::env::{var_os};
 use std::error::Error;

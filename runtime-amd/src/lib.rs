@@ -16,7 +16,6 @@
 #![feature(core_intrinsics)]
 #![feature(specialization)]
 #![feature(coerce_unsized, unsize)]
-#![feature(slice_from_raw_parts)]
 #![feature(raw)]
 
 #![allow(incomplete_features)]
@@ -31,7 +30,10 @@ extern crate rmp_serde as rmps;
 
 extern crate syntax;
 extern crate rustc;
+extern crate rustc_attr;
+extern crate rustc_hir;
 extern crate rustc_target;
+extern crate serialize as rustc_serialize;
 
 extern crate geobacter_core as gcore;
 extern crate hsa_rt;

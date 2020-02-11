@@ -1,9 +1,7 @@
 #![feature(rustc_private)]
 #![feature(unboxed_closures)]
 #![feature(core_intrinsics)]
-#![feature(custom_attribute)]
 #![feature(std_internals)]
-#![feature(compiler_builtins_lib)]
 #![feature(arbitrary_self_types)]
 #![feature(raw)]
 
@@ -18,19 +16,24 @@ extern crate rustc_data_structures;
 extern crate rustc_codegen_ssa;
 extern crate rustc_codegen_utils;
 extern crate rustc_driver;
+extern crate rustc_feature;
+extern crate rustc_hir;
 extern crate rustc_incremental;
 extern crate rustc_index;
 extern crate rustc_interface;
 extern crate rustc_lint;
 extern crate rustc_mir;
+extern crate rustc_mir_build;
 extern crate rustc_passes;
 extern crate rustc_privacy;
 extern crate rustc_resolve;
+extern crate rustc_session;
+extern crate rustc_span;
 extern crate rustc_target;
+extern crate rustc_ty;
 extern crate rustc_typeck;
 extern crate rustc_traits;
 extern crate syntax;
-extern crate syntax_pos;
 extern crate serde;
 #[macro_use]
 extern crate erased_serde;
@@ -60,7 +63,7 @@ use crate::serde::{Deserialize, Serialize, };
 
 use crate::shared_defs::platform::Platform;
 
-use crate::rustc::session::config::host_triple;
+use rustc_session::config::host_triple;
 use crate::rustc_target::spec::{Target, TargetTriple, abi::Abi, };
 
 use crate::context::{Context, PlatformModuleData, };

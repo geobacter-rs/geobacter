@@ -10,7 +10,7 @@ use crate::rustc::ty::{ParamEnv, };
 use crate::rustc_index::vec::*;
 use crate::rustc_data_structures::fx::{FxHashSet, };
 use crate::rustc_data_structures::sync::{Lrc, };
-use crate::syntax_pos::{DUMMY_SP, symbol::Symbol, };
+use rustc_span::{DUMMY_SP, symbol::Symbol, };
 
 use crate::common::{DriverData, GeobacterCustomIntrinsicMirGen,
                     GetDriverData, GeobacterMirGen, stubbing,
@@ -66,7 +66,7 @@ impl GeobacterCustomIntrinsicMirGen for CheckFn {
                                    kid_did: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    instance: ty::Instance<'tcx>,
-                                   mir: &mut mir::Body<'tcx>)
+                                   mir: &mut mir::BodyAndCache<'tcx>)
   {
     // Create an empty function:
     let source_info = mir::SourceInfo {
@@ -113,7 +113,7 @@ impl GeobacterCustomIntrinsicMirGen for CheckFn {
     };
 
     let did = instance.def_id();
-    let ty = instance.ty(tcx);
+    let ty = instance.monomorphic_ty(tcx);
     let sig = ty.fn_sig(tcx);
     let sig = tcx.normalize_erasing_late_bound_regions(reveal_all, &sig);
     // check that the function satisfies Fn<(), Output = ()>:

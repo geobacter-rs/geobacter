@@ -1,6 +1,6 @@
 
 use crate::syntax::ast::{MetaItem, };
-use crate::syntax::symbol::Symbol;
+use rustc_span::symbol::Symbol;
 use crate::rustc::ty::{TyCtxt, };
 
 use crate::common::{attrs::*, };

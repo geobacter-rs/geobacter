@@ -458,7 +458,7 @@ impl Agent {
       feature: self.feature()?,
       queue_size: self.queue_size()?,
       queue_type: self.queue_type()?,
-      extensions: self.extensions()?.into_iter()
+      extensions: self.extensions()?.iter()
         .map(|&v| v )
         .collect(),
       version: self.version()?,

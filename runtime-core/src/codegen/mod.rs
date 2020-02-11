@@ -8,7 +8,8 @@ use std::ops::Deref;
 use std::path::{Path, };
 use std::sync::Arc;
 
-use crate::rustc::hir::{def_id::DefId, CodegenFnAttrs, };
+use rustc_hir::def_id::DefId;
+use rustc::middle::codegen_fn_attrs::CodegenFnAttrs;
 use crate::rustc::ty::*;
 use crate::rustc_data_structures::sync::{Lrc, };
 use crate::syntax::ast;

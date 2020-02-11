@@ -8,14 +8,13 @@
 //! We proceed by gathering all possible mono items, then go back over the
 //! items, possibly applying transforms specific to device capabilities.
 
-use rustc::hir::def_id::{CrateNum, LOCAL_CRATE, };
 use rustc::mir::mono::{CodegenUnit, MonoItem, Linkage, Visibility, };
 use rustc::ty::{TyCtxt, };
-use rustc::util::nodemap::{DefIdSet, FxHashSet, };
+use rustc_hir::def_id::{CrateNum, LOCAL_CRATE, DefIdSet, };
 use rustc_mir::monomorphize::{collector::InliningMap,
                               partitioning::partition,
                               partitioning::PartitioningStrategy, };
-use rustc_data_structures::fx::{FxHashMap};
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 
 use std::sync::{Arc, };
 

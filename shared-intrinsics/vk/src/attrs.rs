@@ -11,11 +11,11 @@ use crate::vko::descriptor::descriptor::{DescriptorBufferDesc,
 
 use crate::syntax::ast::{NestedMetaItem, MetaItem, MetaItemKind,
                          LitKind, Lit, };
-use crate::syntax_pos::{Span, Symbol, };
-use crate::rustc::hir::{def_id::DefId, };
-use crate::rustc::mir::{self, Location, };
+use crate::rustc::mir::{self, Location, HasLocalDecls, };
 use crate::rustc::mir::visit::{Visitor, };
 use crate::rustc::ty::{TyCtxt, ParamEnv, Instance, AdtDef, };
+use rustc_hir::def_id::DefId;
+use rustc_span::{Span, Symbol, };
 
 use crate::gvk_core::*;
 use crate::gvk_core::ss::ExeModel;
@@ -405,7 +405,7 @@ impl Root {
 /// data arg when it finds the marker function.
 pub struct LangItemTypeCtorVisitor<'tcx> {
   tcx: TyCtxt<'tcx>,
-  mir: &'tcx mir::Body<'tcx>,
+  mir: mir::ReadOnlyBodyAndCache<'tcx, 'tcx>,
   global: Instance<'tcx>,
 
   data_instance: Option<DefId>,
@@ -414,27 +414,26 @@ pub struct LangItemTypeCtorVisitor<'tcx> {
 
 impl<'tcx> mir::visit::Visitor<'tcx> for LangItemTypeCtorVisitor<'tcx> {
   fn visit_place_base(&mut self,
-                      place: &mir::PlaceBase<'tcx>,
+                      place: &mir::Local,
                       context: mir::visit::PlaceContext,
                       location: Location)
   {
-    if let mir::PlaceBase::Static(static_) = place {
-      if let mir::StaticKind::Static = static_.kind {
-        let def_id = static_.def_id;
-        if let Some(ref prev) = self.data_instance {
-          let tcx = self.tcx;
-          let msg = "found duplicate static; this is possibly a bug in the compiler";
-          tcx.sess.span_warn(tcx.def_span(def_id), &msg);
+    let decls = self.mir.local_decls();
+    let decl = &decls[*place];
+    if let mir::LocalInfo::StaticRef { def_id, .. } = decl.local_info {
+      if let Some(ref prev) = self.data_instance {
+        let tcx = self.tcx;
+        let msg = "found duplicate static; this is possibly a bug in the compiler";
+        tcx.sess.span_warn(tcx.def_span(def_id), &msg);
 
-          let msg = "previous static found here";
-          tcx.sess.span_note_without_error(tcx.def_span(*prev), &msg);
+        let msg = "previous static found here";
+        tcx.sess.span_note_without_error(tcx.def_span(*prev), &msg);
 
-          // Don't return. This lets us print more errors regarding duplicate
-          // markers if we for some reason find more.
-        }
-        info!("found static for lang type: {:?}", def_id);
-        self.data_instance = Some(def_id.clone());
+        // Don't return. This lets us print more errors regarding duplicate
+        // markers if we for some reason find more.
       }
+      info!("found static for lang type: {:?}", def_id);
+      self.data_instance = Some(def_id.clone());
     }
 
     self.super_place_base(place, context, location);
@@ -452,7 +451,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for LangItemTypeCtorVisitor<'tcx> {
       } => {
         let reveal_all = ParamEnv::reveal_all();
 
-        let callee_ty = func.ty(self.mir, tcx);
+        let callee_ty = func.ty(*self.mir, tcx);
         let callee_ty = tcx
           .subst_and_normalize_erasing_regions(self.global.substs,
                                                reveal_all,
@@ -539,14 +538,14 @@ pub fn extract_rust_vk_lang_desc<'tcx>(tcx: TyCtxt<'tcx>,
     let mir = tcx.instance_mir(instance);
     let mut search = LangItemTypeCtorVisitor {
       tcx,
-      mir: &mir,
+      mir,
       global: instance,
 
       data_instance: None,
       marker_instance: None,
     };
 
-    search.visit_body(&mir);
+    search.visit_body(mir);
 
     search.data_instance.clone()
       .and_then(|global| {

@@ -1,7 +1,4 @@
 
-use rustc::hir;
-use rustc::lint;
-use rustc::middle::{self, reachable, resolve_lifetime, stability};
 use rustc::session::{config, Session};
 use rustc::session::CrateDisambiguator;
 use rustc::traits;
@@ -9,8 +6,6 @@ use rustc::ty;
 use rustc_data_structures::fingerprint::Fingerprint;
 use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_data_structures::sync::{Lock, };
-use rustc_metadata::cstore;
-use rustc_mir as mir;
 use rustc_passes;
 use rustc_driver::plugin;
 use rustc_privacy;
@@ -56,31 +51,27 @@ pub fn compute_crate_disambiguator(session: &Session) -> CrateDisambiguator {
 }
 
 pub fn default_provide(providers: &mut ty::query::Providers<'_>) {
-  // Proc macros are expanded with the host compiler; we don't need them here
-  //proc_macro_decls::provide(providers);
   plugin::build::provide(providers);
-  hir::provide(providers);
-  mir::provide(providers);
-  reachable::provide(providers);
-  resolve_lifetime::provide(providers);
+  rustc::hir::provide(providers);
+  rustc_mir::provide(providers);
+  rustc_mir_build::provide(providers);
   rustc_privacy::provide(providers);
   typeck::provide(providers);
   ty::provide(providers);
   traits::provide(providers);
-  stability::provide(providers);
-  reachable::provide(providers);
   rustc_passes::provide(providers);
+  rustc_resolve::provide(providers);
   rustc_traits::provide(providers);
-  middle::region::provide(providers);
-  cstore::provide(providers);
-  lint::provide(providers);
+  rustc_ty::provide(providers);
+  rustc_metadata::provide(providers);
   rustc_lint::provide(providers);
   rustc_codegen_utils::provide(providers);
   rustc_codegen_ssa::provide(providers);
 }
 
 pub fn default_provide_extern(providers: &mut ty::query::Providers<'_>) {
-  cstore::provide_extern(providers);
+  rustc_metadata::provide_extern(providers);
+  rustc_codegen_ssa::provide_extern(providers);
 }
 
 pub fn spawn_thread_pool<F, R>(f: F) -> R
@@ -105,17 +96,15 @@ pub fn spawn_thread_pool<F, R>(f: F) -> R
   };
 
   syntax::GLOBALS.with(|syntax_globals| {
-    syntax_pos::GLOBALS.with(|syntax_pos_globals| {
+    rustc_span::GLOBALS.with(|rustc_span_globals| {
       // The main handler runs for each Rayon worker thread and sets up
       // the thread local rustc uses. syntax_globals and syntax_pos_globals are
       // captured and set on the new threads. ty::tls::with_thread_locals sets up
       // thread local callbacks from libsyntax
       let main_handler = move |worker: ThreadBuilder| {
         syntax::GLOBALS.set(syntax_globals, || {
-          syntax_pos::GLOBALS.set(syntax_pos_globals, || {
-            ty::tls::with_thread_locals(|| {
-              ty::tls::GCX_PTR.set(gcx_ptr, || worker.run() )
-            })
+          rustc_span::GLOBALS.set(rustc_span_globals, || {
+            ty::tls::GCX_PTR.set(gcx_ptr, || worker.run() )
           })
         })
       };

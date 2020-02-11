@@ -376,6 +376,12 @@ pub struct TargetOptions {
 
   /// LLVM ABI name, corresponds to the '-mabi' parameter available in multilib C compilers
   pub llvm_abiname: String,
+
+  /// Whether or not RelaxElfRelocation flag will be passed to the linker
+  pub relax_elf_relocations: bool,
+
+  /// Additional arguments to pass to LLVM, similar to the `-C llvm-args` codegen option.
+  pub llvm_args: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]

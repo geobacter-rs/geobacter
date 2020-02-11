@@ -7,7 +7,6 @@
 #![feature(unboxed_closures)]
 #![feature(fn_traits)]
 #![feature(const_fn, const_transmute)]
-#![feature(slice_from_raw_parts)]
 #![feature(slice_index_methods)]
 #![feature(coerce_unsized)]
 #![feature(unsize)]

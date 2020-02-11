@@ -1,6 +1,4 @@
-#![feature(custom_attribute)]
 #![feature(core_intrinsics)]
-#![feature(slice_from_raw_parts)]
 
 extern crate ndarray as nd;
 extern crate ndarray_parallel as ndp;

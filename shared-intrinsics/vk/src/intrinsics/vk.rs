@@ -19,7 +19,7 @@ use crate::rustc::ty::{self, TyCtxt, Instance, };
 use crate::rustc_index::vec::*;
 use crate::rustc_data_structures::fx::{FxHashSet, };
 use crate::rustc_data_structures::sync::{Lrc, };
-use crate::syntax_pos::{DUMMY_SP, symbol::Symbol, };
+use rustc_span::{DUMMY_SP, symbol::Symbol, };
 
 use crate::common::{DriverData, GeobacterCustomIntrinsicMirGen,
                     GetDriverData, GeobacterMirGen, stubbing,
@@ -116,7 +116,7 @@ impl GeobacterCustomIntrinsicMirGen for ComputePipelineLayoutDesc {
                                    kid_did: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    instance: ty::Instance<'tcx>,
-                                   mir: &mut mir::Body<'tcx>)
+                                   mir: &mut mir::BodyAndCache<'tcx>)
   {
     // Create an empty function:
     let source_info = mir::SourceInfo {
@@ -269,7 +269,7 @@ impl GeobacterCustomIntrinsicMirGen for ComputePipelineRequiredCapabilities {
                                    _kid_did: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    instance: ty::Instance<'tcx>,
-                                   mir: &mut mir::Body<'tcx>)
+                                   mir: &mut mir::BodyAndCache<'tcx>)
   {
     // Create an empty function:
     let source_info = mir::SourceInfo {
@@ -350,7 +350,7 @@ impl GeobacterCustomIntrinsicMirGen for ComputePipelineRequiredExtensions {
                                    _kid_did: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    instance: ty::Instance<'tcx>,
-                                   mir: &mut mir::Body<'tcx>)
+                                   mir: &mut mir::BodyAndCache<'tcx>)
   {
     // Create an empty function:
     let source_info = mir::SourceInfo {
@@ -430,7 +430,7 @@ impl GeobacterCustomIntrinsicMirGen for ComputeDescriptorSetBinding {
                                    _kid_did: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    instance: ty::Instance<'tcx>,
-                                   mir: &mut mir::Body<'tcx>)
+                                   mir: &mut mir::BodyAndCache<'tcx>)
   {
     // Create an empty function:
     let source_info = mir::SourceInfo {
@@ -501,7 +501,7 @@ impl GeobacterCustomIntrinsicMirGen for GraphicsPipelineLayoutDesc {
                                    _kid_did: &dyn DriverData,
                                    _tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
-                                   _mir: &mut mir::Body<'tcx>)
+                                   _mir: &mut mir::BodyAndCache<'tcx>)
   {
     // Create an empty function:
     /*let source_info = mir::SourceInfo {
@@ -620,7 +620,7 @@ impl GeobacterCustomIntrinsicMirGen for GraphicsPipelineRequiredCapabilities {
                                    _kid_did: &dyn DriverData,
                                    _tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
-                                   _mir: &mut mir::Body<'tcx>)
+                                   _mir: &mut mir::BodyAndCache<'tcx>)
   {
     /*// Create an empty function:
     let source_info = mir::SourceInfo {
@@ -741,7 +741,7 @@ impl GeobacterCustomIntrinsicMirGen for GraphicsPipelineRequiredExtensions {
                                    _kid_did: &dyn DriverData,
                                    _tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
-                                   _mir: &mut mir::Body<'tcx>)
+                                   _mir: &mut mir::BodyAndCache<'tcx>)
   {
     /*// Create an empty function:
     let source_info = mir::SourceInfo {
@@ -887,7 +887,7 @@ fn build_compiler_shader_stages<'tcx>(tcx: TyCtxt<'tcx>,
     ty.fragment,
     ty.compute,
   ];
-  tuple.into_iter().map(|&b| tcx.mk_bool_cv(b) ).collect()
+  tuple.iter().map(|&b| tcx.mk_bool_cv(b) ).collect()
 }
 fn build_compiler_descriptor_desc_ty<'tcx>(tcx: TyCtxt<'tcx>,
                                            ty: DescriptorDescTy)
@@ -980,7 +980,7 @@ fn build_compiler_descriptor_img_array<'tcx>(tcx: TyCtxt<'tcx>,
     build_compiler_opt(tcx, second, |_, v| tcx.mk_u32_cv(v) ),
   ];
 
-  tuple.into_iter().cloned().collect()
+  tuple.iter().cloned().collect()
 }
 fn build_compiler_descriptor_texel_buffer<'tcx>(tcx: TyCtxt<'tcx>,
                                                 desc: (bool, Option<Format>))
