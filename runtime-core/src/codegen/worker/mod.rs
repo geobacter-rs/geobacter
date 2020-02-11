@@ -39,7 +39,7 @@ use rustc_resolve::Resolver;
 use rustc_span::DUMMY_SP;
 use rustc_span::symbol::{Symbol, };
 
-use crossbeam::sync::WaitGroup;
+use crossbeam_utils::sync::WaitGroup;
 
 use gintrinsics::{DriverData as GIDriverData, GetDriverData,
                   GeobacterCustomIntrinsicMirGen,

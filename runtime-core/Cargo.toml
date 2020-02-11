@@ -17,7 +17,7 @@ seahash = "3.0.5"
 serde = { version = "1.0", features = ["derive"] }
 tempfile = "3"
 owning_ref = "0.4.0"
-crossbeam = "0.7.0"
+crossbeam-utils = "0.7.0"
 any_key = "0.1.1"
 erased-serde = "0.3.9"
 geobacter-core = "1.0.0"
