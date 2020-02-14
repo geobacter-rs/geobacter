@@ -875,7 +875,7 @@ impl<P> WorkerTranslatorData<P>
         let attrs = (providers.item_attrs)(tcx, def_id);
 
         PlatformDriverData::<P>::with(tcx, move |tcx, pd| {
-          pd.platform.item_attrs(tcx, &pd.driver_data, attrs)
+          pd.platform.item_attrs(tcx, &pd.driver_data, def_id, attrs)
         })
       },
       entry_fn,

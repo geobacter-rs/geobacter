@@ -201,15 +201,20 @@ pub fn geobacter_attrs<F>(tcx: TyCtxt<'_>, did: DefId,
 /// the list of attributes will probably need to originate from the unmodified
 /// providers.
 pub fn geobacter_cfg_attrs<'tcx, T>(tcx: TyCtxt<'tcx>,
-                                    previous: &[ast::Attribute],
+                                    previous: Lrc<[ast::Attribute]>,
                                     root_conditions: &[T])
   -> Lrc<[ast::Attribute]>
   where T: ConditionItem,
 {
+  let gattr = Symbol::intern("geobacter_attr");
+  if previous.iter().all(|item| !item.check_name(gattr) ) {
+    return previous;
+  }
+
   let mut out = Vec::with_capacity(previous.len());
 
   for item in previous.iter() {
-    if !item.check_name(Symbol::intern("geobacter_attr")) {
+    if !item.check_name(gattr) {
       out.push(item.clone());
       continue;
     }
