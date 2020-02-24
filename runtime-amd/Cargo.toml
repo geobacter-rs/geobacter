@@ -23,7 +23,8 @@ geobacter-intrinsics-common = "1.0.0"
 geobacter-amdgpu-intrinsics = "1.0.0"
 geobacter-runtime-amd-macros = "1.0.0"
 arrayvec = "0.5.0"
-packed_simd = { version = "0.3.3", optional = true }
+# the version on crates.io is *8 months* old.
+packed_simd = { git = "https://github.com/rust-lang-nursery/packed_simd.git", optional = true }
 num-traits = "0.2.9"
 
 [dependencies.goblin]
