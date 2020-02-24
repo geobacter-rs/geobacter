@@ -31,10 +31,10 @@ pub struct AxisDimY;
 pub struct AxisDimZ;
 
 pub trait WorkItemAxis {
-  fn workitem_id(&self) -> usize;
+  fn workitem_id(&self) -> u32;
 }
 impl WorkItemAxis for AxisDim {
-  fn workitem_id(&self) -> usize {
+  fn workitem_id(&self) -> u32 {
     match self {
       &AxisDim::X => AxisDimX.workitem_id(),
       &AxisDim::Y => AxisDimY.workitem_id(),
@@ -43,34 +43,34 @@ impl WorkItemAxis for AxisDim {
   }
 }
 impl WorkItemAxis for AxisDimX {
-  fn workitem_id(&self) -> usize {
-    unsafe { __geobacter_workitem_x_id() as usize }
+  fn workitem_id(&self) -> u32 {
+    unsafe { __geobacter_workitem_x_id() as _ }
   }
 }
 impl WorkItemAxis for AxisDimY {
-  fn workitem_id(&self) -> usize {
-    unsafe { __geobacter_workitem_y_id() as usize }
+  fn workitem_id(&self) -> u32 {
+    unsafe { __geobacter_workitem_y_id() as _ }
   }
 }
 impl WorkItemAxis for AxisDimZ {
-  fn workitem_id(&self) -> usize {
-    unsafe { __geobacter_workitem_z_id() as usize }
+  fn workitem_id(&self) -> u32 {
+    unsafe { __geobacter_workitem_z_id() as _ }
   }
 }
 
 pub trait WorkGroupAxis {
-  fn workgroup_id(&self) -> usize;
-  fn workgroup_size(&self, p: DispatchPacket) -> usize;
+  fn workgroup_id(&self) -> u32;
+  fn workgroup_size(&self, p: DispatchPacket) -> u32;
 }
 impl WorkGroupAxis for AxisDim {
-  fn workgroup_id(&self) -> usize {
+  fn workgroup_id(&self) -> u32 {
     match self {
       &AxisDim::X => AxisDimX.workgroup_id(),
       &AxisDim::Y => AxisDimY.workgroup_id(),
       &AxisDim::Z => AxisDimZ.workgroup_id(),
     }
   }
-  fn workgroup_size(&self, p: DispatchPacket) -> usize {
+  fn workgroup_size(&self, p: DispatchPacket) -> u32 {
     match self {
       &AxisDim::X => AxisDimX.workgroup_size(p),
       &AxisDim::Y => AxisDimY.workgroup_size(p),
@@ -79,34 +79,34 @@ impl WorkGroupAxis for AxisDim {
   }
 }
 impl WorkGroupAxis for AxisDimX {
-  fn workgroup_id(&self) -> usize {
-    unsafe { __geobacter_workgroup_x_id() as usize }
+  fn workgroup_id(&self) -> u32 {
+    unsafe { __geobacter_workgroup_x_id() as _ }
   }
-  fn workgroup_size(&self, p: DispatchPacket) -> usize {
-    p.0.workgroup_size_x as usize
+  fn workgroup_size(&self, p: DispatchPacket) -> u32 {
+    p.0.workgroup_size_x as _
   }
 }
 impl WorkGroupAxis for AxisDimY {
-  fn workgroup_id(&self) -> usize {
-    unsafe { __geobacter_workgroup_y_id() as usize }
+  fn workgroup_id(&self) -> u32 {
+    unsafe { __geobacter_workgroup_y_id() as _ }
   }
-  fn workgroup_size(&self, p: DispatchPacket) -> usize {
-    p.0.workgroup_size_y as usize
+  fn workgroup_size(&self, p: DispatchPacket) -> u32 {
+    p.0.workgroup_size_y as _
   }
 }
 impl WorkGroupAxis for AxisDimZ {
-  fn workgroup_id(&self) -> usize {
-    unsafe { __geobacter_workgroup_z_id() as usize }
+  fn workgroup_id(&self) -> u32 {
+    unsafe { __geobacter_workgroup_z_id() as _ }
   }
-  fn workgroup_size(&self, p: DispatchPacket) -> usize {
-    p.0.workgroup_size_z as usize
+  fn workgroup_size(&self, p: DispatchPacket) -> u32 {
+    p.0.workgroup_size_z as _
   }
 }
 pub trait GridAxis {
-  fn grid_size(&self, p: DispatchPacket) -> usize;
+  fn grid_size(&self, p: DispatchPacket) -> u32;
 }
 impl GridAxis for AxisDim {
-  fn grid_size(&self, p: DispatchPacket) -> usize {
+  fn grid_size(&self, p: DispatchPacket) -> u32 {
     match self {
       &AxisDim::X => AxisDimX.grid_size(p),
       &AxisDim::Y => AxisDimY.grid_size(p),
@@ -115,29 +115,29 @@ impl GridAxis for AxisDim {
   }
 }
 impl GridAxis for AxisDimX {
-  fn grid_size(&self, p: DispatchPacket) -> usize {
-    p.0.grid_size_x as usize
+  fn grid_size(&self, p: DispatchPacket) -> u32 {
+    p.0.grid_size_x
   }
 }
 impl GridAxis for AxisDimY {
-  fn grid_size(&self, p: DispatchPacket) -> usize {
-    p.0.grid_size_y as usize
+  fn grid_size(&self, p: DispatchPacket) -> u32 {
+    p.0.grid_size_y
   }
 }
 impl GridAxis for AxisDimZ {
-  fn grid_size(&self, p: DispatchPacket) -> usize {
-    p.0.grid_size_z as usize
+  fn grid_size(&self, p: DispatchPacket) -> u32 {
+    p.0.grid_size_z
   }
 }
 
-pub fn workitem_id() -> [usize; 3] {
+pub fn workitem_id() -> [u32; 3] {
   [
     AxisDimX.workitem_id(),
     AxisDimY.workitem_id(),
     AxisDimZ.workitem_id(),
   ]
 }
-pub fn workgroup_id() -> [usize; 3] {
+pub fn workgroup_id() -> [u32; 3] {
   [
     AxisDimX.workgroup_id(),
     AxisDimY.workgroup_id(),
@@ -195,14 +195,14 @@ impl DispatchPacket {
       _ => unreachable!("dims is out of range: {:?}", dims),
     }
   }
-  pub fn workgroup_size(self) -> [usize; 3] {
+  pub fn workgroup_size(self) -> [u32; 3] {
     [
       AxisDimX.workgroup_size(self),
       AxisDimY.workgroup_size(self),
       AxisDimZ.workgroup_size(self),
     ]
   }
-  pub fn grid_size(self) -> [usize; 3] {
+  pub fn grid_size(self) -> [u32; 3] {
     [
       AxisDimX.grid_size(self),
       AxisDimY.grid_size(self),
@@ -215,21 +215,24 @@ impl DispatchPacket {
     let [s0, s1, s2] = self.workgroup_size();
     let [n0, n1, _n2] = self.grid_size();
 
-    let i0 = g0 * s0 + l0;
-    let i1 = g1 * s1 + l1;
-    let i2 = g2 * s2 + l2;
+    let n0 = n0 as usize;
+    let n1 = n1 as usize;
+
+    let i0 = (g0 * s0 + l0) as usize;
+    let i1 = (g1 * s1 + l1) as usize;
+    let i2 = (g2 * s2 + l2) as usize;
     (i2 * n1 + i1) * n0 + i0
   }
-  pub fn global_id_x(self) -> usize {
+  pub fn global_id_x(self) -> u32 {
     self.global_id(AxisDimX)
   }
-  pub fn global_id_y(self) -> usize {
+  pub fn global_id_y(self) -> u32 {
     self.global_id(AxisDimY)
   }
-  pub fn global_id_z(self) -> usize {
+  pub fn global_id_z(self) -> u32 {
     self.global_id(AxisDimZ)
   }
-  pub fn global_id<T>(self, axis: T) -> usize
+  pub fn global_id<T>(self, axis: T) -> u32
     where T: WorkItemAxis + WorkGroupAxis,
   {
     let l = axis.workitem_id();
@@ -237,7 +240,7 @@ impl DispatchPacket {
     let s = axis.workgroup_size(self);
     g * s + l
   }
-  pub fn global_id_dim(self) -> (usize, usize, usize) {
+  pub fn global_id_dim(self) -> (u32, u32, u32) {
     (self.global_id_x(), self.global_id_y(), self.global_id_z())
   }
 }
