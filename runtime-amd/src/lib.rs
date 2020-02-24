@@ -802,7 +802,7 @@ impl HsaAmdGpuAccel {
     target.options.atomic_cas = true;
     target.options.default_codegen_units = Some(1);
     target.options.obj_is_bitcode = false;
-    target.options.is_builtin = true;
+    target.options.is_builtin = false;
     target.options.simd_types_indirect = false;
     target.options.stack_probes = false;
     target.options.code_model = Some("small".into());
