@@ -104,3 +104,23 @@ impl fmt::Display for Error {
     write!(f, "{:?}", self)
   }
 }
+#[cfg(feature = "alloc-wg")]
+impl<A> From<alloc_wg::collections::CollectionAllocErr<A>> for Error
+  where A: alloc_wg::alloc::AllocRef<Error = Self>,
+{
+  fn from(v: alloc_wg::collections::CollectionAllocErr<A>) -> Self {
+    use alloc_wg::collections::CollectionAllocErr;
+    match v {
+      CollectionAllocErr::CapacityOverflow => Error::Overflow,
+      CollectionAllocErr::AllocError {
+        inner, ..
+      } => inner,
+    }
+  }
+}
+#[cfg(feature = "alloc-wg")]
+impl From<alloc_wg::alloc::LayoutErr> for Error {
+  fn from(_: alloc_wg::alloc::LayoutErr) -> Error {
+    Error::Overflow
+  }
+}

@@ -325,6 +325,8 @@ impl alloc_wg::alloc::BuildAllocRef for MemoryPoolAlloc {
 #[cfg(feature = "alloc-wg")]
 impl alloc_wg::alloc::ReallocRef for MemoryPoolAlloc { }
 #[cfg(feature = "alloc-wg")]
+impl alloc_wg::alloc::Abort for MemoryPoolAlloc { }
+#[cfg(feature = "alloc-wg")]
 impl ::std::ops::Deref for MemoryPoolAlloc {
   type Target = MemoryPool;
   fn deref(&self) -> &MemoryPool { &self.pool }
