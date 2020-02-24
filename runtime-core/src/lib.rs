@@ -35,7 +35,6 @@ extern crate rustc_typeck;
 extern crate rustc_traits;
 extern crate syntax;
 extern crate serde;
-#[macro_use]
 extern crate erased_serde;
 extern crate indexed_vec as indexvec;
 extern crate flate2;
