@@ -1,5 +1,10 @@
 
+#![allow(deprecated)]
+
 use std::marker::{PhantomData, PhantomPinned, };
+use std::num::{NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize,
+               NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
+               Wrapping, };
 use std::rc::{Rc, };
 use std::sync::{Arc, atomic::*, };
 
@@ -70,6 +75,18 @@ impl_prim!(i8, u8, i16, u16, i32, u32, i64, u64, i128, u128, usize, isize,
            f32, f64, bool, (), );
 impl_prim!(AtomicU8, AtomicI8, AtomicU16, AtomicI16, AtomicU32, AtomicI32,
            AtomicU64, AtomicI64, AtomicUsize, AtomicIsize, );
+impl_prim!(NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize,
+           NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize, );
+
+unsafe impl<T> Deps for Wrapping<T>
+  where T: Deps,
+{
+  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+    -> Result<(), CallError>
+  {
+    self.0.iter_deps(f)
+  }
+}
 
 macro_rules! impl_simd {
   ($($prim:ident,)*) => {$(
