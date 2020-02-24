@@ -8,7 +8,7 @@
 use std::ffi::c_void;
 use std::marker::Unsize;
 use std::mem::{size_of, transmute, size_of_val, };
-use std::ops::{CoerceUnsized, Deref, };
+use std::ops::{CoerceUnsized, };
 use std::ptr::{self, NonNull, slice_from_raw_parts_mut, };
 
 #[cfg(feature = "serde")]
@@ -324,7 +324,7 @@ impl alloc_wg::alloc::BuildAllocRef for MemoryPoolAlloc {
 #[cfg(feature = "alloc-wg")]
 impl alloc_wg::alloc::ReallocRef for MemoryPoolAlloc { }
 #[cfg(feature = "alloc-wg")]
-impl Deref for MemoryPoolAlloc {
+impl ::std::ops::Deref for MemoryPoolAlloc {
   type Target = MemoryPool;
   fn deref(&self) -> &MemoryPool { &self.pool }
 }
