@@ -12,6 +12,8 @@ pub extern crate hsa_rt_sys as ffi;
 #[cfg(feature = "serde")]
 extern crate serde;
 extern crate log;
+#[cfg(feature = "alloc-wg")]
+extern crate alloc_wg;
 
 macro_rules! check_err {
   ($call:expr) => {

@@ -13,6 +13,9 @@ use agent::{Agent};
 use crate::error::Error;
 use ffi;
 
+#[cfg(feature = "alloc-wg")]
+pub use super::region_alloc::*;
+
 macro_rules! region_info {
   ($self:expr, $id:expr, $out:expr) => {
     {
