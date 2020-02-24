@@ -4,7 +4,6 @@ extern crate ndarray as nd;
 extern crate ndarray_parallel as ndp;
 extern crate env_logger;
 extern crate rand;
-extern crate packed_simd;
 
 extern crate geobacter_runtime_core as rt_core;
 #[macro_use]
@@ -14,27 +13,28 @@ extern crate geobacter_amd_std as amdgpu_std;
 use std::mem::{size_of, };
 use std::time::Instant;
 
-use ndp::prelude::*;
+use alloc_wg::{vec::Vec, };
 
-use packed_simd::{f64x8, };
+use ndp::prelude::*;
 
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng, };
 
 use rt_core::context::{Context, };
 use rt_amd::HsaAmdGpuAccel;
+use rt_amd::alloc::*;
+use rt_amd::async_copy::CopyDataObject;
 use rt_amd::module::{Invoc, ArgsPool, };
 use rt_amd::signal::*;
 
 use amdgpu_std::{dispatch_packet, };
 
-pub type Elem = f64;
-pub type Simd = f64x8;
-const COUNT_MUL: usize = 2;
+pub type Elem = f32;
+const COUNT_MUL: usize = 64;
 const COUNT: usize = 1024 * 1024 * COUNT_MUL;
 const ITERATIONS: usize = 16;
 
-const WG_SIZE: usize = 8;
+const WG_SIZE: usize = 256;
 
 /// This is the kernel that is run on the GPU
 pub fn vector_foreach(args: &Args) {
@@ -43,11 +43,19 @@ pub fn vector_foreach(args: &Args) {
 
     let idx = dispatch_packet().global_id_x();
 
-    let dest = &mut tensor[idx];
-    for _ in 0..ITERATIONS {
-      *dest += 1.0;
-      *dest *= value;
-    }
+    let dest = &mut tensor[idx as usize];
+
+    calc(dest, value);
+  }
+}
+
+fn calc(dest: &mut Elem, value: Elem) {
+  let mut i = 0u16;
+  while i < ITERATIONS as u16 {
+    *dest += 1.0 as Elem;
+    *dest *= value;
+
+    i += 1;
   }
 }
 
@@ -55,12 +63,12 @@ pub fn vector_foreach(args: &Args) {
 #[derive(GeobacterDeps)]
 pub struct Args {
   copy: DeviceSignal,
-  tensor: *mut [Simd],
+  tensor: *mut [Elem],
   pub value: Elem,
 }
 
 impl Args {
-  pub fn tensor_view(&self) -> Option<&mut [Simd]> {
+  pub fn tensor_view(&self) -> Option<&mut [Elem]> {
     unsafe {
       self.tensor.as_mut()
     }
@@ -93,16 +101,21 @@ pub fn main() {
   }
 
   println!("allocating {} MB of host memory",
-           COUNT * size_of::<Simd>() / 1024 / 1024);
+           COUNT * size_of::<Elem>() / 1024 / 1024);
 
-  let mut original_values: Vec<Simd> = Vec::new();
-  time("alloc original_values", || {
-    original_values.reserve(COUNT)
+  let lap_alloc = accels.first().unwrap().fine_lap_node_alloc(0);
+  let mut original_values: Vec<Elem, _> = time("alloc original_values", || {
+    Vec::with_capacity_in(COUNT, lap_alloc.clone())
   });
   unsafe {
     // no initialization:
     original_values.set_len(COUNT);
   }
+  let mut values: LapVec<Elem> = time("alloc host output slice", || {
+    LapVec::with_capacity_in(COUNT, lap_alloc.clone())
+  });
+  unsafe { values.set_len(COUNT); }
+
   let mut rng = SmallRng::from_entropy();
 
   // run the kernel 20 times for good measure.
@@ -118,24 +131,13 @@ pub fn main() {
     for accel in accels.iter() {
       println!("Testing device {}", accel.agent().name().unwrap());
 
-      let mut values = time("alloc host slice", || unsafe {
-        accel.alloc_host_visible_slice(COUNT)
-          .expect("HsaAmdGpuAccel::alloc_host_visible_slice")
-      });
-      time("copy original values", || {
-        values.copy_from_slice(&original_values);
-      });
-      time("grant gpu access", || {
-        values.set_accessible(&[&*accel])
-          .expect("grant_agents_access");
-      });
-
-      let device_values_ptr = time("alloc device slice", || unsafe {
-        accel.alloc_device_local_slice::<Simd>(COUNT)
+      let mut device_values_ptr = time("alloc device slice", || unsafe {
+        accel.alloc_device_local_slice::<Elem>(COUNT)
           .expect("HsaAmdGpuAccel::alloc_device_local")
       });
 
-      println!("host ptr: 0x{:p}, agent ptr: 0x{:p}", values, device_values_ptr);
+      println!("host ptr: 0x{:p}, agent ptr: 0x{:p}",
+               original_values.as_ptr(), device_values_ptr);
 
       let async_copy_signal = accel.new_device_signal(1)
         .expect("HsaAmdGpuAccel::new_device_signal: async_copy_signal");
@@ -144,9 +146,18 @@ pub fn main() {
       let results_signal = accel.new_host_signal(1)
         .expect("HsaAmdGpuAccel::new_host_signal: results_signal");
 
+      if accels.len() != 1 {
+        time("grant gpu access: `original_values` and `values`", || {
+          original_values.set_accessible(&[&*accel])
+            .expect("grant_agents_access");
+          values.set_accessible(&[&*accel])
+            .expect("grant_agents_access");
+        });
+      }
+
       unsafe {
-        accel.unchecked_async_copy_into(values.as_pool_ptr().into_bytes(),
-                                        device_values_ptr.as_pool_ptr().into_bytes(),
+        accel.unchecked_async_copy_into(&original_values,
+                                        &mut device_values_ptr,
                                         &[], &async_copy_signal)
           .expect("HsaAmdGpuAccel::async_copy_into");
       }
@@ -163,11 +174,11 @@ pub fn main() {
         .expect("HsaAmdGpuAccel::create_single_queue");
 
       let args_pool = time("alloc kernargs pool", || {
-        ArgsPool::new::<(Args, )>(&accel, 1)
+        ArgsPool::new::<Args>(&accel, 1)
           .expect("ArgsPool::new")
       });
 
-      const VALUE: Elem = 4.0;
+      const VALUE: Elem = 4.0 as _;
       let args = Args {
         copy: async_copy_signal,
         tensor: device_values_ptr.as_ptr(),
@@ -188,13 +199,14 @@ pub fn main() {
       // specifically wait (without enqueuing another async copy) here
       // so we can time just the dispatch.
       time("dispatch wait", move || {
-        wait.wait(true);
+        wait.wait_for_zero(false)
+          .expect("wait for zero failed");
       });
 
       // now copy the results back to the locked memory:
       unsafe {
-        accel.unchecked_async_copy_from(device_values_ptr.as_pool_ptr().into_bytes(),
-                                        values.as_pool_ptr().into_bytes(),
+        accel.unchecked_async_copy_from(&device_values_ptr,
+                                        &mut values,
                                         &[], &results_signal)
           .expect("HsaAmdGpuAccel::async_copy_from");
       }
@@ -211,13 +223,9 @@ pub fn main() {
         nd::Zip::from(&values)
           .and(&original_values)
           .par_apply(|&lhs, &rhs| {
-            let mut expected_value = rhs;
-            for _ in 0..ITERATIONS {
-              expected_value += 1.0;
-              expected_value *= VALUE;
-            }
-
-            assert_eq!(lhs, expected_value);
+            let mut rhs = rhs;
+            calc(&mut rhs, VALUE);
+            assert_eq!(lhs, rhs);
           });
       });
     }

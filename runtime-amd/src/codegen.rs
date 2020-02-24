@@ -315,9 +315,9 @@ impl PlatformKernelDesc for KernelDesc { }
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[derive(Default, Hash)]
 pub struct CodegenDesc {
-  pub group_segment_size: usize,
-  pub kernarg_segment_size: usize,
-  pub private_segment_size: usize,
+  pub group_segment_size: u32,
+  pub kernarg_segment_size: u32,
+  pub private_segment_size: u32,
   /// TODO always zero. Not present in NT_AMDGPU_METADATA
   pub workgroup_fbarrier_count: u32,
 

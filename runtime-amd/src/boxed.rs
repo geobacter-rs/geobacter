@@ -1,7 +1,9 @@
 
+#![allow(deprecated)]
+
 use std::alloc::Layout;
 use std::cmp::{Ordering, };
-use std::convert::TryFrom;
+use std::convert::*;
 use std::fmt;
 use std::intrinsics::type_name;
 use std::iter::*;
@@ -16,17 +18,21 @@ use std::sync::Arc;
 
 use std::result::Result; // CLion.
 
+use alloc_wg::alloc::{AllocRef, };
+
 use geobacter_core::ptr::{SlicePtr, Ptr};
 use geobacter_core::slice::{SliceRef, SliceMut};
 
 use hsa_rt::error::Error as HsaError;
-use hsa_rt::ext::amd::{lock_memory, unlock_memory, MemoryPool, MemoryPoolPtr};
+use hsa_rt::ext::amd::{lock_memory, unlock_memory, MemoryPool, MemoryPoolAlloc,
+                       MemoryPoolPtr, };
 
 use log::{error, };
 
 use crate::{HsaAmdGpuAccel, };
 use crate::async_copy::{CopyDataObject, };
 
+#[deprecated]
 pub struct BoxSlice<T>
   where T: Sized,
 {
@@ -213,26 +219,25 @@ impl<T> RawPoolBox<T>
 impl<T> RawPoolBox<[T]>
   where T: Sized,
 {
-  pub unsafe fn new_uninit_slice(pool: MemoryPool, count: usize)
+  pub unsafe fn new_uninit_slice(mut pool: MemoryPoolAlloc, count: usize)
     -> Result<Self, HsaError>
   {
     let layout = Layout::new::<T>()
       .repeat_packed(count)
       .map_err(|_| HsaError::Overflow )?;
 
-    let pool_aligment = pool.alloc_alignment()?
-      .unwrap_or_default();
-    if pool_aligment < layout.align() {
-      return Err(HsaError::IncompatibleArguments);
-    }
-
-    let bytes = layout.size();
-    let ptr: StdNonNull<T> = pool.alloc_in_pool(bytes)?
-      .as_ptr()
-      .cast();
-    let ptr = slice_from_raw_parts_mut(ptr.as_ptr(), count);
+    let ptr = match layout.try_into() {
+      Ok(layout) => {
+        let ptr: StdNonNull<T> = pool.alloc(layout)?.cast();
+        slice_from_raw_parts_mut(ptr.as_ptr(), count)
+      },
+      Err(_) => {
+        // empty slice; not an error!
+        slice_from_raw_parts_mut(0 as *mut T, count)
+      },
+    };
     let ptr = Unique::new_unchecked(ptr);
-    Ok(RawPoolBox(ptr, pool))
+    Ok(RawPoolBox(ptr, pool.pool()))
   }
 
   /// Safe due to the length being embedded inside a fat pointer.
@@ -284,11 +289,8 @@ impl<T> CopyDataObject for RawPoolBox<T>
   }
 }
 
-/// A box-esk type allocated from a CPU visible memory pool.
-/// Locality is defined as memory accessible to processor which
-/// is running the code.
-///
-/// This type is safe to dereference.
+/// Deprecated, use `LapBox` instead.
+#[deprecated]
 pub struct LocallyAccessiblePoolBox<T>(pub(crate) RawPoolBox<T>)
   where T: ?Sized;
 

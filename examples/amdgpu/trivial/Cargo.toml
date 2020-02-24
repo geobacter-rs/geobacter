@@ -8,8 +8,8 @@ version = "0.1.0"
 env_logger = "0.6.0"
 ndarray = "0.12.1"
 ndarray-parallel = "0.9"
-packed_simd = "0.3.3"
-rand = { version = "0.7.0", features = ["small_rng", "simd_support", ] }
+rand = { version = "0.7.0", features = ["small_rng", ] }
 geobacter-runtime-core = "1.0.0"
 geobacter-runtime-amd = "1.0.0"
 geobacter-amd-std = "1.0.0"
+alloc-wg = "0.7.0"

@@ -6,9 +6,12 @@ use std::marker::{PhantomData, Unsize, };
 use std::mem::{transmute, size_of, };
 use std::num::NonZeroU64;
 use std::ops::{CoerceUnsized, Deref, DerefMut, };
-use std::ptr::{Unique, };
+use std::pin::Pin;
+use std::ptr::{self, Unique, };
 use std::sync::{Arc, atomic, };
 use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool, };
+
+use alloc_wg::boxed::Box;
 
 use arrayvec::ArrayVec;
 
@@ -21,8 +24,8 @@ use gcore::ref_::*;
 
 use hsa_rt::agent::Agent;
 use hsa_rt::executable::FrozenExecutable;
-use hsa_rt::mem::region::{RegionBox, Region, };
 use hsa_rt::queue::{DispatchPacket, IQueue, QueueKind, };
+use hsa_rt::signal::SignalRef;
 
 pub use hsa_rt::queue::{FenceScope, QueueError, };
 pub use hsa_rt::queue::KernelMultiQueue as DeviceMultiQueue;
@@ -35,12 +38,16 @@ use crate::grt_core::context::{ModuleContextData, PlatformModuleData, };
 
 use crate::HsaAmdGpuAccel;
 use crate::codegen::{Codegenner, KernelDesc, CodegenDesc};
-use crate::signal::{DeviceConsumable, HostConsumable, SignalHandle, SignaledDeref, Value};
-use hsa_rt::signal::SignalRef;
+use crate::signal::{DeviceConsumable, HostConsumable, SignalHandle,
+                    SignaledDeref, Value};
 
+use self::args_pool::ArgsPoolAlloc;
+
+pub use self::args_pool::ArgsPool;
 pub use self::deps::Deps;
 
 pub mod args;
+pub mod args_pool;
 pub mod deps;
 
 /// Closures are *explicitly not supported*, so we don't keep the function
@@ -99,7 +106,7 @@ pub struct FuncModule<A, MD = Arc<HsaModuleData>>
 }
 impl<A> FuncModule<A> {
   pub fn new<F>(accel: &Arc<HsaAmdGpuAccel>, f: F)
-    -> Result<Self, Box<dyn Error>>
+    -> Result<Self, ::std::boxed::Box<dyn Error>>
     where F: for<'a> Fn(&'a A) + Sized,
   {
     let f = Function::new(f);
@@ -119,6 +126,16 @@ impl<A> FuncModule<A> {
       f,
       _arg: PhantomData,
     })
+  }
+}
+impl<A, MD> FuncModule<A, MD>
+  where MD: Deref<Target = HsaModuleData>,
+{
+  pub fn group_size(&self) -> u32 {
+    self.module_data.desc.group_segment_size + self.dynamic_group_size
+  }
+  pub fn private_size(&self) -> u32 {
+    self.module_data.desc.private_segment_size + self.dynamic_private_size
   }
 
   fn set_acquire_fence(&mut self, scope: FenceScope) {
@@ -261,7 +278,7 @@ impl<A, Dim> Invoc<A, Dim, Arc<HsaModuleData>>
         Dim: LaunchDims,
 {
   pub fn new<F>(accel: &Arc<HsaAmdGpuAccel>, f: F)
-    -> Result<Self, Box<dyn Error>>
+    -> Result<Self, ::std::boxed::Box<dyn Error>>
     where F: for<'a> Fn(&'a A) + Sized,
   {
     let fmod = FuncModule::new(accel, f)?;
@@ -273,7 +290,7 @@ impl<A, Dim> Invoc<A, Dim, Arc<HsaModuleData>>
   }
   pub fn new_dims<F>(accel: &Arc<HsaAmdGpuAccel>,
                      f: F, wg: Dim, grid: Dim)
-    -> Result<Self, Box<dyn Error>>
+    -> Result<Self, ::std::boxed::Box<dyn Error>>
     where F: for<'a> Fn(&'a A) + Sized,
   {
     let fmod = FuncModule::new(accel, f)?;
@@ -323,7 +340,7 @@ impl<A, Dim, MD> Invoc<A, Dim, MD>
                                                      completion: CS,
                                                      args_pool: P)
     -> Result<InvocCompletion<P, A, Q, CS>, CallError>
-    where P: Deref<Target = ArgsPool>,
+    where P: Deref<Target = ArgsPool> + Clone,
           Q: Deref<Target = T>,
           T: IQueue<K>,
           K: QueueKind,
@@ -344,7 +361,7 @@ impl<A, Dim, MD> Invoc<A, Dim, MD>
                                                          completion: &mut Option<CS>,
                                                          args_pool: P)
     -> Result<InvocCompletion<P, A, Q, CS>, CallError>
-    where P: Deref<Target = ArgsPool>,
+    where P: Deref<Target = ArgsPool> + Clone,
           Q: Deref<Target = T>,
           T: IQueue<K>,
           K: QueueKind,
@@ -352,17 +369,12 @@ impl<A, Dim, MD> Invoc<A, Dim, MD>
   {
     let kernel = &*self.fmod.module_data;
 
-    assert_eq!(kernel.desc.kernarg_segment_size, size_of::<(&A,)>());
+    assert_eq!(kernel.desc.kernarg_segment_size as usize, size_of::<(&A,)>());
 
-    let kernargs = args_pool.alloc::<A>();
-    if kernargs.is_none() {
-      return Err(CallError::Oom);
-    }
-    // now alloc the kernargs ref:
-    let kernargs_ref = args_pool.alloc::<(&A, )>();
-    if kernargs_ref.is_none() {
-      return Err(CallError::Oom);
-    }
+    let mut kernargs = args_pool.alloc::<(A, &A, )>()
+      .ok_or(CallError::Oom)?;
+    let kargs = kernargs.cast();
+    let kargs_ref = (&mut kernargs.as_mut().1) as *mut &A;
 
     let Invoc {
       workgroup_dim,
@@ -370,11 +382,27 @@ impl<A, Dim, MD> Invoc<A, Dim, MD>
       ref fmod,
     } = self;
 
+    let q = queue.as_ref().expect("provide a queue pls");
+    let c = completion.as_ref()
+      .map(|c| c.signal_ref() );
+
+    let dispatch = DispatchPacket {
+      workgroup_size: workgroup_dim.workgroup()?,
+      grid_size: grid_dim.grid()?,
+      group_segment_size: fmod.group_size(),
+      private_segment_size: fmod.private_size(),
+      scaquire_scope: fmod.begin_fence.clone(),
+      screlease_scope: fmod.end_fence.clone(),
+      ordered: c.is_none(),
+      kernel_object: kernel.kernel_object.get(),
+      kernel_args: &*kargs_ref,
+      completion_signal: c,
+    };
+
     // enqueue the dep barriers. this is done after kernarg allocation
     // so that this step isn't repeated if we're called again as a result
     // of kernarg alloc failure.
     {
-      let q = queue.as_ref().expect("provide a queue pls");
       let mut signals: ArrayVec<[SignalRef; 5]> = ArrayVec::new();
       {
         let mut f = |sig: &dyn DeviceConsumable| -> Result<(), CallError> {
@@ -402,45 +430,21 @@ impl<A, Dim, MD> Invoc<A, Dim, MD>
       }
     }
 
-    let kernargs = kernargs.unwrap();
-    ::std::ptr::write(kernargs.as_ptr(),
-                      args.take().unwrap());
-    let kernargs_ref = kernargs_ref.unwrap();
-    ::std::ptr::write(kernargs_ref.as_ptr(),
-                      (kernargs.as_ref(), ));
+    ptr::write(kargs.as_ptr(), args.take().unwrap());
+    ptr::write(kargs_ref, kargs.as_ref());
     // Ensure the writes to the kernel args are all the way to memory:
     atomic::fence(Ordering::SeqCst);
 
-    {
-      let q = queue.as_ref().unwrap();
-      let c = completion.as_ref()
-        .map(|c| c.signal_ref() );
+    let kargs = Box::from_raw_in(kargs.as_ptr(),
+                                 ArgsPoolAlloc(args_pool));
 
-      let group = kernel.desc.group_segment_size as u32;
-      let private = kernel.desc.private_segment_size as u32;
-      let dispatch = DispatchPacket {
-        workgroup_size: workgroup_dim.workgroup()?,
-        grid_size: grid_dim.grid()?,
-        group_segment_size: fmod.dynamic_group_size + group,
-        private_segment_size: fmod.dynamic_private_size + private,
-        scaquire_scope: fmod.begin_fence.clone(),
-        screlease_scope: fmod.end_fence.clone(),
-        ordered: c.is_none(),
-        kernel_object: kernel.kernel_object.get(),
-        kernel_args: kernargs_ref.as_ref(),
-        completion_signal: c,
-      };
-
-      q
-        .try_enqueue_kernel_dispatch(dispatch)?;
-    }
+    q.try_enqueue_kernel_dispatch(dispatch)?;
 
     let inner = InvocCompletion {
-      _storage: args_pool,
       _queue: queue.take().unwrap(),
       signal: completion.take().unwrap(),
       waited: AtomicBool::new(false),
-      args: kernargs,
+      args: Box::into_pin(kargs),
     };
     Ok(inner)
   }
@@ -461,163 +465,8 @@ impl<A, WGDim, MD> DerefMut for Invoc<A, WGDim, MD>
   fn deref_mut(&mut self) -> &mut FuncModule<A, MD> { &mut self.fmod }
 }
 
-/// Use this to invoc in a loop without allocating every iteration
-/// AND without running amuck of Rust's borrow checker.
-/// XXX Use the AMD vendor extensions to get the cacheline size, instead of
-/// hardcoding to 1 << 6 here.
-pub struct ArgsPool {
-  /// Keep the region handle alive
-  _kernargs_region: Region,
-  /// Only `None` after dropping
-  base: Option<RegionBox<[u8]>>,
-  allocated: AtomicUsize,
-}
-impl ArgsPool {
-  /// Create storage for `n` function calls for use on the provided accelerator.
-  pub fn new<A>(accel: &Arc<HsaAmdGpuAccel>, count: usize)
-    -> Result<Self, Box<dyn Error>>
-    where A: Sized,
-  {
-    use std::cmp::max;
-
-    let kernargs_region = accel.kernargs_region().clone();
-    let layout = Layout::new::<A>();
-    let pool_alignment = kernargs_region.runtime_alloc_alignment()?;
-    if pool_alignment < layout.align() {
-      return Err("pool allocation alignment is < less than arg alignment".into())
-    }
-    let (layout, _) = layout.repeat(count)?;
-    let layout = layout.align_to(pool_alignment)?;
-    let bytes = layout.size();
-    let pool_min_alloc = kernargs_region.runtime_alloc_granule()?;
-    let pool_max_alloc = kernargs_region.alloc_max_size()?;
-    // bump the size to the minimum allocation size:
-    let bytes = max(pool_min_alloc, bytes);
-
-    // ensure we don't allocate more than allowed:
-    if bytes > pool_max_alloc {
-      return Err("maximum pool allocation size exceeded".into());
-    }
-
-    let base = unsafe {
-      RegionBox::uninitialized_slice(&kernargs_region, bytes)?
-    };
-
-    Ok(ArgsPool {
-      allocated: AtomicUsize::new(base.as_ptr() as usize),
-      base: Some(base),
-      _kernargs_region: kernargs_region,
-    })
-  }
-
-  pub fn new_arena(accel: &Arc<HsaAmdGpuAccel>, bytes: usize)
-    -> Result<Self, Box<dyn Error>>
-  {
-    use std::cmp::max;
-
-    let kernargs_region = accel.kernargs_region().clone();
-    let pool_min_alloc = kernargs_region.runtime_alloc_granule()?;
-    let pool_max_alloc = kernargs_region.alloc_max_size()?;
-    // bump the size to the minimum allocation size:
-    let bytes = max(pool_min_alloc, bytes);
-    // ensure we don't allocate more than allowed:
-    if bytes > pool_max_alloc {
-      return Err("maximum pool allocation size exceeded".into());
-    }
-
-    let base = unsafe {
-      RegionBox::uninitialized_slice(&kernargs_region, bytes)?
-    };
-
-    Ok(ArgsPool {
-      allocated: AtomicUsize::new(base.as_ptr() as usize),
-      base: Some(base),
-      _kernargs_region: kernargs_region,
-    })
-  }
-
-  fn base(&self) -> &RegionBox<[u8]> {
-    self.base.as_ref()
-      .expect("dropped?")
-  }
-  pub fn size(&self) -> usize { self.base().len() }
-
-  fn start_byte(&self) -> usize { self.base().as_ptr() as usize }
-  fn end_byte(&self) -> usize {
-    self.start_byte() + self.size()
-  }
-
-  /// Allocate a single `Args` block. Returns `None` when out of space.
-  /// `args` must be Some. If allocation is successful, the returned
-  /// pointer will be uninitialized.
-  pub unsafe fn alloc<A>(&self) -> Option<Unique<A>>
-    where A: Sized,
-  {
-    fn alignment_padding(size: usize, align: usize) -> usize {
-      (align - (size - 1) % align) - 1
-    }
-
-    let layout = Layout::new::<A>()
-      // force alignment to at least the cacheline size to avoid false
-      // sharing.
-      .align_to(64) // XXX hardcoded. could use this fact to avoid the loop below
-      // TODO return an error here so users don't think it's OOM.
-      .ok()?;
-
-    let mut allocated_start = self.allocated.load(Ordering::Acquire);
-
-    loop {
-      let padding = alignment_padding(allocated_start,
-                                      layout.align());
-
-      let alloc_size = layout.size() + padding;
-
-      if allocated_start + alloc_size > self.end_byte() {
-        // no more space available, bail.
-        return None;
-      }
-
-      match self.allocated.compare_exchange_weak(allocated_start,
-                                                 allocated_start + alloc_size,
-                                                 Ordering::SeqCst,
-                                                 Ordering::Relaxed) {
-        Ok(_) => {
-          // ensure the start of the allocation is actually aligned
-          allocated_start += padding;
-        },
-        Err(new_allocated_start) => {
-          allocated_start = new_allocated_start;
-          continue;
-        }
-      }
-
-      let ptr: *mut A = transmute(allocated_start);
-      return Some(Unique::new_unchecked(ptr));
-    }
-  }
-
-  /// Reset the allocation ptr to the base. The mutable requirement ensures
-  /// no device calls are in flight.
-  pub fn wash(&mut self) {
-    let base = self.base().as_ptr() as usize;
-    *self.allocated.get_mut() = base;
-  }
-}
-
-impl Drop for ArgsPool {
-  fn drop(&mut self) {
-    // we don't need to dtor any arguments, as `InvocCompletion` handles that
-    // and will ensure we stay alive.
-    let base = self.base.take().unwrap();
-
-    if let Err(e) = base.checked_drop() {
-      error!("failed to deallocate kernel arg storage: {:?}", e);
-    }
-  }
-}
-
 unsafe impl<P, A, Q, S> deps::Deps for InvocCompletion<P, A, Q, S>
-  where P: Deref<Target = ArgsPool>,
+  where P: Deref<Target = ArgsPool> + Clone,
         S: DeviceConsumable,
         A: ?Sized,
 {
@@ -628,25 +477,21 @@ unsafe impl<P, A, Q, S> deps::Deps for InvocCompletion<P, A, Q, S>
   }
 }
 impl<P, A, Q, S> Deref for InvocCompletion<P, A, Q, S>
-  where P: Deref<Target = ArgsPool>,
+  where P: Deref<Target = ArgsPool> + Clone,
         S: SignalHandle,
         A: ?Sized,
 {
   type Target = A;
   fn deref(&self) -> &Self::Target {
-    unsafe {
-      self.args
-        .as_ref()
-    }
+    &self.args
   }
 }
 #[must_use]
 pub struct InvocCompletion<P, A, Q, S>
-  where P: Deref<Target = ArgsPool>,
+  where P: Deref<Target = ArgsPool> + Clone,
         S: SignalHandle,
         A: ?Sized,
 {
-  _storage: P,
   _queue: Q,
   signal: S,
   /// a flag which we will set when we get used as a dep in
@@ -654,15 +499,15 @@ pub struct InvocCompletion<P, A, Q, S>
   /// is a device signal.
   waited: AtomicBool,
   /// Keep this last so we can be unsized
-  args: Unique<A>,
+  args: Pin<Box<A, args_pool::ArgsPoolAlloc<P>>>,
 }
 impl<P, A, Q, S> InvocCompletion<P, A, Q, S>
-  where P: Deref<Target = ArgsPool>,
+  where P: Deref<Target = ArgsPool> + Clone,
         S: SignalHandle,
         A: ?Sized,
 {
   pub unsafe fn wait_ref<F, R>(&self, f: F) -> SignaledDeref<R, &S>
-    where F: FnOnce(&A) -> R,
+    where F: FnOnce(Pin<&A>) -> R,
           S: HostConsumable,
   {
     let args = self.args.as_ref();
@@ -680,14 +525,14 @@ impl<P, A, Q, S> InvocCompletion<P, A, Q, S>
   }
 }
 impl<P, A, Q, S> InvocCompletion<P, A, Q, S>
-  where P: Deref<Target = ArgsPool>,
+  where P: Deref<Target = ArgsPool> + Clone,
         S: HostConsumable,
         A: ?Sized,
 { }
 // impl the signal traits so that invoc completions can be reused for multiple
 // kernel dispatches.
 impl<P, A, Q, S> SignalHandle for InvocCompletion<P, A, Q, S>
-  where P: Deref<Target = ArgsPool>,
+  where P: Deref<Target = ArgsPool> + Clone,
         S: SignalHandle,
         A: ?Sized,
 {
@@ -707,7 +552,7 @@ impl<P, A, Q, S> SignalHandle for InvocCompletion<P, A, Q, S>
   }
 }
 impl<P, A, Q, S> DeviceConsumable for InvocCompletion<P, A, Q, S>
-  where P: Deref<Target = ArgsPool>,
+  where P: Deref<Target = ArgsPool> + Clone,
         S: DeviceConsumable,
         A: ?Sized,
 {
@@ -717,7 +562,7 @@ impl<P, A, Q, S> DeviceConsumable for InvocCompletion<P, A, Q, S>
   }
 }
 impl<P, A, Q, S> HostConsumable for InvocCompletion<P, A, Q, S>
-  where P: Deref<Target = ArgsPool>,
+  where P: Deref<Target = ArgsPool> + Clone,
         S: HostConsumable,
         A: ?Sized,
 {
@@ -733,7 +578,7 @@ impl<P, A, Q, S> HostConsumable for InvocCompletion<P, A, Q, S>
   }
 }
 impl<P, A, Q, S> Drop for InvocCompletion<P, A, Q, S>
-  where P: Deref<Target = ArgsPool>,
+  where P: Deref<Target = ArgsPool> + Clone,
         S: SignalHandle,
         A: ?Sized,
 {
@@ -750,8 +595,6 @@ impl<P, A, Q, S> Drop for InvocCompletion<P, A, Q, S>
     }
 
     if waited {
-      // Run `self.args`' drop code
-      unsafe { std::intrinsics::drop_in_place(self.args.as_ptr()); }
       return;
     }
 
@@ -767,14 +610,14 @@ impl<P, A, Q, S> Drop for InvocCompletion<P, A, Q, S>
   }
 }
 impl<P, A1, A2, Q, S> CoerceUnsized<InvocCompletion<P, A2, Q, S>> for InvocCompletion<P, A1, Q, S>
-  where P: Deref<Target = ArgsPool>,
+  where P: Deref<Target = ArgsPool> + Clone,
         S: SignalHandle,
         A1: Unsize<A2> + ?Sized,
         A2: ?Sized,
 { }
 
 pub struct InvocCompletionReturn<P, A, Q, S, R>
-  where P: Deref<Target = ArgsPool>,
+  where P: Deref<Target = ArgsPool> + Clone,
         S: SignalHandle,
         A: ?Sized,
 {
@@ -782,7 +625,7 @@ pub struct InvocCompletionReturn<P, A, Q, S, R>
   invoc: InvocCompletion<P, A, Q, S>,
 }
 impl<P, A, Q, S, R> SignalHandle for InvocCompletionReturn<P, A, Q, S, R>
-  where P: Deref<Target = ArgsPool>,
+  where P: Deref<Target = ArgsPool> + Clone,
         S: SignalHandle,
         A: ?Sized,
 {
@@ -799,7 +642,7 @@ impl<P, A, Q, S, R> SignalHandle for InvocCompletionReturn<P, A, Q, S, R>
   }
 }
 impl<P, A, Q, S, R> DeviceConsumable for InvocCompletionReturn<P, A, Q, S, R>
-  where P: Deref<Target = ArgsPool>,
+  where P: Deref<Target = ArgsPool> + Clone,
         S: DeviceConsumable,
         A: ?Sized,
 {
@@ -808,7 +651,7 @@ impl<P, A, Q, S, R> DeviceConsumable for InvocCompletionReturn<P, A, Q, S, R>
   }
 }
 impl<P, A, Q, S, R> HostConsumable for InvocCompletionReturn<P, A, Q, S, R>
-  where P: Deref<Target = ArgsPool>,
+  where P: Deref<Target = ArgsPool> + Clone,
         S: HostConsumable,
         A: ?Sized,
 {
@@ -820,7 +663,7 @@ impl<P, A, Q, S, R> HostConsumable for InvocCompletionReturn<P, A, Q, S, R>
   }
 }
 unsafe impl<P, A, Q, S, R> deps::Deps for InvocCompletionReturn<P, A, Q, S, R>
-  where P: Deref<Target = ArgsPool>,
+  where P: Deref<Target = ArgsPool> + Clone,
         S: DeviceConsumable,
         A: ?Sized,
         R: deps::Deps,
@@ -835,7 +678,7 @@ unsafe impl<P, A, Q, S, R> deps::Deps for InvocCompletionReturn<P, A, Q, S, R>
 /// We are only *safely* deref-able on the device, where the command process will ensure
 /// this invocation is complete.
 impl<P, A, Q, S, R> Deref for InvocCompletionReturn<P, A, Q, S, R>
-  where P: Deref<Target = ArgsPool>,
+  where P: Deref<Target = ArgsPool> + Clone,
         S: DeviceConsumable,
         A: ?Sized,
 {
@@ -847,7 +690,7 @@ impl<P, A, Q, S, R> Deref for InvocCompletionReturn<P, A, Q, S, R>
 impl<P, A1, A2, Q, S, R>
   CoerceUnsized<InvocCompletionReturn<P, A2, Q, S, R>> for
     InvocCompletionReturn<P, A1, Q, S, R>
-  where P: Deref<Target = ArgsPool>,
+  where P: Deref<Target = ArgsPool> + Clone,
         S: SignalHandle,
         A1: Unsize<A2> + ?Sized,
         A2: ?Sized,

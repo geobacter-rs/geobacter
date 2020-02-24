@@ -51,13 +51,14 @@ pub use geobacter_runtime_amd_macros::*;
 use std::any::Any;
 use std::cmp::max;
 use std::collections::{BTreeMap, };
+use std::convert::*;
 use std::error::Error;
 use std::fmt;
 use std::ptr::{NonNull, };
 use std::str::FromStr;
 use std::sync::{Arc, };
 
-use log::{info, warn, };
+use log::{info, warn, error, };
 
 use serde::{Deserialize, Serialize, };
 
@@ -68,8 +69,9 @@ use hsa_rt::code_object::CodeObjectReaderRef;
 pub use hsa_rt::error::Error as HsaError;
 use hsa_rt::executable::{Executable, CommonExecutable};
 use hsa_rt::ext::amd::{MemoryPool, MemoryPoolPtr, AgentAccess,
-                       async_copy, unlock_memory, MemoryPoolAlloc, };
-use hsa_rt::mem::region::{Region, Segment};
+                       async_copy, unlock_memory, MemoryPoolAlloc,
+                       GlobalFlags, };
+use hsa_rt::mem::region::{RegionAlloc, };
 use hsa_rt::queue::{KernelSingleQueue, KernelMultiQueue};
 use hsa_rt::signal::{SignalRef, Signal};
 
@@ -86,15 +88,24 @@ use crate::module::HsaModuleData;
 pub use grt_core::AcceleratorId;
 pub use grt_core::context::Context;
 
+use crate::alloc::*;
 use crate::async_copy::CopyDataObject;
-use crate::boxed::{RawPoolBox, LocallyAccessiblePoolBox};
+use crate::boxed::{RawPoolBox, };
 use crate::signal::{HostSignal, DeviceSignal, DeviceConsumable, SignalHandle};
 
+pub mod alloc;
 pub mod async_copy;
 pub mod boxed;
 pub mod codegen;
 pub mod module;
 pub mod signal;
+
+#[derive(Debug)]
+struct HsaAmdNode {
+  agent: Agent,
+  coarse: MemoryPoolAlloc,
+  fine: Option<MemoryPoolAlloc>,
+}
 
 pub struct HsaAmdGpuAccel {
   id: AcceleratorId,
@@ -105,12 +116,10 @@ pub struct HsaAmdGpuAccel {
 
   platform: Platform,
 
-  host_agent: Agent,
-  host_lock_pool: MemoryPoolAlloc,
-
-  device_agent: Agent,
-  kernarg_region: Region,
-  alloc_pool: MemoryPoolAlloc,
+  /// One for every NUMA node.
+  host_nodes: Vec<HsaAmdNode>,
+  device: HsaAmdNode,
+  kernarg_region: RegionAlloc,
 
   // TODO need to create a `geobacter_runtime_host` crate
   //host_codegen: CodegenUnsafeSyncComms<Self>,
@@ -119,10 +128,14 @@ pub struct HsaAmdGpuAccel {
 
 impl HsaAmdGpuAccel {
   pub fn new(ctx: &Context,
-             host_agent: Agent,
+             host_agents: &[&Agent],
              device_agent: Agent)
     -> Result<Arc<Self>, Box<dyn Error>>
   {
+    if host_agents.len() == 0 {
+      return Err("no CPU agent found".into());
+    }
+
     let kernarg_region = device_agent.all_regions()?
       .into_iter()
       .filter(|region| {
@@ -135,36 +148,57 @@ impl HsaAmdGpuAccel {
           _ => false,
         }
       })
-      .ok_or_else(|| "no kernel argument region")?;
+      .ok_or_else(|| "no kernel argument region")?
+      .try_into()?;
 
-    let host_lock_pool = host_agent.amd_memory_pools()?
-      .into_iter()
-      .filter(|pool| {
-        pool.alloc_allowed()
-      })
-      .filter(|pool| {
-        pool.segment()
-          .map(|seg| seg == Segment::Global)
-          .unwrap_or_default()
-      })
-      .max_by_key(|pool| pool.total_size().unwrap_or_default())
-      .ok_or_else(|| "no allocatable host local global pool")?
-      .allocator_ty()
-      .unwrap();
+    fn find_pool_flags<'a, F>(pools: &'a [MemoryPool], select_flags: F)
+      -> Result<Option<MemoryPoolAlloc>, HsaError>
+      where F: Fn(GlobalFlags) -> bool,
+    {
+      let r = pools.iter()
+        .filter(|pool| {
+          pool.alloc_allowed()
+        })
+        .filter(|pool| {
+          pool.global_flags().ok()
+            .and_then(|f| f )
+            .map(&select_flags)
+            .unwrap_or_default()
+        })
+        .max_by_key(|pool| pool.total_size().unwrap_or_default());
+      if let Some(r) = r {
+        Ok(Some(unsafe {
+          r.allocator()?
+        }))
+      } else {
+        Ok(None)
+      }
+    };
+    fn find_fine_pool(pools: &[MemoryPool])
+      -> Result<Option<MemoryPoolAlloc>, HsaError>
+    {
+      find_pool_flags(pools, |flags| flags.fine_grained())
+    }
+    fn find_coarse_pool(pools: &[MemoryPool])
+      -> Result<Option<MemoryPoolAlloc>, HsaError>
+    {
+      find_pool_flags(pools, |flags| flags.coarse_grained())
+    }
 
-    let alloc_pool = device_agent.amd_memory_pools()?
-      .into_iter()
-      .filter(|pool| {
-        pool.alloc_allowed()
-      })
-      .find(|pool| {
-        pool.segment()
-          .map(|seg| seg == Segment::Global)
-          .unwrap_or_default()
-      })
-      .ok_or_else(|| "no allocatable device local global pool")?
-      .allocator_ty()
-      .unwrap();
+    let mut host_nodes = Vec::with_capacity(host_agents.len());
+    for &agent in host_agents {
+      let pools = agent.amd_memory_pools()?;
+      let fine = find_fine_pool(&pools)?
+        .expect("no allocatable host local fine grained global pool");
+      let node = HsaAmdNode {
+        agent: agent.clone(),
+        fine: Some(fine),
+        coarse: find_coarse_pool(&pools)?
+          .expect("no allocatable host local coarse grained global pool"),
+      };
+      host_nodes.push(node);
+    }
+    let device_pools = device_agent.amd_memory_pools()?;
 
     let isa = device_agent.isas()?
       .get(0)
@@ -184,12 +218,14 @@ impl HsaAmdGpuAccel {
 
       target_desc: Arc::new(AcceleratorTargetDesc::new(target_desc)),
 
-      host_agent,
-      host_lock_pool,
-
-      device_agent,
+      host_nodes,
+      device: HsaAmdNode {
+        agent: device_agent,
+        fine: find_fine_pool(&device_pools)?,
+        coarse: find_coarse_pool(&device_pools)?
+          .expect("no allocatable device local coarse grained global pool"),
+      },
       kernarg_region,
-      alloc_pool,
 
       self_codegen: None,
     };
@@ -211,42 +247,43 @@ impl HsaAmdGpuAccel {
   pub fn first_device(ctx: &Context) -> Result<Arc<Self>, Box<dyn Error>> {
     let hsa_context = ApiContext::try_upref()?;
     let agents = hsa_context.agents()?;
-    let host = agents.iter()
-      .find(|agent| Some(DeviceType::Cpu) == agent.device_type().ok())
-      .ok_or("no CPU agent found")?;
+    let hosts = agents.iter()
+      .filter(|agent| Some(DeviceType::Cpu) == agent.device_type().ok() )
+      .collect::<Vec<_>>();
+
     let device = agents.iter()
       .find(|agent| agent.feature().ok() == Some(Feature::Kernel))
       .ok_or("no accelerator found")?;
 
-    Self::new(ctx, host.clone(),
+    Self::new(ctx, &hosts,
               device.clone())
   }
   pub fn nth_device(ctx: &Context, n: usize) -> Result<Arc<Self>, Box<dyn Error>> {
     let hsa_context = ApiContext::try_upref()?;
     let agents = hsa_context.agents()?;
-    let host = agents.iter()
-      .find(|agent| Some(DeviceType::Cpu) == agent.device_type().ok())
-      .ok_or("no CPU agent found")?
-      .clone();
+    let hosts = agents.iter()
+      .filter(|agent| Some(DeviceType::Cpu) == agent.device_type().ok() )
+      .collect::<Vec<_>>();
 
-    let agent = agents.into_iter()
+    let agent = agents.iter()
       .filter(|agent| agent.feature().ok() == Some(Feature::Kernel))
       .nth(n)
       .ok_or("404")?;
 
-    Self::new(ctx, host, agent)
+    Self::new(ctx, &hosts, agent.clone())
   }
   pub fn all_devices(ctx: &Context) -> Result<Vec<Arc<Self>>, Box<dyn Error>> {
     let hsa_context = ApiContext::try_upref()?;
     let agents = hsa_context.agents()?;
-    let host = agents.iter()
-      .find(|agent| Some(DeviceType::Cpu) == agent.device_type().ok())
-      .ok_or("no CPU agent found")?
-      .clone();
-    let devices = agents.into_iter()
+    let hosts = agents.iter()
+      .filter(|agent| Some(DeviceType::Cpu) == agent.device_type().ok() )
+      .collect::<Vec<_>>();
+
+    let devices = agents.iter()
       .filter(|agent| agent.feature().ok() == Some(Feature::Kernel))
       .filter_map(|agent| {
-        Self::new(ctx, host.clone(), agent).ok()
+        Self::new(ctx, &hosts, agent.clone())
+          .ok()
       })
       .collect();
     Ok(devices)
@@ -254,14 +291,59 @@ impl HsaAmdGpuAccel {
 
   pub fn ctx(&self) -> &Context { &self.ctx }
   pub fn isa_info(&self) -> &IsaInfo { self.target_desc.isa_info() }
-  pub fn agent(&self) -> &Agent { &self.device_agent }
-  pub fn kernargs_region(&self) -> &Region { &self.kernarg_region }
+  pub fn agent(&self) -> &Agent { &self.device.agent }
+  pub fn kernargs_region(&self) -> &RegionAlloc { &self.kernarg_region }
 
-  pub fn host_pool(&self) -> &MemoryPool { &self.host_lock_pool }
+  pub fn numa_node_len(&self) -> u32 { self.host_nodes().len() as _ }
+
+  /// Returns an allocator interface for allocating in the provided NUMA node.
+  /// This allocator will allocate coarse memory regions. GPU writes to this
+  /// region *are not cache-coherent* with the CPU, thus this is unsafe.
+  pub unsafe fn coarse_lap_node_alloc(&self, node: u32) -> alloc::LapAlloc {
+    alloc::LapAlloc {
+      id: self.id(),
+      device_agent: self.agent().clone(),
+      pool: self.host_nodes()[node as usize].coarse.clone(),
+    }
+  }
+  /// Returns an allocator interface for allocating in the provided NUMA node
+  /// This allocator will allocate fine memory regions. GPU writes to this
+  /// region are cache-coherent with the CPU.
+  pub fn fine_lap_node_alloc(&self, node: u32) -> alloc::LapAlloc {
+    alloc::LapAlloc {
+      id: self.id(),
+      device_agent: self.agent().clone(),
+      pool: self.host_nodes[node as usize]
+        .fine
+        .as_ref()
+        .unwrap()
+        .clone(),
+    }
+  }
+
+  fn first_host_node(&self) -> &HsaAmdNode { &self.host_nodes()[0] }
+  pub fn first_host_agent(&self) -> &Agent { &self.first_host_node().agent }
+  pub fn host_pool(&self) -> &MemoryPoolAlloc {
+    self.first_host_node().fine
+      .as_ref().unwrap()
+  }
+
+  /// Returns the list of NUMA nodes present for this device.
+  fn host_nodes(&self) -> &[HsaAmdNode] {
+    &self.host_nodes
+  }
 
   /// Returns the handle to the host allocatable global memory pool.
   /// Use this pool for allocating device local memory.
-  pub fn device_pool(&self) -> &MemoryPool { &self.alloc_pool }
+  pub fn device_pool(&self) -> &MemoryPool {
+    &self.device.coarse
+  }
+  /// Returns the handle to the host allocatable global memory pool.
+  /// Use this pool for allocating device local memory. This memory will be
+  /// visible to the host.
+  pub fn device_pool_fine(&self) -> Option<&MemoryPoolAlloc> {
+    self.device.fine.as_ref()
+  }
 
   /// Asynchronously copy `from` bytes from the host locked device pointer into the
   /// device local `into`. `into` should be a region in one of this device's memory
@@ -335,7 +417,7 @@ impl HsaAmdGpuAccel {
       .collect();
 
     let dst_agent = self.agent();
-    let src_agent = &self.host_agent;
+    let src_agent = self.first_host_agent();
 
     let from_len = from.len();
     let into_len = into.len();
@@ -393,7 +475,7 @@ impl HsaAmdGpuAccel {
       })
       .collect();
 
-    let dst_agent = &self.host_agent;
+    let dst_agent = self.first_host_agent();
     let src_agent = self.agent();
 
     let from_len = from.len();
@@ -473,12 +555,12 @@ impl HsaAmdGpuAccel {
   }
 
   pub fn new_device_signal(&self, initial: signal::Value) -> Result<DeviceSignal, HsaError> {
-    Signal::new(initial, &[self.device_agent.clone()])
+    Signal::new(initial, &[self.agent().clone()])
       .map(|s| DeviceSignal(s, self.id()))
   }
 
   pub fn new_host_signal(&self, initial: signal::Value) -> Result<HostSignal, HsaError> {
-    Signal::new(initial, &[self.host_agent.clone()])
+    Signal::new(initial, &[self.first_host_agent().clone()])
       .map(HostSignal)
   }
 
@@ -491,27 +573,26 @@ impl HsaAmdGpuAccel {
     -> Result<RawPoolBox<[T]>, HsaError>
     where T: Sized,
   {
-    RawPoolBox::new_uninit_slice(self.alloc_pool.clone(),
-                                 count)
+    RawPoolBox::new_uninit_slice(self.device.coarse.clone(), count)
   }
 
-  pub unsafe fn alloc_host_visible_slice<T>(&self, count: usize)
-    -> Result<LocallyAccessiblePoolBox<[T]>, HsaError>
-    where T: Sized,
+  pub unsafe fn alloc_host_visible_slice<T>(self: &Arc<Self>, count: usize)
+    -> Result<LapBox<[T]>, HsaError>
+    where T: Sized + Unpin,
   {
-    let rb = RawPoolBox::new_uninit_slice(self.host_lock_pool.clone(),
-                                          count)?;
-    Ok(LocallyAccessiblePoolBox::from_raw_box_unchecked(rb))
+    let mut v = LapVec::try_with_capacity_in(count,
+                                             self.clone().into())?;
+    v.set_len(count);
+    let mut v = v.try_into_boxed_slice()?;
+    v.set_accessible(&[&*self])?;
+    Ok(v)
   }
-  pub fn alloc_host_visible<T>(&self, v: T) -> Result<LocallyAccessiblePoolBox<T>, HsaError>
+  pub fn alloc_host_visible<T>(self: &Arc<Self>, v: T) -> Result<LapBox<T>, HsaError>
     where T: Sized,
   {
-    let rb = unsafe { RawPoolBox::new_uninit(self.host_lock_pool.clone())? };
-    let mut lapb: LocallyAccessiblePoolBox<T> = unsafe {
-      LocallyAccessiblePoolBox::from_raw_box_unchecked(rb)
-    };
-    unsafe { lapb.overwrite(v); }
-    Ok(lapb)
+    let mut v = LapBox::new_in(v, self.clone().into());
+    v.set_accessible(&[&*self])?;
+    Ok(v)
   }
 
   /// Lock memory and give this device access. This memory is not able to be used
@@ -520,8 +601,9 @@ impl HsaAmdGpuAccel {
     -> Result<MemoryPoolPtr<[T]>, HsaError>
     where T: Sized,
   {
-    self.host_lock_pool.lock(ptr.cast(), count,
-                             &[self.device_agent.clone()])
+    self.first_host_node().coarse
+      .lock(ptr.cast(), count,
+            &[self.agent().clone()])
   }
   pub unsafe fn unlock_sized_from_host<T>(&self, ptr: NonNull<T>, count: usize)
     -> Result<(), HsaError>
@@ -533,13 +615,13 @@ impl HsaAmdGpuAccel {
   pub fn create_single_queue(&self, min: Option<u32>)
     -> Result<KernelSingleQueue, HsaError>
   {
-    let size_range = self.device_agent.queue_size()?;
+    let size_range = self.agent().queue_size()?;
     let queue_size = if let Some(min) = min {
       max(size_range.start, min)
     } else {
       size_range.end / 4
     };
-    let q = self.device_agent
+    let q = self.agent()
       .new_kernel_queue(queue_size, None,
                         None)?;
     Ok(q)
@@ -549,13 +631,13 @@ impl HsaAmdGpuAccel {
                               group: u32)
     -> Result<KernelSingleQueue, HsaError>
   {
-    let size_range = self.device_agent.queue_size()?;
+    let size_range = self.agent().queue_size()?;
     let queue_size = if let Some(min) = min {
       max(size_range.start, min)
     } else {
       size_range.end / 4
     };
-    let q = self.device_agent
+    let q = self.agent()
       .new_kernel_queue(queue_size, Some(private),
                         Some(group))?;
     Ok(q)
@@ -563,13 +645,13 @@ impl HsaAmdGpuAccel {
   pub fn create_multi_queue(&self, min: Option<u32>)
     -> Result<KernelMultiQueue, HsaError>
   {
-    let size_range = self.device_agent.queue_size()?;
+    let size_range = self.agent().queue_size()?;
     let queue_size = if let Some(min) = min {
       max(size_range.start, min)
     } else {
       size_range.end / 4
     };
-    let q = self.device_agent
+    let q = self.agent()
       .new_kernel_multi_queue(queue_size, None,
                               None)?;
     Ok(q)
@@ -579,13 +661,13 @@ impl HsaAmdGpuAccel {
                              group: u32)
     -> Result<KernelMultiQueue, HsaError>
   {
-    let size_range = self.device_agent.queue_size()?;
+    let size_range = self.agent().queue_size()?;
     let queue_size = if let Some(min) = min {
       max(size_range.start, min)
     } else {
       size_range.end / 4
     };
-    let q = self.device_agent
+    let q = self.agent()
       .new_kernel_multi_queue(queue_size, Some(private),
                               Some(group))?;
     Ok(q)
@@ -744,8 +826,8 @@ impl fmt::Debug for HsaAmdGpuAccel {
       .field("id", &self.id)
       .field("target_desc", &self.target_desc)
       .field("platform", &self.platform)
-      .field("host_agent", &self.host_agent)
-      .field("device_agent", &self.device_agent)
+      .field("host_nodes", &self.host_nodes)
+      .field("device", &self.device)
       .field("kernargs_region", &self.kernarg_region)
       .finish()
   }
