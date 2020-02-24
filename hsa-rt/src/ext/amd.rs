@@ -165,8 +165,12 @@ impl MemoryPool {
                   out.as_mut_ptr() as *mut _) => out[0])?)
   }
 
+  /// Unsafe because you must ensure the local processor can natively access
+  /// this pool! So use in alloc_wg::boxed::Box won't be safe for device memory
+  /// when running on the host, *unless* you make sure the host code *never*
+  /// dereferences the box.
   #[cfg(feature = "alloc-wg")]
-  pub fn allocator_ty(&self) -> Result<MemoryPoolAlloc, Error> {
+  pub unsafe fn allocator(&self) -> Result<MemoryPoolAlloc, Error> {
     if !self.alloc_allowed() {
       return Err(Error::General);
     }
