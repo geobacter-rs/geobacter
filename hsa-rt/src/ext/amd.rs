@@ -6,7 +6,6 @@
 #![allow(deprecated)]
 
 use std::ffi::c_void;
-use std::fmt;
 use std::marker::Unsize;
 use std::mem::{size_of, transmute, size_of_val, };
 use std::ops::{CoerceUnsized, Deref, };
@@ -20,7 +19,7 @@ use {ApiContext, agent::Agent, agent::DeviceType, error::Error, };
 use signal::SignalRef;
 use utils::uninit;
 
-pub use mem::region::Segment;
+pub use mem::region::{GlobalFlags, Segment, };
 
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Debug, Hash)]
 pub struct MemoryPool(ffi::hsa_amd_memory_pool_t);
@@ -87,48 +86,6 @@ impl AgentAccess {
     }
   }
 }
-
-#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct GlobalFlags(pub u32);
-impl GlobalFlags {
-  pub fn kernel_arg(&self) -> bool {
-    (self.0 & ffi::hsa_amd_memory_pool_global_flag_s_HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_KERNARG_INIT) != 0
-  }
-  pub fn fine_grained(&self) -> bool {
-    (self.0 & ffi::hsa_amd_memory_pool_global_flag_s_HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_FINE_GRAINED) != 0
-  }
-  pub fn coarse_grained(&self) -> bool {
-    (self.0 & ffi::hsa_amd_memory_pool_global_flag_s_HSA_AMD_MEMORY_POOL_GLOBAL_FLAG_COARSE_GRAINED) != 0
-  }
-}
-
-impl fmt::Debug for GlobalFlags {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "GlobalFlags(")?;
-
-    let mut first = true;
-    let mut get_space = || {
-      if first {
-        first = false;
-        ""
-      } else {
-        " "
-      }
-    };
-    if self.kernel_arg() {
-      write!(f, "{}kernel arg,", get_space())?;
-    }
-    if self.fine_grained() {
-      write!(f, "{}fine grained,", get_space())?;
-    }
-    if self.coarse_grained() {
-      write!(f, "{}course grained,", get_space())?;
-    }
-
-    write!(f, ")")
-  }
-}
-
 
 impl MemoryPool {
   pub fn agent_access(&self, agent: &Agent)
