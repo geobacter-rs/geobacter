@@ -1,11 +1,18 @@
 
 extern crate hsa_rt as hsa;
 
+use hsa::agent::*;
+
 pub fn main() {
   let ctxt = hsa::ApiContext::try_upref()
     .expect("error creating HSA context");
   let agents = ctxt.agents()
     .expect("find_agents");
+
+  let cpu = agents.iter()
+    .find(|agent| Some(DeviceType::Cpu) == agent.device_type().ok() )
+    .map(Agent::clone)
+    .expect("no CPUs found??");
 
   for (num, agent) in agents.into_iter().enumerate() {
     println!("Agent #{}:", num);
@@ -72,7 +79,17 @@ pub fn main() {
     }
     if let Ok(pools) = agent.amd_memory_pools() {
       for pool in pools.into_iter() {
-
+        println!("\tPool ID(0x{:x}):", pool.id());
+        println!("\t\tSegment: {:?}", pool.segment().expect("can't get region segment"));
+        println!("\t\tGlobal Flags: {:?}",
+                 pool.global_flags().expect("can't get region global flags"));
+        println!("\t\tSize: {}", pool.total_size().expect("can't get region size"));
+        println!("\t\tAlloc Allowed: {}", pool.alloc_allowed());
+        println!("\t\tAlloc Granule: {}",
+                 pool.alloc_granule().unwrap().unwrap_or(1));
+        println!("\t\tAlloc Alignment: {}",
+                 pool.alloc_alignment().unwrap().unwrap_or(1));
+        println!("\t\tCPU Access: {:?}", pool.agent_access(&cpu));
       }
     }
   }

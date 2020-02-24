@@ -88,6 +88,7 @@ impl AgentAccess {
 }
 
 impl MemoryPool {
+  pub fn id(&self) -> u64 { self.0.handle }
   pub fn agent_access(&self, agent: &Agent)
     -> Result<AgentAccess, Error>
   {

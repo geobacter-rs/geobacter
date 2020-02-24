@@ -4,5 +4,5 @@ license = "MIT / Apache-2.0"
 name = "hsa-agents-info"
 version = "0.1.0"
 
-[dependencies.hsa-rt]
-path = "../../hsa-rt"
+[dependencies]
+hsa-rt = "0.1.0"
