@@ -73,7 +73,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
 
   let matches = App::new("Geobacter Rust Toolchain Builder")
     .version("0.0.0")
-    .author("Richard Diamond <wichard@vitalitystudios.com>")
+    .author("Richard Diamond <dick@vitalitystudios.com>")
     .arg(repo_url)
     .arg(repo_branch)
     .arg(config_path)
