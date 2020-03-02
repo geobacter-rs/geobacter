@@ -71,6 +71,21 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     .help("Usual make-esk '-j'")
     .takes_value(true);
 
+  let rust_dbg_level = Arg::with_name("rust-dbg-lvl")
+    .long("rust-debuginfo-level")
+    .help("Debug level to use for the Rust toolchain (`0`, `1`, or `2`)")
+    .takes_value(true)
+    .possible_values(&["0", "1", "2", "true", "false"])
+    .default_value("1");
+
+  let llvm_dbginfo = Arg::with_name("llvm-debug-info")
+    .long("llvm-debug-info")
+    .help("Build LLVM with debug info; default is off");
+
+  let llvm_assertions = Arg::with_name("llvm-assertions")
+    .long("llvm-assertions")
+    .help("Build LLVM with assertions ON; default is OFF");
+
   let matches = App::new("Geobacter Rust Toolchain Builder")
     .version("0.0.0")
     .author("Richard Diamond <dick@vitalitystudios.com>")
@@ -82,6 +97,9 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     .arg(rustup)
     .arg(rustup_name)
     .arg(jobs)
+    .arg(rust_dbg_level)
+    .arg(llvm_dbginfo)
+    .arg(llvm_assertions)
     .get_matches();
 
   matches.run()
@@ -124,6 +142,9 @@ trait Builder {
     }
   }
   fn jobs(&self) -> Option<&str>;
+  fn rust_dbg_info_lvl(&self) -> &str;
+  fn llvm_build_dbg_info(&self) -> bool;
+  fn llvm_enable_assertions(&self) -> bool;
 
   fn given_config_path(&self) -> Option<&str>;
   fn target_dir(&self) -> &Path;
@@ -274,9 +295,12 @@ trait Builder {
 
     write!(config, r#"
 [llvm]
-release-debuginfo = false
-assertions = false
-"#).unwrap();
+release-debuginfo = {}
+assertions = {}
+"#,
+           if self.llvm_build_dbg_info() { "true" } else { "false" },
+           if self.llvm_enable_assertions() { "true" } else { "false" },
+    ).unwrap();
     if which("ccache").is_ok() {
       writeln!(config, "ccache = true").unwrap();
     }
@@ -293,13 +317,15 @@ submodules = true
 low-priority = true
 
 [rust]
-debuginfo-level = 1
+debuginfo-level = {}
 debuginfo-level-std = 2
 incremental = true
 parallel-compiler = true
 lld = true
 llvm-tools = true
-"#).unwrap();
+"#,
+           self.rust_dbg_info_lvl(),
+    ).unwrap();
 
     #[cfg(target_os = "linux")]
     fn use_icecc(config: &mut File) {
@@ -411,6 +437,16 @@ impl<'a> Builder for ArgMatches<'a> {
   }
   fn jobs(&self) -> Option<&str> {
     self.value_of("jobs")
+  }
+
+  fn rust_dbg_info_lvl(&self) -> &str {
+    self.value_of("rust-dbg-lvl").unwrap()
+  }
+  fn llvm_build_dbg_info(&self) -> bool {
+    self.is_present("llvm-debug-info")
+  }
+  fn llvm_enable_assertions(&self) -> bool {
+    self.is_present("llvm-assertions")
   }
 }
 
