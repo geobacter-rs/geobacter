@@ -136,6 +136,13 @@ impl HsaAmdGpuAccel {
     if host_agents.len() == 0 {
       return Err("no CPU agent found".into());
     }
+    #[cfg(target_endian = "big")] {
+      if ::std::env::var_os("GEOBACTER_IGNORE_ENDIANNESS").is_none() {
+        return Err("endianness translation is not (yet) supported".into());
+      } else {
+        warn!("ignoring host/device endianness mismatch; you're on your own!");
+      }
+    }
 
     let kernarg_region = device_agent.all_regions()?
       .into_iter()
