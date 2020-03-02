@@ -19,7 +19,7 @@ use log::{error, };
 
 use num_traits::{ToPrimitive, };
 
-use geobacter_core::kernel::{KernelInstance, };
+use geobacter_core::kernel::{KernelInstance, OptionalFn, };
 use gcore::ref_::*;
 
 use hsa_rt::agent::Agent;
@@ -31,10 +31,10 @@ pub use hsa_rt::queue::{FenceScope, QueueError, };
 pub use hsa_rt::queue::KernelMultiQueue as DeviceMultiQueue;
 pub use hsa_rt::queue::KernelSingleQueue as DeviceSingleQueue;
 
-use crate::grt_core::{Device, Accelerator, AcceleratorId, };
+use crate::grt_core::{Device, AcceleratorId, };
 use crate::grt_core::codegen as core_codegen;
 use crate::grt_core::codegen::PKernelDesc;
-use crate::grt_core::context::{ModuleContextData, PlatformModuleData, };
+use crate::grt_core::context::{ModuleContextData, PlatformModuleData, ModuleData, };
 
 use crate::HsaAmdGpuAccel;
 use crate::codegen::{Codegenner, KernelDesc, CodegenDesc};
@@ -50,17 +50,20 @@ pub mod args;
 pub mod args_pool;
 pub mod deps;
 
+// TODO refactor common stuff into runtime-core
+
 /// Closures are *explicitly not supported*, so we don't keep the function
 /// around as a member or as a type param.
 /// This struct used to have an `F` param, but it was realized that this
 /// prevented selecting a kernel based on, eg, an enum and then using it
 /// as a value (where `F` wasn't specific to the function anymore).
 /// Closures have never been supported, so I decided to just drop `F`.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Function {
   instance: KernelInstance,
   context_data: ModuleContextData,
   desc: KernelDesc,
+  spec_params: core_codegen::SpecParamsDesc,
 }
 
 impl Function {
@@ -68,29 +71,26 @@ impl Function {
     where F: Fn<A, Output = R> + Sized,
   {
     Function {
-      instance: KernelInstance::get(&f),
+      instance: f.kernel_instance().unwrap(),
       context_data: ModuleContextData::get(&f),
       desc: KernelDesc::new(&f),
+      spec_params: Default::default(),
     }
   }
   pub fn desc(&self) -> PKernelDesc<Codegenner> {
     core_codegen::KernelDesc {
       instance: self.instance.clone(),
+      spec_params: self.spec_params.clone(),
       platform_desc: self.desc.clone(),
     }
   }
 }
 
-#[derive(Clone, Copy)]
-pub struct FuncModule<A, MD = Arc<HsaModuleData>>
-  where MD: Deref<Target = HsaModuleData>,
-{
-  /// XXX this isn't actually used for checking anything
-  /// This is because only the device queue is used for dispatching;
-  /// the device object is never needed.
-  expected_accel: AcceleratorId,
-
-  module_data: MD,
+#[derive(Clone)]
+pub struct FuncModule<A> {
+  device: Arc<HsaAmdGpuAccel>,
+  context_data: Arc<ModuleData>,
+  module_data: Option<Arc<HsaModuleData>>,
 
   pub dynamic_group_size: u32,
   pub dynamic_private_size: u32,
@@ -105,37 +105,34 @@ pub struct FuncModule<A, MD = Arc<HsaModuleData>>
   _arg: PhantomData<*const A>,
 }
 impl<A> FuncModule<A> {
-  pub fn new<F>(accel: &Arc<HsaAmdGpuAccel>, f: F)
-    -> Result<Self, ::std::boxed::Box<dyn Error>>
+  pub fn new<F>(accel: &Arc<HsaAmdGpuAccel>, f: F) -> Self
     where F: for<'a> Fn(&'a A) + Sized,
   {
     let f = Function::new(f);
     let context_data = f.context_data
       .get_cache_data(accel.ctx());
-    let module_data = context_data
-      .compile(accel, f.desc(),
-               &accel.codegen())?;
 
-    Ok(FuncModule {
-      expected_accel: accel.id(),
-      module_data,
+    FuncModule {
+      device: accel.clone(),
+      context_data,
+      module_data: None,
       dynamic_group_size: 0,
       dynamic_private_size: 0,
       begin_fence: FenceScope::System,
       end_fence: FenceScope::System,
       f,
       _arg: PhantomData,
-    })
+    }
   }
 }
-impl<A, MD> FuncModule<A, MD>
-  where MD: Deref<Target = HsaModuleData>,
-{
-  pub fn group_size(&self) -> u32 {
-    self.module_data.desc.group_segment_size + self.dynamic_group_size
+impl<A> FuncModule<A> {
+  pub fn group_size(&mut self) -> Result<u32, ::std::boxed::Box<dyn Error>> {
+    let module_data = self.compile_internal()?;
+    Ok(module_data.desc.group_segment_size + self.dynamic_group_size)
   }
-  pub fn private_size(&self) -> u32 {
-    self.module_data.desc.private_segment_size + self.dynamic_private_size
+  pub fn private_size(&mut self) -> Result<u32, ::std::boxed::Box<dyn Error>> {
+    let module_data = self.compile_internal()?;
+    Ok(module_data.desc.private_segment_size + self.dynamic_private_size)
   }
 
   fn set_acquire_fence(&mut self, scope: FenceScope) {
@@ -189,14 +186,78 @@ impl<A, MD> FuncModule<A, MD>
   pub unsafe fn no_release_fence(&mut self) {
     self.set_release_fence(FenceScope::None);
   }
+
+  fn compile_internal(&mut self)
+    -> Result<&HsaModuleData, ::std::boxed::Box<dyn Error>>
+  {
+    if self.module_data.is_none() {
+      let module_data = self.context_data
+        .compile(&self.device, self.f.desc(),
+                 &self.device.codegen())?;
+      self.module_data = Some(module_data);
+    }
+    Ok(self.module_data.as_ref().unwrap())
+  }
+  pub fn compile(&mut self) -> Result<(), ::std::boxed::Box<dyn Error>> {
+    self.compile_internal()?;
+    Ok(())
+  }
+  pub fn compile_async(&self) {
+    use rustc_data_structures::rayon::*;
+
+    if self.module_data.is_none() {
+      let context_data = self.context_data.clone();
+      let device = self.device.clone();
+      let desc = self.f.desc();
+      spawn(move || {
+        // ignore errors here; if an error does happen,
+        // we'll compile again to get the actual error from codegen.
+        let _ = context_data.compile(&device, desc, device.codegen());
+      });
+    }
+  }
+
+  /// Undefine all params. If this function was already compiled, it will be compiled
+  /// again.
+  pub fn clear_params(&mut self) {
+    self.module_data.take();
+    self.f.spec_params.clear();
+  }
+  /// Undefine a specialization entry. If the key (`f`) has no entry, this does nothing.
+  ///
+  /// If this function was already compiled, it will be compiled again.
+  pub fn undefine_param<F, R>(&mut self, f: F)
+    where F: Fn() -> R,
+  {
+    self.module_data.take();
+    self.f.spec_params.undefine(f)
+  }
+  /// (Re-)Define a specialization param, keyed by `f`. Specialization params are like
+  /// constants, but allow one to redefine them at will at runtime. Thus one can create multiple
+  /// kernels from just a single function, which are specialized to the params defined here
+  ///
+  /// Call `geobacter_core::params::get_spec_param` in the kernel with the same function
+  /// to get the value provided here.
+  ///
+  /// If this function was already compiled, it will be compiled again.
+  ///
+  /// Note: If you're going to replace every param, it's better to call `clear_params()`
+  /// first.
+  pub fn define_param<F, R>(&mut self, f: F, value: &R)
+    where F: Fn() -> R,
+          R: Copy + Unpin + 'static,
+  {
+    self.module_data.take();
+    self.f.spec_params.define(f, value)
+  }
 }
 
 #[derive(Debug)]
 pub enum CallError {
   Queue(QueueError),
-  Compile(Box<dyn Error>),
+  Compile(::std::boxed::Box<dyn Error>),
   Oom,
-  CompletionSignal(Box<dyn Error>),
+  CompletionSignal(::std::boxed::Box<dyn Error>),
   Overflow,
 }
 impl fmt::Display for CallError {
@@ -262,18 +323,17 @@ impl LaunchDims for (usize, usize, usize, ) {
 }
 
 #[derive(Clone)]
-pub struct Invoc<A, Dim, MD = Arc<HsaModuleData>>
+pub struct Invoc<A, Dim>
   where A: Sized + Unpin,
-        MD: Deref<Target = HsaModuleData>,
         Dim: LaunchDims,
 {
   pub workgroup_dim: Dim,
   pub grid_dim: Dim,
 
-  fmod: FuncModule<A, MD>,
+  fmod: FuncModule<A>,
 }
 
-impl<A, Dim> Invoc<A, Dim, Arc<HsaModuleData>>
+impl<A, Dim> Invoc<A, Dim>
   where A: Deps + Sized + Unpin,
         Dim: LaunchDims,
 {
@@ -281,7 +341,7 @@ impl<A, Dim> Invoc<A, Dim, Arc<HsaModuleData>>
     -> Result<Self, ::std::boxed::Box<dyn Error>>
     where F: for<'a> Fn(&'a A) + Sized,
   {
-    let fmod = FuncModule::new(accel, f)?;
+    let fmod = FuncModule::new(accel, f);
     Ok(Invoc {
       workgroup_dim: Dim::default_unit(),
       grid_dim: Dim::default_unit(),
@@ -293,7 +353,7 @@ impl<A, Dim> Invoc<A, Dim, Arc<HsaModuleData>>
     -> Result<Self, ::std::boxed::Box<dyn Error>>
     where F: for<'a> Fn(&'a A) + Sized,
   {
-    let fmod = FuncModule::new(accel, f)?;
+    let fmod = FuncModule::new(accel, f);
     Ok(Invoc {
       workgroup_dim: wg,
       grid_dim: grid,
@@ -302,12 +362,11 @@ impl<A, Dim> Invoc<A, Dim, Arc<HsaModuleData>>
   }
 }
 
-impl<A, Dim, MD> Invoc<A, Dim, MD>
+impl<A, Dim> Invoc<A, Dim>
   where A: Deps + Sized + Unpin,
-        MD: Deref<Target = HsaModuleData>,
         Dim: LaunchDims,
 {
-  pub fn from(fmod: FuncModule<A, MD>,
+  pub fn from(fmod: FuncModule<A>,
               wg: Dim, grid: Dim) -> Self
   {
     Invoc {
@@ -367,9 +426,17 @@ impl<A, Dim, MD> Invoc<A, Dim, MD>
           K: QueueKind,
           CS: SignalHandle,
   {
-    let kernel = &*self.fmod.module_data;
+    let kernel_object = {
+      let kernel = self.fmod
+        .compile_internal()
+        .map_err(CallError::Compile)?;
 
-    assert_eq!(kernel.desc.kernarg_segment_size as usize, size_of::<(&A,)>());
+      assert!(kernel.desc.kernarg_segment_size as usize <= size_of::<(&A, )>());
+
+      kernel
+        .kernel_object
+        .get()
+    };
 
     let mut kernargs = args_pool.alloc::<(A, &A, )>()
       .ok_or(CallError::Oom)?;
@@ -379,7 +446,7 @@ impl<A, Dim, MD> Invoc<A, Dim, MD>
     let Invoc {
       workgroup_dim,
       grid_dim,
-      ref fmod,
+      ref mut fmod,
     } = self;
 
     let q = queue.as_ref().expect("provide a queue pls");
@@ -389,12 +456,12 @@ impl<A, Dim, MD> Invoc<A, Dim, MD>
     let dispatch = DispatchPacket {
       workgroup_size: workgroup_dim.workgroup()?,
       grid_size: grid_dim.grid()?,
-      group_segment_size: fmod.group_size(),
-      private_segment_size: fmod.private_size(),
+      group_segment_size: fmod.group_size().unwrap(),
+      private_segment_size: fmod.private_size().unwrap(),
       scaquire_scope: fmod.begin_fence.clone(),
       screlease_scope: fmod.end_fence.clone(),
       ordered: c.is_none(),
-      kernel_object: kernel.kernel_object.get(),
+      kernel_object,
       kernel_args: &*kargs_ref,
       completion_signal: c,
     };
@@ -449,20 +516,18 @@ impl<A, Dim, MD> Invoc<A, Dim, MD>
     Ok(inner)
   }
 }
-impl<A, WGDim, MD> Deref for Invoc<A, WGDim, MD>
+impl<A, WGDim> Deref for Invoc<A, WGDim>
   where A: Sized + Unpin,
-        MD: Deref<Target = HsaModuleData>,
         WGDim: LaunchDims,
 {
-  type Target = FuncModule<A, MD>;
-  fn deref(&self) -> &FuncModule<A, MD> { &self.fmod }
+  type Target = FuncModule<A>;
+  fn deref(&self) -> &FuncModule<A> { &self.fmod }
 }
-impl<A, WGDim, MD> DerefMut for Invoc<A, WGDim, MD>
+impl<A, WGDim> DerefMut for Invoc<A, WGDim>
   where A: Sized + Unpin,
-        MD: Deref<Target = HsaModuleData>,
         WGDim: LaunchDims,
 {
-  fn deref_mut(&mut self) -> &mut FuncModule<A, MD> { &mut self.fmod }
+  fn deref_mut(&mut self) -> &mut FuncModule<A> { &mut self.fmod }
 }
 
 unsafe impl<P, A, Q, S> deps::Deps for InvocCompletion<P, A, Q, S>
@@ -517,7 +582,9 @@ impl<P, A, Q, S> InvocCompletion<P, A, Q, S>
     SignaledDeref::new(r, signal)
   }
 
-  pub fn ret<R>(self, ret: R) -> InvocCompletionReturn<P, A, Q, S, R> {
+  pub fn ret<R>(self, ret: R) -> InvocCompletionReturn<P, A, Q, S, R>
+    where A: Sized,
+  {
     InvocCompletionReturn {
       ret,
       invoc: self,

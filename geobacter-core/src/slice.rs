@@ -13,7 +13,7 @@ use std::slice::{from_raw_parts, from_raw_parts_mut, SliceIndex,
                  Iter, IterMut, };
 
 use crate::ptr::{SlicePtr, Ptr, NonNull, };
-use ref_::{Mut, AccelRefRaw};
+use crate::ref_::{AccelRefRaw, Mut, };
 
 // TODO use <*const T x 2> to compute the slice offsets.
 

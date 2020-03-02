@@ -11,8 +11,7 @@ use rustc_span::{DUMMY_SP, };
 use crate::grustc_help::*;
 
 use crate::gvk_core::*;
-use crate::common::{DriverData, GeobacterCustomIntrinsicMirGen,
-                    stubbing, };
+use crate::common::{DriverData, GeobacterCustomIntrinsicMirGen, };
 
 pub mod shader;
 pub mod vk;
@@ -20,7 +19,6 @@ pub mod vk;
 pub struct ExeModel(pub Option<ExecutionModel>);
 impl GeobacterCustomIntrinsicMirGen for ExeModel {
   fn mirgen_simple_intrinsic<'tcx>(&self,
-                                   _stubs: &stubbing::Stubber,
                                    _kid_did: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,

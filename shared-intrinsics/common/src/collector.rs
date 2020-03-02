@@ -21,11 +21,11 @@ use rustc::ty::subst::{InternalSubsts, };
 use rustc_data_structures::fx::FxHashSet;
 use rustc_mir::monomorphize::{self, collector::InliningMap, };
 
-use crate::stubbing::Stubber;
+use rustc_help::stubbing::Stubber;
 use crate::DriverData;
 
 pub fn collect_items_rec<'tcx>(tcx: TyCtxt<'tcx>,
-                               stubber: &Stubber,
+                               stubber: &dyn Stubber,
                                dd: &dyn DriverData,
                                start: MonoItem<'tcx>,
                                visited: &mut FxHashSet<MonoItem<'tcx>>,

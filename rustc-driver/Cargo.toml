@@ -8,7 +8,6 @@ version = "0.1.0"
 
 [dependencies]
 geobacter-amdgpu-intrinsics = "1.0.0"
-geobacter-core = "1.0.0"
 geobacter-intrinsics-common = "1.0.0"
 geobacter-vk-intrinsics = "1.0.0"
 geobacter-rustc-driver-base = { path = "../rustc-driver-base" }

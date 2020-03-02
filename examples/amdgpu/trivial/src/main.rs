@@ -131,6 +131,15 @@ pub fn main() {
     for accel in accels.iter() {
       println!("Testing device {}", accel.agent().name().unwrap());
 
+      let mut invoc: Invoc<_, _> =
+        Invoc::new(&accel, vector_foreach)
+          .expect("Invoc::new");
+      invoc.compile_async();
+      unsafe {
+        invoc.no_acquire_fence();
+        invoc.device_release_fence();
+      }
+
       let mut device_values_ptr = time("alloc device slice", || unsafe {
         accel.alloc_device_local_slice::<Elem>(COUNT)
           .expect("HsaAmdGpuAccel::alloc_device_local")
@@ -160,14 +169,6 @@ pub fn main() {
                                         &mut device_values_ptr,
                                         &[], &async_copy_signal)
           .expect("HsaAmdGpuAccel::async_copy_into");
-      }
-
-      let mut invoc: Invoc<_, _> =
-        Invoc::new(&accel, vector_foreach)
-          .expect("Invoc::new");
-      unsafe {
-        invoc.no_acquire_fence();
-        invoc.device_release_fence();
       }
 
       let queue = accel.create_single_queue2(None, 0, 0)

@@ -13,7 +13,7 @@ use crate::rustc_data_structures::sync::{Lrc, };
 use rustc_span::{DUMMY_SP, symbol::Symbol, };
 
 use crate::common::{DriverData, GeobacterCustomIntrinsicMirGen,
-                    GetDriverData, GeobacterMirGen, stubbing,
+                    GetDriverData, GeobacterMirGen,
                     collector::collect_items_rec, };
 
 use crate::gvk_core::*;
@@ -62,8 +62,7 @@ impl fmt::Display for CheckFn {
 }
 impl GeobacterCustomIntrinsicMirGen for CheckFn {
   fn mirgen_simple_intrinsic<'tcx>(&self,
-                                   stubber: &stubbing::Stubber,
-                                   kid_did: &dyn DriverData,
+                                   dd: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    instance: ty::Instance<'tcx>,
                                    mir: &mut mir::BodyAndCache<'tcx>)
@@ -131,8 +130,8 @@ impl GeobacterCustomIntrinsicMirGen for CheckFn {
     // TODO add a compiler query so this is cached
     let mono_root = MonoItem::Fn(instance);
     let mut visited: FxHashSet<_> = Default::default();
-    collect_items_rec(tcx, stubber, kid_did,
-                      mono_root, &mut visited,
+    collect_items_rec(tcx, &*dd.stubber().unwrap(),
+                      dd, mono_root, &mut visited,
                       &mut None);
 
     // TODO Question: should we report a stack trace of an errant item's

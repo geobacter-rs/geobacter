@@ -5,6 +5,7 @@ name = "geobacter-core"
 version = "1.0.0"
 repository = "https://github.com/geobacter-rs/geobacter/tree/master/geobacter-core"
 description = "Geobacter core crate: runtime platform independent intrinsics and a few newtypes to help with host/device memory usage. This crate requires a special compiler to build."
+edition = "2018"
 
 [dependencies]
 geobacter-shared-defs = "1.0.0"

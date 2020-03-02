@@ -31,6 +31,7 @@ extern crate rmp_serde as rmps;
 extern crate syntax;
 extern crate rustc;
 extern crate rustc_attr;
+extern crate rustc_data_structures;
 extern crate rustc_hir;
 extern crate rustc_target;
 extern crate serialize as rustc_serialize;

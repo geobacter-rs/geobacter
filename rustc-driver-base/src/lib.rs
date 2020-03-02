@@ -47,7 +47,6 @@ extern crate lazy_static;
 extern crate geobacter_shared_defs as shared_defs;
 extern crate geobacter_rustc_help as rustc_help;
 
-use std::cell::Cell;
 use std::fmt;
 use std::mem::{transmute, };
 use std::time::Instant;
@@ -75,6 +74,8 @@ use rustc_span::{DUMMY_SP, };
 use rustc_span::symbol::{Symbol, };
 
 use crate::rustc_help::codec::GeobacterEncoder;
+use rustc_help::driver_data::DriverData;
+use rustc_help::intrinsics::CurrentPlatform;
 
 use crate::rustc_help::*;
 
@@ -116,10 +117,10 @@ pub fn main<F>(f: F)
 
     let i = Lrc::new(CurrentPlatform::host_platform());
     let k = format!("{}", i);
-    assert!(generators.intrinsics.insert(k, i).is_none());
+    assert!(generators.intrinsics.insert(k, i as Lrc<_>).is_none());
     let i = Lrc::new(WorkItemKill);
     let k = format!("{}", i);
-    assert!(generators.intrinsics.insert(k, i).is_none());
+    assert!(generators.intrinsics.insert(k, i as Lrc<_>).is_none());
 
     f(&mut generators);
     {
@@ -165,31 +166,39 @@ impl Callbacks for GeobacterDriverCallbacks {
 }
 
 pub struct Generators {
-  /// technically unsafe, but *should* only be set from one
-  /// thread in practice.
-  cstore: Cell<Option<&'static rustc_metadata::creader::CStore>>,
-
   kernel_instance: Lrc<dyn CustomIntrinsicMirGen>,
   kernel_context_data_id: Lrc<dyn CustomIntrinsicMirGen>,
+  specialization_param: Lrc<dyn CustomIntrinsicMirGen>,
+  call_by_type: Lrc<dyn CustomIntrinsicMirGen>,
   /// no `InternedString` here: the required thread local vars won't
   /// be initialized
   pub intrinsics: FxHashMap<String, Lrc<dyn CustomIntrinsicMirGen>>,
 }
-impl Generators {
-  pub fn cstore(&self) -> &'static rustc_metadata::creader::CStore {
-    self.cstore
-      .get()
-      .expect("requesting the cstore, but CompilerCalls::late_callback has been called yet")
-  }
-}
+impl Generators { }
 impl Default for Generators {
   fn default() -> Self {
+    use rustc_help::intrinsics::*;
+
+    let spec_param: GeobacterMirGen<SpecializationParam, Generators> =
+      Default::default();
+    let call_by_type: GeobacterMirGen<CallByType, Generators> =
+      Default::default();
+
     Generators {
-      cstore: Cell::new(None),
       kernel_instance: Lrc::new(KernelInstance) as Lrc<_>,
       kernel_context_data_id: Lrc::new(KernelContextDataId) as Lrc<_>,
+      specialization_param: Lrc::new(spec_param),
+      call_by_type: Lrc::new(call_by_type),
       intrinsics: Default::default(),
     }
+  }
+}
+impl rustc_help::driver_data::DriverData for Generators { }
+impl rustc_help::driver_data::GetDriverData for Generators {
+  fn with_self<'tcx, F, R>(_tcx: TyCtxt<'tcx>, f: F) -> R
+    where F: FnOnce(&dyn DriverData) -> R,
+  {
+    f(generators())
   }
 }
 static mut GENERATORS: Option<&'static Generators> = None;
@@ -221,6 +230,12 @@ fn custom_intrinsic_mirgen(tcx: TyCtxt<'_>, def_id: DefId)
     },
     "kernel_context_data_id" => {
       Some(gen.kernel_context_data_id.clone())
+    },
+    "__geobacter_specialization_param" => {
+      Some(gen.specialization_param.clone())
+    },
+    "__geobacter_call_by_type" => {
+      Some(gen.call_by_type.clone())
     },
     _ => {
       gen.intrinsics

@@ -477,6 +477,13 @@ impl<P> WorkerTranslatorData<P>
 
     let mut intrinsics = IntrinsicsMap::default();
     {
+      let marker: DriverDataGetter<P> = DriverDataGetter::default();
+      gintrinsics::intrinsics::insert_all_intrinsics(&marker, |k, v| {
+        let k = Symbol::intern(&k);
+        assert!(intrinsics.insert(k, v).is_none());
+      });
+    }
+    {
       let mut inserter = PlatformIntrinsicInserter(&mut intrinsics,
                                                    PhantomData::<P>);
       self.platform
@@ -608,7 +615,7 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
   opts.debugging_opts.query_dep_graph = true;
   opts.optimize = OptLevel::No;
   opts.optimize = OptLevel::Aggressive;
-  opts.debuginfo = DebugInfo::Full;
+  //opts.debuginfo = DebugInfo::Full;
 
   let output = (OutputType::Bitcode, None);
   let ir_out = (OutputType::LlvmAssembly, None);
@@ -651,6 +658,13 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
     // Should we run this unconditionally?
     opts.cg.passes.push("wholeprogramdevirt".into());
     opts.cg.passes.push("speculative-execution".into());
+    for _ in 0..2 {
+      opts.cg.passes.push("infer-address-spaces".into());
+      opts.cg.passes.push("instcombine".into());
+      opts.cg.passes.push("sroa".into());
+      opts.cg.passes.push("mem2reg".into());
+    }
+    opts.cg.passes.push("simplifycfg".into());
   }
   opts.debugging_opts.print_llvm_passes = false;
   opts.cg.llvm_args.push("-expensive-combines".into());
@@ -658,9 +672,6 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
   opts.cg.llvm_args.push("-amdgpu-early-inline-all".into());
   opts.cg.llvm_args.push("-amdgpu-prelink".into());
   opts.cg.llvm_args.push("-sroa-strict-inbounds".into());
-  opts.cg.llvm_args.push("-enable-store-refinement".into());
-  opts.cg.llvm_args.push("-enable-interleaved-mem-accesses".into());
-  opts.cg.llvm_args.push("-enable-masked-interleaved-mem-accesses".into());
   opts.debugging_opts.polly =
     opts.optimize == OptLevel::Aggressive;
   opts.cg.llvm_args.push("-polly-run-inliner".into());
@@ -721,9 +732,10 @@ impl<P> WorkerTranslatorData<P>
         let mut providers = Providers::default();
         rustc_metadata::provide_extern(&mut providers);
 
-        let stubber = gintrinsics::stubbing::Stubber::default();
         let def_id = PlatformDriverData::<P>::with(tcx, |tcx, pd| {
-          stubber.stub_def_id(tcx, pd.dd(), def_id)
+          let dd = pd.dd();
+          dd.stubber().unwrap()
+            .stub_def_id(tcx, dd, def_id)
         });
 
         (providers.is_mir_available)(tcx, def_id)
@@ -732,9 +744,10 @@ impl<P> WorkerTranslatorData<P>
         let mut providers = Providers::default();
         rustc_metadata::provide_extern(&mut providers);
 
-        let stubber = gintrinsics::stubbing::Stubber::default();
         let def_id = PlatformDriverData::<P>::with(tcx, |tcx, pd| {
-          stubber.stub_def_id(tcx, pd.dd(), def_id)
+          let dd = pd.dd();
+          dd.stubber().unwrap()
+            .stub_def_id(tcx, dd, def_id)
         });
 
         (providers.optimized_mir)(tcx, def_id)
@@ -743,9 +756,10 @@ impl<P> WorkerTranslatorData<P>
         let mut providers = Providers::default();
         rustc_codegen_utils::symbol_names::provide(&mut providers);
 
-        let stubber = gintrinsics::stubbing::Stubber::default();
         let instance = PlatformDriverData::<P>::with(tcx, |tcx, pd| {
-          stubber.map_instance(tcx, pd.dd(), instance)
+          let dd = pd.dd();
+          dd.stubber().unwrap()
+            .map_instance(tcx, dd, instance)
         });
 
         (providers.symbol_name)(tcx, instance)

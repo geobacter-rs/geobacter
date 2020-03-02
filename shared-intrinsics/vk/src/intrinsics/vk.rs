@@ -22,7 +22,7 @@ use crate::rustc_data_structures::sync::{Lrc, };
 use rustc_span::{DUMMY_SP, symbol::Symbol, };
 
 use crate::common::{DriverData, GeobacterCustomIntrinsicMirGen,
-                    GetDriverData, GeobacterMirGen, stubbing,
+                    GetDriverData, GeobacterMirGen,
                     collector::collect_items_rec, };
 
 use crate::gvk_core::*;
@@ -112,7 +112,6 @@ impl fmt::Display for GraphicsPipelineRequiredExtensions {
 
 impl GeobacterCustomIntrinsicMirGen for ComputePipelineLayoutDesc {
   fn mirgen_simple_intrinsic<'tcx>(&self,
-                                   stubber: &stubbing::Stubber,
                                    kid_did: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    instance: ty::Instance<'tcx>,
@@ -144,7 +143,7 @@ impl GeobacterCustomIntrinsicMirGen for ComputePipelineLayoutDesc {
     // collect all referenced mono items upfront:
     let mono_root = MonoItem::Fn(kernel_instance);
     let mut visited: FxHashSet<_> = Default::default();
-    collect_items_rec(tcx, stubber, kid_did,
+    collect_items_rec(tcx, &*kid_did.stubber().unwrap(), kid_did,
                       mono_root, &mut visited,
                       &mut None);
 
@@ -265,7 +264,6 @@ impl GeobacterCustomIntrinsicMirGen for ComputePipelineLayoutDesc {
 }
 impl GeobacterCustomIntrinsicMirGen for ComputePipelineRequiredCapabilities {
   fn mirgen_simple_intrinsic<'tcx>(&self,
-                                   _stubs: &stubbing::Stubber,
                                    _kid_did: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    instance: ty::Instance<'tcx>,
@@ -346,7 +344,6 @@ impl GeobacterCustomIntrinsicMirGen for ComputePipelineRequiredCapabilities {
 }
 impl GeobacterCustomIntrinsicMirGen for ComputePipelineRequiredExtensions {
   fn mirgen_simple_intrinsic<'tcx>(&self,
-                                   _stubs: &stubbing::Stubber,
                                    _kid_did: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    instance: ty::Instance<'tcx>,
@@ -426,7 +423,6 @@ impl GeobacterCustomIntrinsicMirGen for ComputePipelineRequiredExtensions {
 }
 impl GeobacterCustomIntrinsicMirGen for ComputeDescriptorSetBinding {
   fn mirgen_simple_intrinsic<'tcx>(&self,
-                                   _stubs: &stubbing::Stubber,
                                    _kid_did: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    instance: ty::Instance<'tcx>,
@@ -497,7 +493,6 @@ impl GeobacterCustomIntrinsicMirGen for ComputeDescriptorSetBinding {
 
 impl GeobacterCustomIntrinsicMirGen for GraphicsPipelineLayoutDesc {
   fn mirgen_simple_intrinsic<'tcx>(&self,
-                                   _stubs: &stubbing::Stubber,
                                    _kid_did: &dyn DriverData,
                                    _tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
@@ -616,7 +611,6 @@ impl GeobacterCustomIntrinsicMirGen for GraphicsPipelineLayoutDesc {
 }
 impl GeobacterCustomIntrinsicMirGen for GraphicsPipelineRequiredCapabilities {
   fn mirgen_simple_intrinsic<'tcx>(&self,
-                                   _stubs: &stubbing::Stubber,
                                    _kid_did: &dyn DriverData,
                                    _tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
@@ -737,7 +731,6 @@ impl GeobacterCustomIntrinsicMirGen for GraphicsPipelineRequiredCapabilities {
 }
 impl GeobacterCustomIntrinsicMirGen for GraphicsPipelineRequiredExtensions {
   fn mirgen_simple_intrinsic<'tcx>(&self,
-                                   _stubs: &stubbing::Stubber,
                                    _kid_did: &dyn DriverData,
                                    _tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,

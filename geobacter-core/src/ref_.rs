@@ -5,9 +5,8 @@ use std::marker::{PhantomData, };
 use std::mem::transmute;
 use std::ops::*;
 
-use crate::ptr::NonNull;
-use ptr::{AccelPtr, PtrTy, PtrRefTy};
-use platform::is_host;
+use crate::ptr::{AccelPtr, NonNull, PtrTy, PtrRefTy};
+use crate::platform::is_host;
 
 /// A type which when dereferenced will automatically use the correct pointer.
 #[derive(Clone, Copy)]

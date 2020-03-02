@@ -1,11 +1,14 @@
 
 use std::any::Any;
 use std::cmp::{Eq, PartialEq, };
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt::{self, Debug, };
 use std::hash;
+use std::mem::size_of;
 use std::ops::Deref;
 use std::path::{Path, };
+use std::slice::from_raw_parts;
 use std::sync::Arc;
 
 use rustc_hir::def_id::DefId;
@@ -17,7 +20,8 @@ use crate::syntax::ast;
 use crate::gintrinsics::{GeobacterCustomIntrinsicMirGen, attrs::ConditionItem,
                          attrs::geobacter_cfg_attrs, };
 
-use crate::geobacter_core::kernel::KernelInstance;
+use geobacter_core::kernel::{KernelInstance, OptionalFn, KernelInstanceRef,
+                             KernelDesc as DynKernelDesc, };
 
 use crate::{Accelerator, AcceleratorTargetDesc, };
 use self::products::{PlatformCodegenDesc, };
@@ -38,7 +42,20 @@ pub struct KernelDesc<P>
   where P: PlatformKernelDesc,
 {
   pub instance: KernelInstance,
+  pub spec_params: SpecParamsDesc,
   pub platform_desc: P,
+}
+
+impl<P> KernelDesc<P>
+  where P: PlatformKernelDesc,
+{
+  pub fn new(instance: KernelInstance, platform: P) -> Self {
+    KernelDesc {
+      instance,
+      spec_params: Default::default(),
+      platform_desc: platform,
+    }
+  }
 }
 
 impl<P> Eq for KernelDesc<P>
@@ -66,6 +83,62 @@ impl<P> hash::Hash for KernelDesc<P>
   }
 }
 
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub struct SpecParamsDesc(Option<Arc<BTreeMap<KernelInstance, Vec<u8>>>>);
+impl SpecParamsDesc {
+  fn get_mut(&mut self) -> &mut BTreeMap<KernelInstance, Vec<u8>> {
+    let m = self.0.get_or_insert_with(Default::default);
+    Arc::make_mut(m)
+  }
+  pub fn empty(&self) -> bool {
+    self.0.is_none() || self.0.as_ref().unwrap().len() == 0
+  }
+  pub fn clear(&mut self) {
+    if let Some(arc) = self.0.as_mut() {
+      if let Some(map) = Arc::get_mut(arc) {
+        // if we are the only owner, just clear in place.
+        map.clear();
+        return;
+      }
+    } else {
+      return;
+    }
+
+    // else just set to None
+    self.0 = None;
+  }
+  pub fn undefine<F, R>(&mut self, f: F)
+    where F: Fn() -> R,
+  {
+    if self.0.is_none() { return; }
+    let key = f.kernel_instance().unwrap();
+    self.get_mut().remove(&key);
+  }
+  pub fn define<F, R>(&mut self, f: F, value: &R)
+    where F: Fn() -> R,
+          R: Copy + Unpin + 'static,
+  {
+    unsafe { self.define_raw(f, value) }
+  }
+  pub unsafe fn define_raw<F, R>(&mut self, f: F, value: &R)
+    where F: Fn() -> R,
+  {
+    let key = f.kernel_instance().unwrap();
+
+    let mut bytes = Vec::with_capacity(size_of::<R>());
+    bytes.set_len(size_of::<R>());
+    let value_bytes =
+      from_raw_parts(value as *const R as *const u8,
+                     size_of::<R>());
+    bytes.copy_from_slice(value_bytes);
+
+    self.get_mut().insert(key, bytes);
+  }
+  fn get<'a, 'b>(&'a self, key: KernelInstanceRef<'b>) -> Option<&'a [u8]> {
+    Some(&**self.0.as_ref()?.get(&key)?)
+  }
+}
+
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
 pub struct CodegenKernelInstance {
   pub name: String,
@@ -86,6 +159,7 @@ impl From<KernelInstance> for CodegenKernelInstance {
 pub struct CodegenDesc<'tcx, P> {
   pub instance: Instance<'tcx>,
   pub kernel_instance: CodegenKernelInstance,
+  pub spec_params: SpecParamsDesc,
   pub platform_desc: P,
 }
 

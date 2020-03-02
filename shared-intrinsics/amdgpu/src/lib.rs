@@ -37,8 +37,8 @@ use crate::rustc_data_structures::sync::{Lrc, };
 
 use crate::grustc_help::GeobacterTyCtxtHelp;
 
-use crate::common::{DriverData, GeobacterCustomIntrinsicMirGen,
-                    stubbing, GetDriverData, GeobacterMirGen, };
+use common::driver_data::*;
+use common::{intrinsics::*, };
 
 pub mod attrs;
 
@@ -184,7 +184,6 @@ impl AxisId {
 }
 impl GeobacterCustomIntrinsicMirGen for AxisId {
   fn mirgen_simple_intrinsic<'tcx>(&self,
-                                   _stubs: &stubbing::Stubber,
                                    dd: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
@@ -242,7 +241,6 @@ impl DispatchPtr {
 
 impl GeobacterCustomIntrinsicMirGen for DispatchPtr {
   fn mirgen_simple_intrinsic<'tcx>(&self,
-                                   _stubs: &stubbing::Stubber,
                                    _dd: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
@@ -295,7 +293,6 @@ impl Barrier {
 }
 impl GeobacterCustomIntrinsicMirGen for Barrier {
   fn mirgen_simple_intrinsic<'tcx>(&self,
-                                   _stubs: &stubbing::Stubber,
                                    _dd: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
@@ -347,7 +344,6 @@ impl WaveBarrier {
 }
 impl GeobacterCustomIntrinsicMirGen for WaveBarrier {
   fn mirgen_simple_intrinsic<'tcx>(&self,
-                                   _stubs: &stubbing::Stubber,
                                    _dd: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,
@@ -399,7 +395,6 @@ impl ReadFirstLane {
 }
 impl GeobacterCustomIntrinsicMirGen for ReadFirstLane {
   fn mirgen_simple_intrinsic<'tcx>(&self,
-                                   _stubs: &stubbing::Stubber,
                                    _dd: &dyn DriverData,
                                    tcx: TyCtxt<'tcx>,
                                    _instance: ty::Instance<'tcx>,

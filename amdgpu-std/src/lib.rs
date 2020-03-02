@@ -7,7 +7,7 @@ extern crate hsa_rt;
 
 use hsa_rt::ffi::hsa_kernel_dispatch_packet_t;
 
-pub use gcore::{platform, ptr, slice, ref_, };
+pub use gcore::{platform, ptr, slice, ref_, param, };
 pub use gcore::{host_assert, host_assert_eq, host_assert_ne,
                 host_debug_assert, host_debug_assert_eq,
                 host_debug_assert_ne, host_unimplemented,

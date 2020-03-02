@@ -14,9 +14,9 @@ use rustc_data_structures::sync::{Lrc, RwLock, ReadGuard, MappedReadGuard, };
 use rustc_hir::def_id::{DefId, };
 use rustc_span::symbol::{Symbol, };
 
-use geobacter_core::kernel::{KernelInstance, };
+use geobacter_core::kernel::{KernelInstanceRef, OptionalFn};
 
-use gintrinsics::{DriverData as GIDriverData, };
+use gintrinsics::{DriverData as GIDriverData, stubbing::*, };
 use gintrinsics::*;
 
 use crate::{AcceleratorTargetDesc, };
@@ -39,6 +39,8 @@ pub struct DriverData<'tcx, P>
   roots: RwLock<Vec<PCodegenDesc<'tcx, P>>>,
   /// Needs to be initialized after the TyCtxt is created.
   root_conditions: RwLock<Vec<P::Condition>>,
+
+  stubber: RwLock<Stubber>,
 
   pub replaced_def_ids: RwLock<FxHashMap<DefId, DefId>>,
   /// maps `LOCAL_CRATE` (ie generated MIR wrappers) to their type.
@@ -79,6 +81,9 @@ impl<'tcx, P> PlatformDriverData<'tcx, P>
       // XXX? never initialized for host codegen query mode.
       roots: RwLock::new(vec![]),
       root_conditions: RwLock::new(vec![]),
+
+      // TODO allow the platform to customize
+      stubber: RwLock::new(Default::default()),
 
       replaced_def_ids: RwLock::new(Default::default()),
       type_of: RwLock::new(Default::default()),
@@ -205,9 +210,9 @@ impl<'tcx, P> DriverData<'tcx, P>
 {
   pub fn instance_of<F, Args, Ret>(&self, tcx: TyCtxt<'tcx>,
                                    f: &F) -> Instance<'tcx>
-    where F: Fn<Args, Output = Ret>,
+    where F: Fn<Args, Output = Ret> + OptionalFn<Args>,
   {
-    let ki = KernelInstance::get(f);
+    let ki = f.kernel_instance().unwrap();
     tcx.convert_kernel_instance(ki)
       .expect("instance decode failure")
   }
@@ -245,4 +250,14 @@ impl<'tcx, P> DriverData<'tcx, P>
 
 impl<'tcx, P> GIDriverData for DriverData<'tcx, P>
   where P: PlatformCodegen,
-{ }
+{
+  fn spec_param_data_raw(&self, instance: KernelInstanceRef) -> Option<MappedReadGuard<[u8]>> {
+    MappedReadGuard::try_map(self.root(), |root| {
+      root.spec_params
+        .get(instance)
+    }).ok()
+  }
+  fn stubber(&self) -> Option<MappedReadGuard<dyn DynStubber>> {
+    Some(ReadGuard::map(self.stubber.read(), |s| s as &dyn DynStubber ))
+  }
+}

@@ -1,3 +1,6 @@
+//! Common driver code shared between all three drivers. This can not depend on
+//! geobacter_core.
+
 #![feature(rustc_private)]
 #![feature(generators, generator_trait)]
 #![feature(never_type)]
@@ -22,16 +25,13 @@ extern crate geobacter_shared_defs as shared_defs;
 use std::borrow::Cow;
 use std::fmt;
 use std::iter::{repeat, };
-use std::mem::{size_of, transmute, };
 
 use crate::codec::GeobacterDecoder;
 
-use crate::shared_defs::{kernel::KernelDesc,
-                         platform::*, };
+use crate::shared_defs::{kernel::KernelDesc, };
 
 use rustc::middle::lang_items::{self, LangItem, };
-use crate::rustc::mir::{Constant, Operand, Rvalue, Statement,
-                        StatementKind, Place, };
+use crate::rustc::mir::{Constant, Operand, Rvalue, Place, };
 use crate::rustc::mir::interpret::{ConstValue, Scalar, Pointer,
                                    ScalarMaybeUndef, AllocId,
                                    Allocation, };
@@ -45,83 +45,9 @@ use crate::rustc_target::abi::{FieldPlacement, Align, HasDataLayout, };
 use rustc_span::{DUMMY_SP, Span, };
 
 pub mod codec;
-
-/// This intrinsic has to be manually inserted by the drivers
-#[derive(Clone, Copy, Eq, PartialEq, Debug)]
-pub struct CurrentPlatform(pub Platform);
-impl CurrentPlatform {
-  pub const fn host_platform() -> Self { CurrentPlatform(host_platform()) }
-
-  fn data(self) -> [u8; size_of::<Platform>()] {
-    unsafe {
-      transmute(self.0)
-    }
-  }
-}
-impl fmt::Display for CurrentPlatform {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "__geobacter_current_platform")
-  }
-}
-impl CustomIntrinsicMirGen for CurrentPlatform {
-  fn mirgen_simple_intrinsic<'tcx>(&self,
-                                   tcx: TyCtxt<'tcx>,
-                                   _instance: ty::Instance<'tcx>,
-                                   mir: &mut mir::BodyAndCache<'tcx>) {
-    let align = Align::from_bits(64).unwrap(); // XXX arch dependent.
-    let data = &self.data()[..];
-    let alloc = Allocation::from_bytes(data, align);
-    let alloc = tcx.intern_const_alloc(alloc);
-    let alloc_id = tcx.alloc_map.lock()
-      .create_memory_alloc(alloc);
-
-    let ret = mir::Place::return_place();
-
-    let source_info = mir::SourceInfo {
-      span: DUMMY_SP,
-      scope: mir::OUTERMOST_SOURCE_SCOPE,
-    };
-
-    let mut bb = mir::BasicBlockData {
-      statements: Vec::new(),
-      terminator: Some(mir::Terminator {
-        source_info: source_info.clone(),
-        kind: mir::TerminatorKind::Return,
-      }),
-
-      is_cleanup: false,
-    };
-
-    let ptr = Pointer::from(alloc_id);
-    let const_val = ConstValue::Scalar(ptr.into());
-    let constant = tcx.mk_const_op(source_info.clone(), Const {
-      ty: self.output(tcx),
-      val: ConstKind::Value(const_val),
-    });
-    let rvalue = Rvalue::Use(constant);
-
-    let stmt_kind = StatementKind::Assign(Box::new((ret, rvalue)));
-    let stmt = Statement {
-      source_info: source_info.clone(),
-      kind: stmt_kind,
-    };
-    bb.statements.push(stmt);
-    mir.basic_blocks_mut().push(bb);
-  }
-
-  fn generic_parameter_count(&self, _tcx: TyCtxt) -> usize {
-    0
-  }
-  /// The types of the input args.
-  fn inputs<'tcx>(&self, tcx: TyCtxt<'tcx>) -> &'tcx ty::List<ty::Ty<'tcx>> {
-    tcx.intern_type_list(&[])
-  }
-  /// The return type.
-  fn output<'tcx>(&self, tcx: TyCtxt<'tcx>) -> ty::Ty<'tcx> {
-    let arr = tcx.mk_array(tcx.types.u8, size_of::<Platform>() as _);
-    tcx.mk_imm_ref(tcx.lifetimes.re_static, arr)
-  }
-}
+pub mod driver_data;
+pub mod intrinsics;
+pub mod stubbing;
 
 pub fn call_device_func<'tcx, F>(tcx: TyCtxt<'tcx>,
                                  mir: &mut mir::BodyAndCache<'tcx>,
@@ -221,30 +147,39 @@ pub fn extract_fn_instance<'tcx>(tcx: TyCtxt<'tcx>,
 {
   let reveal_all = ParamEnv::reveal_all();
 
-  let local_ty = tcx
+  let mut local_ty = tcx
     .subst_and_normalize_erasing_regions(instance.substs,
                                          reveal_all,
                                          &local_ty);
 
-  let instance = match local_ty.kind {
-    ty::Ref(_, &ty::TyS {
-      kind: ty::FnDef(def_id, subs),
-      ..
-    }, ..) |
-    ty::FnDef(def_id, subs) => {
-      let subs = tcx
-        .subst_and_normalize_erasing_regions(instance.substs,
-                                             reveal_all,
-                                             &subs);
-      ty::Instance::resolve(tcx, reveal_all, def_id, subs)
-        .expect("must be resolvable")
-    },
-    _ => {
-      unreachable!("unexpected param type: {:?}", local_ty);
-    },
-  };
+  loop {
+    let instance = match local_ty.kind {
+      ty::Ref(_, &ty::TyS {
+        kind: ty::FnDef(def_id, subs),
+        ..
+      }, ..) |
+      ty::FnDef(def_id, subs) => {
+        let subs = tcx
+          .subst_and_normalize_erasing_regions(instance.substs,
+                                               reveal_all,
+                                               &subs);
+        ty::Instance::resolve(tcx, reveal_all, def_id, subs)
+          .expect("must be resolvable")
+      },
+      ty::Ref(_, inner @ &ty::TyS {
+        kind: ty::Ref(..),
+        ..
+      }, ..) => {
+        local_ty = inner;
+        continue;
+      },
+      _ => {
+        unreachable!("unexpected param type: {:?}", local_ty);
+      },
+    };
 
-  instance
+   return instance;
+  }
 }
 
 pub fn extract_opt_fn_instance<'tcx>(tcx: TyCtxt<'tcx>,
@@ -254,33 +189,41 @@ pub fn extract_opt_fn_instance<'tcx>(tcx: TyCtxt<'tcx>,
 {
   let reveal_all = ParamEnv::reveal_all();
 
-  let local_ty = tcx
+  let mut local_ty = tcx
     .subst_and_normalize_erasing_regions(instance.substs,
                                          reveal_all,
                                          &local_ty);
 
-  if local_ty == tcx.types.unit { return None; }
+  loop {
+    if local_ty == tcx.types.unit { return None; }
 
-  let instance = match local_ty.kind {
-    ty::Ref(_, reffed, _) if reffed == tcx.types.unit => { return None; },
-    ty::Ref(_, &ty::TyS {
-      kind: ty::FnDef(def_id, subs),
-      ..
-    }, ..) |
-    ty::FnDef(def_id, subs) => {
-      let subs = tcx
-        .subst_and_normalize_erasing_regions(instance.substs,
-                                             reveal_all,
-                                             &subs);
-      ty::Instance::resolve(tcx, reveal_all, def_id, subs)
-        .expect("must be resolvable")
-    },
-    _ => {
-      unreachable!("unexpected param type: {:?}", local_ty);
-    },
-  };
+    let instance = match local_ty.kind {
+      ty::Ref(_, &ty::TyS {
+        kind: ty::FnDef(def_id, subs),
+        ..
+      }, ..) |
+      ty::FnDef(def_id, subs) => {
+        let subs = tcx
+          .subst_and_normalize_erasing_regions(instance.substs,
+                                               reveal_all,
+                                               &subs);
+        ty::Instance::resolve(tcx, reveal_all, def_id, subs)
+          .expect("must be resolvable")
+      },
+      ty::Ref(_, inner @ &ty::TyS {
+        kind: ty::Ref(..),
+        ..
+      }, ..) => {
+        local_ty = inner;
+        continue;
+      },
+      _ => {
+        unreachable!("unexpected param type: {:?}", local_ty);
+      },
+    };
 
-  Some(instance)
+    return Some(instance);
+  }
 }
 
 pub trait GeobacterTyCtxtHelp<'tcx>: Copy {
@@ -369,11 +312,11 @@ pub trait GeobacterTyCtxtHelp<'tcx>: Copy {
     where T: KernelDesc,
   {
     trace!("converting kernel instance for {}",
-           k.instance_name().unwrap());
+           k.name().unwrap());
 
     let mut alloc_state = None;
     let mut decoder = GeobacterDecoder::new(self.as_tcx(),
-                                            k.instance_data(),
+                                            k.data(),
                                             &mut alloc_state);
 
     Instance::decode(&mut decoder).ok()

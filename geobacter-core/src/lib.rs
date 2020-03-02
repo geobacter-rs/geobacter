@@ -18,8 +18,10 @@ extern crate geobacter_shared_defs as shared_defs;
 #[macro_use]
 pub mod macros;
 
+#[doc(hidden)]
 pub mod intrinsics;
 pub mod kernel;
+pub mod param;
 pub mod platform;
 pub mod ptr;
 pub mod ref_;

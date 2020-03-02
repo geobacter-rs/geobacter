@@ -74,6 +74,7 @@ impl PlatformCodegen for Codegenner {
     Ok(core_codegen::CodegenDesc {
       instance,
       kernel_instance: desc.instance.into(),
+      spec_params: desc.spec_params,
       // filled post-codegen
       platform_desc: Default::default(),
     })

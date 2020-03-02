@@ -7,18 +7,18 @@
 /// TODO it would be nice to be able to map DefId -> KernelId instead of
 /// String -> KernelId. Need a way to translate the absolute path into a
 /// DefId.
-///
-/// TODO refactor this into an interface and move into lrt_core.
 
-use crate::rustc::ty::{TyCtxt, Instance, InstanceDef, };
+use crate::rustc::ty::TyCtxt;
 use crate::rustc_data_structures::fx::{FxHashMap};
 
-use crate::geobacter_core::kernel::{KernelInstance, };
+use geobacter_core::kernel::{KernelInstance, OptionalFn, };
 use crate::rustc_help::*;
 use rustc_hir::def_id::DefId;
 
 use self::stubs::*;
 use crate::{DriverData, };
+
+pub use rustc_help::stubbing::Stubber as DynStubber;
 
 pub struct Stubber {
   /// Are we stubbing the "builtin" stubs? See `self::stubs`.
@@ -26,34 +26,11 @@ pub struct Stubber {
   stubs: FxHashMap<String, KernelInstance>,
 }
 
-impl Stubber {
-  pub fn map_instance<'tcx>(&self,
-                            tcx: TyCtxt<'tcx>,
-                            dd: &dyn DriverData,
-                            inst: Instance<'tcx>)
-    -> Instance<'tcx>
-  {
-    let did = match inst.def {
-      InstanceDef::Item(did) => did,
-      _ => { return inst; },
-    };
-
-    let did = self.stub_def_id(tcx, dd, did);
-
-    // we should be able to just replace `stub_instance.substs`
-    // with `inst.substs`, assuming our stub signatures match the
-    // real functions (which they should).
-
-    return Instance {
-      def: InstanceDef::Item(did),
-      substs: inst.substs,
-    };
-  }
-
-  pub fn stub_def_id<'tcx>(&self,
-                           tcx: TyCtxt<'tcx>,
-                           _dd: &dyn DriverData,
-                           did: DefId)
+impl DynStubber for Stubber {
+  fn stub_def_id<'tcx>(&self,
+                       tcx: TyCtxt<'tcx>,
+                       _dd: &dyn DriverData,
+                       did: DefId)
     -> DefId
   {
     let path = tcx.def_path_str(did);
@@ -86,14 +63,14 @@ impl Stubber {
     macro_rules! check {
       ($path:expr, $kid_did:expr, $abs_path:expr, $stub:expr) => {
         if $path == $abs_path {
-          let ki = KernelInstance::get(&$stub);
+          let ki = $stub.kernel_instance().unwrap();
           return convert_ki(ki);
         } else {
           if $abs_path.starts_with("core::") && $path.starts_with("rustc_std_workspace_core::") {
             let suffix = &$abs_path["core::".len()..];
             let path_suffix = &$path["rustc_std_workspace_core::".len()..];
             if suffix == path_suffix {
-              let ki = KernelInstance::get(&$stub);
+              let ki = $stub.kernel_instance().unwrap();
               return convert_ki(ki);
             }
           }
@@ -161,7 +138,9 @@ impl Stubber {
 
     did
   }
+}
 
+impl Stubber {
   /// We need to force a few functions to be used. DO NOT CALL.
   #[doc(hidden)]
   pub fn force_mir<T>()
