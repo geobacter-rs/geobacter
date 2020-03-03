@@ -212,11 +212,6 @@ pub trait HostConsumable: SignalHandle {
   /// This function waits for an acquire memory fence before
   /// returning.
   fn wait_for_zero(&self, spin: bool) -> Result<(), Value> {
-    // quick check so we might be able to avoid a fence:
-    if self.signal_ref().load_relaxed() == 0 {
-      // XXX we might need a fence anyway!!!
-      return Ok(());
-    }
     let r = unsafe { self.wait_for_zero_relaxed(spin) };
     fence(Ordering::Acquire);
     r
