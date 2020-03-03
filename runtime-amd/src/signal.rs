@@ -18,9 +18,6 @@ pub trait SignalHandle {
   fn signal_ref(&self) -> &SignalRef;
 
   /// Do not call this on your own.
-  /// Used to tell some types that their resources are no longer in
-  /// by the accelerator. For example, when barrier packets complete
-  /// this is used to tell the deps that they are free to free resources.
   #[doc = "hidden"]
   unsafe fn mark_consumed(&self);
 
