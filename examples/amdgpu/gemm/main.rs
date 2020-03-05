@@ -180,8 +180,6 @@ fn gemm_kernel(args: &GemmArgs<ETy>) {
   static mut S_A: MaybeUninit<[ETy; BLOCK_SIZE]> = MaybeUninit::uninit();
   #[geobacter_attr(platform = "amdgpu", address_space = "local")]
   static mut S_B: MaybeUninit<[ETy; BLOCK_SIZE]> = MaybeUninit::uninit();
-  #[geobacter_attr(platform = "amdgpu", address_space = "local")]
-  static mut S_C: MaybeUninit<[ETy; BLOCK_SIZE]> = MaybeUninit::uninit();
 
   unsafe {
     let a = MaybeCheckedSlice::unchecked(args.a.as_ref());
@@ -189,9 +187,8 @@ fn gemm_kernel(args: &GemmArgs<ETy>) {
     let c = MaybeCheckedMutSlice::unchecked(args.c as _);
     let sa = MaybeCheckedMutSlice::unchecked(&mut *S_A.as_mut_ptr());
     let sb = MaybeCheckedMutSlice::unchecked(&mut *S_B.as_mut_ptr());
-    let sc = MaybeCheckedMutSlice::unchecked(&mut *S_C.as_mut_ptr());
 
-    gemm_v1(a, b, c, sa, sb, sc,
+    gemm_v1(a, b, c, sa, sb,
             dim, BLOCK_K as _, BLOCK_K_STRIDE as _,
             wg, sync_threads);
   }
@@ -202,7 +199,6 @@ unsafe fn gemm_v1<F, E>(a: MaybeCheckedSlice<E>,
                         mut c: MaybeCheckedMutSlice<E>,
                         mut sa: MaybeCheckedMutSlice<E>,
                         mut sb: MaybeCheckedMutSlice<E>,
-                        mut sc: MaybeCheckedMutSlice<E>,
                         stride: NonZeroUsize, smem_len: u32, smem_stride: u32,
                         (wg_x, wg_y): (u32, u32),
                         sync_threads: F)
@@ -212,9 +208,7 @@ unsafe fn gemm_v1<F, E>(a: MaybeCheckedSlice<E>,
   let stride = stride.get();
   let mod_k = mod_block_k();
 
-  sync_threads.forall_workitems(|wi_x, wi_y| {
-    sc[(wi_y * smem_stride + wi_x) as usize] = E::from(0.0f32);
-  });
+  let mut vcp = E::from(0.0f32);
 
   let mut k = 0usize;
   while k < stride {
@@ -246,39 +240,40 @@ unsafe fn gemm_v1<F, E>(a: MaybeCheckedSlice<E>,
 
     // naive gemm from SMEM:
     sync_threads.forall_workitems_synced(|wi_x, wi_y| {
-      let vcp = &mut sc[(wi_y * smem_stride + wi_x) as usize];
+      let i_y = (wg_y + wi_y) as usize;
+      let i_x = (wg_x + wi_x) as usize;
+      if mod_k || (i_y < stride && i_x < stride) {
+        let mut kci = 0u16;
+        while kci < (smem_len as u16) {
+          {
+            let kci = kci as u32;
 
-      let mut kci = 0u16;
-      while kci < (smem_len as u16) {
-        {
-          let kci = kci as u32;
+            let ia = (kci * smem_stride + wi_y) as usize;
+            let ib = (kci * smem_stride + wi_x) as usize;
 
-          let ia = (wi_y * smem_stride + kci) as usize;
-          let ib = (wi_x * smem_stride + kci) as usize;
+            let va = sa[ia];
+            let vb = sb[ib];
 
-          let va = sa[ia];
-          let vb = sb[ib];
+            vcp += va * vb;
+          }
 
-          *vcp += va * vb;
+          kci += 1;
         }
-
-        kci += 1;
       }
     });
 
     k += smem_len as usize;
   }
 
-  // copy sc back to C:
+  // copy back to C:
   sync_threads.forall_workitems(|wi_x, wi_y| {
     let i_y = (wg_y + wi_y) as usize;
     let i_x = (wg_x + wi_x) as usize;
-    let idx = i_y * stride + i_x;
     if mod_k || (i_y < stride && i_x < stride) {
+      let idx = i_y * stride + i_x;
       // ensure each output is written only once.
       host_debug_assert_eq!(c[idx], E::from(0.0f32));
-      let vc = &sc[(wi_y * smem_stride + wi_x) as usize];
-      c[idx] = *vc;
+      c[idx] = vcp;
     }
   });
 }
@@ -325,15 +320,13 @@ fn test_gemm_v1(a: &[ETy], b: &[ETy], c: &mut [ETy], dim: NonZeroUsize) {
 
       let mut t_a: MaybeUninit<[ETy; BLOCK_SIZE]> = MaybeUninit::uninit();
       let mut t_b: MaybeUninit<[ETy; BLOCK_SIZE]> = MaybeUninit::uninit();
-      let mut t_c: MaybeUninit<[ETy; BLOCK_SIZE]> = MaybeUninit::uninit();
       let wg = (wg_x as _, wg_y as _);
 
       unsafe {
         let sa = MaybeCheckedMutSlice::checked(&mut *t_a.as_mut_ptr());
         let sb = MaybeCheckedMutSlice::checked(&mut *t_b.as_mut_ptr());
-        let sc = MaybeCheckedMutSlice::checked(&mut *t_c.as_mut_ptr());
 
-        gemm_v1(a, b, c, sa, sb, sc,
+        gemm_v1(a, b, c, sa, sb,
                 dim, BLOCK_K as _, BLOCK_K_STRIDE as _,
                 wg, sync_threads);
       }
@@ -432,9 +425,10 @@ pub fn main() {
 
   const AXIS_SIZE_: usize = 4 * 4096 + 1024;
   const AXIS_SIZE: usize = ((AXIS_SIZE_ - 1) / BLOCK_K + 1) * BLOCK_K;
-  //const AXIS_SIZE: usize = 8;
   const SIZE: usize = AXIS_SIZE * AXIS_SIZE;
   const GRID: usize = AXIS_SIZE;
+
+  println!("AXIS_SIZE % BLOCK_K == {}", AXIS_SIZE % BLOCK_K);
 
   let shape = (AXIS_SIZE, AXIS_SIZE);
   let dim = NonZeroUsize::new(AXIS_SIZE).unwrap();
