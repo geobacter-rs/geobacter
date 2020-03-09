@@ -278,7 +278,10 @@ pub trait LaunchDims: Copy {
   fn grid(self) -> Result<(u32, u32, u32), CallError>;
 }
 // HSA/AMDGPUs only support up to 3d, so that's all we're going to support here.
-impl LaunchDims for (usize, ) {
+macro_rules! impl_launch_dims {
+  ($($ty:ty,)*) => ($(
+
+impl LaunchDims for ($ty, ) {
   fn default_unit() -> Self { (1, ) }
   fn workgroup(self) -> Result<(u16, u16, u16), CallError> {
     Ok((self.0.to_u16().ok_or(CallError::Overflow)?, 1, 1, ))
@@ -287,7 +290,7 @@ impl LaunchDims for (usize, ) {
     Ok((self.0.to_u32().ok_or(CallError::Overflow)?, 1, 1, ))
   }
 }
-impl LaunchDims for (usize, usize, ) {
+impl LaunchDims for ($ty, $ty, ) {
   fn default_unit() -> Self { (1, 1, ) }
   fn workgroup(self) -> Result<(u16, u16, u16), CallError> {
     Ok((
@@ -304,7 +307,7 @@ impl LaunchDims for (usize, usize, ) {
     ))
   }
 }
-impl LaunchDims for (usize, usize, usize, ) {
+impl LaunchDims for ($ty, $ty, $ty, ) {
   fn default_unit() -> Self { (1, 1, 1, ) }
   fn workgroup(self) -> Result<(u16, u16, u16), CallError> {
     Ok((
@@ -321,6 +324,10 @@ impl LaunchDims for (usize, usize, usize, ) {
     ))
   }
 }
+
+  )*);
+}
+impl_launch_dims!(u16, u32, u64, usize, );
 
 #[derive(Clone)]
 pub struct Invoc<A, Dim>
