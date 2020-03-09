@@ -278,8 +278,6 @@ mod stubs {
   // We need to override these so we don't try to `format!()`, which will
   // result in indirect function calls. AMDGPU doesn't support indirect
   // calls.
-  // We use unchecked_unreachable() so that the checks themselves can
-  // be elided.
   // XXX
   #[inline(always)]
   pub fn slice_index_len_fail(_index: usize, _len: usize) -> ! {
