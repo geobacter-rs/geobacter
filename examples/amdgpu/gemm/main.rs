@@ -563,6 +563,8 @@ pub fn main() {
   let queue = dev.create_single_queue2(None, group_size, private_size)
     .expect("HsaAmdGpuAccel::create_single_queue");
 
+  // ensure the invocation does block on this step:
+  invoc.compile().expect("kernel cross codegen");
   async_copy_signal.wait_for_zero(false).unwrap();
   println!("starting GPU gemm...");
 
