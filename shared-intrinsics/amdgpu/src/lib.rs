@@ -41,6 +41,9 @@ use common::driver_data::*;
 use common::{intrinsics::*, };
 
 pub mod attrs;
+pub mod dpp;
+
+pub use crate::dpp::{UpdateDpp, UpdateDppWorkaround};
 
 pub fn insert_all_intrinsics<F, U>(marker: &U, mut into: F)
   where F: FnMut(String, Lrc<dyn CustomIntrinsicMirGen>),
@@ -57,6 +60,10 @@ pub fn insert_all_intrinsics<F, U>(marker: &U, mut into: F)
   let (k, v) = GeobacterMirGen::new(WaveBarrier, marker);
   into(k, v);
   let (k, v) = GeobacterMirGen::new(ReadFirstLane, marker);
+  into(k, v);
+  let (k, v) = GeobacterMirGen::new(UpdateDpp, marker);
+  into(k, v);
+  let (k, v) = GeobacterMirGen::new(UpdateDppWorkaround, marker);
   into(k, v);
 }
 
@@ -450,6 +457,7 @@ impl common::PlatformImplDetail for AmdGcnKillDetail {
 }
 
 mod amdgcn_intrinsics {
+  #![allow(improper_ctypes)]
   // unsafe functions don't implement `std::opts::Fn` (for good reasons,
   // but we need them to here).
   macro_rules! def_id_intrinsic {
@@ -476,6 +484,11 @@ mod amdgcn_intrinsics {
   def_id_intrinsic!(fn amdgcn_wave_barrier() => "llvm.amdgcn.wave.barrier");
   def_id_intrinsic!(fn amdgcn_kill(b: bool) -> ! => "llvm.amdgcn.kill");
   def_id_intrinsic!(fn amdgcn_readfirstlane(b: u32) -> u32 => "llvm.amdgcn.readfirstlane");
+  def_id_intrinsic! {
+    fn amdgcn_update_dpp_i32(old: i32, src: i32, dpp_ctrl: i32, row_mask: i32,
+                             bank_mask: i32, bound_ctrl: bool) -> i32
+    => "llvm.amdgcn.update.dpp.i32"
+  }
 
   /// This one is an actual Rust intrinsic; the LLVM intrinsic returns
   /// a pointer in the constant address space, which we can't correctly

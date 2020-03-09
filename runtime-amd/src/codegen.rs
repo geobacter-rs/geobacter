@@ -63,6 +63,8 @@ impl PlatformCodegen for Codegenner {
     into.insert(WaveBarrier);
     let i: intrinsics_common::WorkItemKill<intrinsics::AmdGcnKillDetail> = Default::default();
     into.insert(i);
+    into.insert(UpdateDpp);
+    into.insert(UpdateDppWorkaround);
   }
 
   fn root<'tcx>(&self, desc: PKernelDesc<Self>,

@@ -54,7 +54,16 @@ pub fn call_device_func<'tcx, F>(tcx: TyCtxt<'tcx>,
                                  f: F)
   where F: FnOnce() -> Option<Instance<'tcx>>,
 {
-  redirect_or_panic(tcx, mir, "Device function called on the host", f);
+  redirect_or_panic(tcx, mir, "Device function called on the host",
+                    move || Some((f()?, vec![])) );
+}
+pub fn call_device_func_args<'tcx, F>(tcx: TyCtxt<'tcx>,
+                                      mir: &mut mir::BodyAndCache<'tcx>,
+                                      f: F)
+  where F: FnOnce() -> Option<(Instance<'tcx>, Vec<Operand<'tcx>>)>,
+{
+  redirect_or_panic(tcx, mir, "Device function called on the host",
+                    f);
 }
 
 /// Either call the instance returned from `f` or insert code to panic.
@@ -62,7 +71,7 @@ pub fn call_device_func<'tcx, F>(tcx: TyCtxt<'tcx>,
 pub fn redirect_or_panic<'tcx, F>(tcx: TyCtxt<'tcx>,
                                   mir: &mut mir::BodyAndCache<'tcx>,
                                   msg: &str, f: F)
-  where F: FnOnce() -> Option<Instance<'tcx>>,
+  where F: FnOnce() -> Option<(Instance<'tcx>, Vec<Operand<'tcx>>)>,
 {
   fn langcall(tcx: TyCtxt,
                   span: Option<Span>,
@@ -95,8 +104,8 @@ pub fn redirect_or_panic<'tcx, F>(tcx: TyCtxt<'tcx>,
   };
 
   let (real_instance, args, term_kind) = match f() {
-    Some(instance) => {
-      (instance, vec![], mir::TerminatorKind::Return)
+    Some((instance, args)) => {
+      (instance, args, mir::TerminatorKind::Return)
     },
     None => {
       // call `panic` from `libcore`
