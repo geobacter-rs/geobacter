@@ -21,7 +21,7 @@ members = ["hsa-core-gen", "geobacter-core",
            "amdgpu-std", "runtime-amd",
            "runtime-amd-macros",
            "examples/amdgpu/trivial", "examples/amdgpu/fractal",
-           "examples/amdgpu/mut-slice-ub",
+           "examples/amdgpu/mut-slice-ub", "examples/amdgpu/gemm",
 
            "runtime-nv",
 
