@@ -5,6 +5,7 @@ use std::marker::{PhantomData, PhantomPinned, };
 use std::num::{NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize,
                NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
                Wrapping, };
+use std::ptr::NonNull;
 use std::rc::{Rc, };
 use std::sync::{Arc, atomic::*, };
 
@@ -169,6 +170,15 @@ unsafe impl<T> Deps for *const T
   }
 }
 unsafe impl<T> Deps for *mut T
+  where T: ?Sized,
+{
+  fn iter_deps<'a>(&'a self, _: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+    -> Result<(), CallError>
+  {
+    Ok(())
+  }
+}
+unsafe impl<T> Deps for NonNull<T>
   where T: ?Sized,
 {
   fn iter_deps<'a>(&'a self, _: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
