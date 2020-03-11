@@ -265,6 +265,7 @@ impl fmt::Display for CallError {
     write!(f, "{:?}", self) // TODO
   }
 }
+impl std::error::Error for CallError { }
 impl From<QueueError> for CallError {
   fn from(v: QueueError) -> Self {
     CallError::Queue(v)

@@ -27,8 +27,12 @@ arrayvec = "0.5.0"
 packed_simd = { git = "https://github.com/rust-lang-nursery/packed_simd.git", optional = true }
 num-traits = "0.2.9"
 alloc-wg = { version = "0.7.0" }
+smallvec = "1.2.0"
 
 [dependencies.goblin]
 version = "0.0.23"
 default-features = false
 features = ["std", "elf32", "elf64"]
+
+[dev-dependencies]
+lazy_static = "1.4.0"

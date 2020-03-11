@@ -14,6 +14,7 @@ use gcore::ptr::*;
 use crate::module::CallError;
 use crate::signal::{DeviceConsumable, DeviceSignal, GlobalSignal, };
 use crate::boxed::{RawPoolBox, LocallyAccessiblePoolBox, };
+use crate::alloc::{LapBox, LapVec};
 
 /// This is unsafe because you must ensure the proper dep signals are registered!
 /// You should probably just use the `GeobacterDeps` derive macro to implement this.
@@ -276,11 +277,29 @@ unsafe impl<T> Deps for RawPoolBox<T>
   }
 }
 unsafe impl<T> Deps for LocallyAccessiblePoolBox<T>
-  where T: ?Sized,
+  where T: ?Sized + Deps,
 {
-  fn iter_deps<'a>(&'a self, _: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
     -> Result<(), CallError>
   {
-    Ok(())
+    (&**self).iter_deps(f)
+  }
+}
+unsafe impl<T> Deps for LapBox<T>
+  where T: ?Sized + Deps,
+{
+  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+    -> Result<(), CallError>
+  {
+    (&**self).iter_deps(f)
+  }
+}
+unsafe impl<T> Deps for LapVec<T>
+  where T: Deps,
+{
+  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+    -> Result<(), CallError>
+  {
+    (&**self).iter_deps(f)
   }
 }

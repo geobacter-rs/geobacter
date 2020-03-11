@@ -459,6 +459,7 @@ dependencies = [
  "hsa-rt",
  "ndarray 0.13.0",
  "nix",
+ "num-traits",
  "rand 0.7.3",
 ]
 
@@ -520,11 +521,13 @@ dependencies = [
  "geobacter-shared-defs",
  "goblin",
  "hsa-rt",
+ "lazy_static",
  "log",
  "num-traits",
  "packed_simd",
  "rmp-serde",
  "serde",
+ "smallvec 1.2.0",
 ]
 
 [[package]]

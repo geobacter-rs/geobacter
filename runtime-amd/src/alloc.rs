@@ -1,4 +1,3 @@
-use std::ptr::slice_from_raw_parts_mut;
 
 use alloc_wg::alloc::*;
 
@@ -9,6 +8,11 @@ pub struct LapAlloc {
   pub(crate) id: AcceleratorId,
   pub(crate) device_agent: Agent,
   pub(crate) pool: MemoryPoolAlloc,
+  /// Granting devices access is a really expensive syscall (more than a mmap), so this
+  /// is here to avoid that where possible.
+  /// None by default to avoid an allocation if eg a LapVec is constructed but
+  /// never pushed to.
+  pub(crate) accessible: Option<Arc<Vec<Agent>>>,
 }
 impl LapAlloc {
   pub fn alloc_pool(&self) -> &MemoryPoolAlloc {
@@ -29,39 +33,8 @@ impl AllocRef for LapAlloc {
   fn alloc(&mut self, layout: NonZeroLayout)
     -> Result<NonNull<u8>, Self::Error>
   {
-    unsafe {
-      let out_ptr = self.pool.alloc(layout)?;
-      let ptr = slice_from_raw_parts_mut(out_ptr.as_ptr(), layout.size().get());
-      let ptr = NonNull::new_unchecked(ptr);
-      let pool_ptr = MemoryPoolPtr::from_ptr(self.pool.pool(), ptr);
-
-      // TODO? We have to share this now; we don't get another opportunity to do this.
-      // This next part takes the majority of the time in this function (like ~4/5 of
-      // all time spent).
-      let aa = self.pool.pool().agent_access(&self.device_agent)?;
-      if aa.never_allowed() {
-        error!("pool {:?} not sharable with this device ({:?})",
-               self.pool, self.id);
-        self.pool.dealloc(out_ptr, layout);
-        return Err(HsaError::General);
-      } else if aa.default_disallowed() {
-        match pool_ptr.grant_agent_access(&self.device_agent) {
-          Ok(()) => { },
-          Err(e) => {
-            self.pool.dealloc(out_ptr, layout);
-            return Err(e);
-          },
-        }
-      } else if aa.default_allowed() {
-        // nothing to do here
-      } else {
-        warn!("unknown default access: {:?}", aa);
-        self.pool.dealloc(out_ptr, layout);
-        return Err(HsaError::General);
-      }
-
-      Ok(out_ptr)
-    }
+    let out_ptr = self.pool.alloc(layout)?;
+    Ok(out_ptr)
   }
 
   #[inline]
@@ -92,6 +65,52 @@ impl BuildAllocRef for LapAlloc {
 impl ReallocRef for LapAlloc { }
 impl Abort for LapAlloc { }
 
+/// No device removal.
+pub trait AllocAccess: BoxPoolPtr {
+  fn build_alloc_mut(&mut self) -> &mut LapAlloc;
+
+  /// TODO: it would be nice to allow granting new devices access (which is expensive)
+  /// concurrently. This is safe because only removal is concurrent-unsafe.
+  fn add_access(&mut self, device: &HsaAmdGpuAccel) -> Result<(), HsaError> {
+    let already_accessible = self.build_alloc_mut()
+      .accessible
+      .iter()
+      .flat_map(|i| i.iter() )
+      .any(|a| a == device.agent() );
+    if already_accessible {
+      // nothing to do.
+      return Ok(());
+    }
+
+    let pool_ptr = unsafe { self.pool_ptr() };
+    if let None = pool_ptr { return Ok(()); }
+    let pool_ptr = pool_ptr.unwrap();
+    let pool = pool_ptr.pool();
+
+    let alloc = self.build_alloc_mut();
+    if alloc.accessible.is_none() {
+      alloc.accessible = Some(Arc::default());
+    }
+    let accessible = Arc::make_mut(alloc.accessible.as_mut().unwrap());
+    accessible.push(device.agent().clone());
+
+    let aa = pool.agent_access(device.agent())?;
+    if aa.never_allowed() {
+      error!("pool {:?} not sharable with this device ({:?})",
+             pool, device.id());
+      return Err(HsaError::General);
+    } else if aa.default_disallowed() {
+      pool_ptr.grant_agents_access(&accessible)?;
+    } else if aa.default_allowed() {
+      // nothing to do
+    } else {
+      unreachable!("{:?}", aa);
+    }
+
+    Ok(())
+  }
+}
+
 /// A Vec-esk type allocated from a CPU visible memory pool.
 /// Locality is defined as memory accessible to processor which
 /// is running the code.
@@ -108,3 +127,16 @@ pub type LapVec<T> = alloc_wg::vec::Vec<T, LapAlloc>;
 ///
 /// Lap: LocallyAccessiblePool
 pub type LapBox<T> = alloc_wg::boxed::Box<T, LapAlloc>;
+
+impl<T> AllocAccess for LapVec<T> {
+  fn build_alloc_mut(&mut self) -> &mut LapAlloc {
+    self.build_alloc_mut()
+  }
+}
+impl<T> AllocAccess for LapBox<T>
+  where T: ?Sized,
+{
+  fn build_alloc_mut(&mut self) -> &mut LapAlloc {
+    self.build_alloc_mut()
+  }
+}

@@ -1,9 +1,13 @@
 
+//! Note: sometime Soon(TM) this will undergo a large refactor, in order to remove
+//! many foot guns relating to direct use of the associated SignalRefs.
+
 use std::ops::*;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{fence, Ordering, };
 
+use crate::HsaAmdGpuAccel;
 use crate::module::{Deps, CallError, };
 
 use hsa_rt::error::Error as HsaError;
@@ -24,6 +28,15 @@ pub trait SignalHandle {
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable>;
 }
 impl<'a, T> SignalHandle for &'a T
+  where T: SignalHandle + ?Sized,
+{
+  fn signal_ref(&self) -> &SignalRef { (**self).signal_ref() }
+  unsafe fn mark_consumed(&self) { (**self).mark_consumed() }
+  fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
+    (**self).as_host_consumable()
+  }
+}
+impl<'a, T> SignalHandle for &'a mut T
   where T: SignalHandle + ?Sized,
 {
   fn signal_ref(&self) -> &SignalRef { (**self).signal_ref() }
@@ -54,6 +67,53 @@ impl Deref for dyn SignalHandle {
   type Target = SignalRef;
   fn deref(&self) -> &SignalRef { self.signal_ref() }
 }
+/// Interface for safely resetting a signal to some initial state.
+/// This is separate because reset doesn't use interior mutability, and
+/// thus taking a mutable reference to a immutable reference would allow
+/// one to reset the signal, possibly while in use, breaking signal dependency
+/// chains.
+pub trait ResettableSignal {
+  fn reset(&mut self, device: &Arc<HsaAmdGpuAccel>, initial: Value)
+    -> Result<(), HsaError>;
+}
+impl<'a, T> ResettableSignal for &'a mut T
+  where T: ResettableSignal,
+{
+  fn reset(&mut self, device: &Arc<HsaAmdGpuAccel>,
+           initial: Value)
+    -> Result<(), HsaError>
+  {
+    (&mut **self).reset(device, initial)
+  }
+}
+impl<T> ResettableSignal for Rc<T>
+  where T: ResettableSignal + SignalFactory,
+{
+  fn reset(&mut self, device: &Arc<HsaAmdGpuAccel>, initial: Value)
+    -> Result<(), HsaError>
+  {
+    if let Some(sig) = Rc::get_mut(self) {
+      sig.reset(device, initial)?;
+    } else {
+      *self = Rc::new(T::new(device, initial)?)
+    }
+    Ok(())
+  }
+}
+impl<T> ResettableSignal for Arc<T>
+  where T: ResettableSignal + SignalFactory,
+{
+  fn reset(&mut self, device: &Arc<HsaAmdGpuAccel>, initial: Value)
+    -> Result<(), HsaError>
+  {
+    if let Some(sig) = Arc::get_mut(self) {
+      sig.reset(device, initial)?;
+    } else {
+      *self = Arc::new(T::new(device, initial)?)
+    }
+    Ok(())
+  }
+}
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct HostSignal(pub(crate) Signal);
@@ -70,6 +130,14 @@ impl SignalHandle for HostSignal {
     Some(self)
   }
 }
+impl ResettableSignal for HostSignal {
+  fn reset(&mut self, _: &Arc<HsaAmdGpuAccel>, initial: Value)
+    -> Result<(), HsaError>
+  {
+    (&**self).silent_store_relaxed(initial);
+    Ok(())
+  }
+}
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct DeviceSignal(pub(crate) Signal, pub(crate) AcceleratorId);
@@ -83,6 +151,14 @@ impl SignalHandle for DeviceSignal {
   fn signal_ref(&self) -> &SignalRef { &**self }
   unsafe fn mark_consumed(&self) { }
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> { None }
+}
+impl ResettableSignal for DeviceSignal {
+  fn reset(&mut self, _: &Arc<HsaAmdGpuAccel>, initial: Value)
+    -> Result<(), HsaError>
+  {
+    (&**self).silent_store_relaxed(initial);
+    Ok(())
+  }
 }
 
 /// A signal handle which any device on this system can consume (wait on).
@@ -106,6 +182,14 @@ impl SignalHandle for GlobalSignal {
   unsafe fn mark_consumed(&self) { }
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
     Some(self)
+  }
+}
+impl ResettableSignal for GlobalSignal {
+  fn reset(&mut self, _: &Arc<HsaAmdGpuAccel>, initial: Value)
+    -> Result<(), HsaError>
+  {
+    (&**self).silent_store_relaxed(initial);
+    Ok(())
   }
 }
 
@@ -226,6 +310,25 @@ impl<T> HostConsumable for Rc<T>
 impl<T> HostConsumable for Arc<T>
   where T: HostConsumable + ?Sized,
 { }
+
+pub trait SignalFactory: Sized {
+  fn new(device: &Arc<HsaAmdGpuAccel>, initial: Value) -> Result<Self, HsaError>;
+}
+impl SignalFactory for GlobalSignal {
+  fn new(_: &Arc<HsaAmdGpuAccel>, initial: Value) -> Result<Self, HsaError> {
+    GlobalSignal::new(initial)
+  }
+}
+impl SignalFactory for DeviceSignal {
+  fn new(device: &Arc<HsaAmdGpuAccel>, initial: Value) -> Result<Self, HsaError> {
+    device.new_device_signal(initial)
+  }
+}
+impl SignalFactory for HostSignal {
+  fn new(device: &Arc<HsaAmdGpuAccel>, initial: Value) -> Result<Self, HsaError> {
+    device.new_host_signal(initial)
+  }
+}
 
 /// An object which will force the host to wait on the signal when deref-ed.
 /// Use this to wait for transfers/kernels to finish before reading.

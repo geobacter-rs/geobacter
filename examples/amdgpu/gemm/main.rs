@@ -6,12 +6,13 @@
 extern crate grt_amd as geobacter_runtime_amd;
 
 use gstd_amd::*;
-use grt_amd::{*, alloc::*, module::*, signal::*, boxed::RawPoolBox, };
+use grt_amd::{*, alloc::*, module::*, signal::*, mem::*, };
+
+use num_traits::AsPrimitive;
 
 use rand::distributions::Uniform;
 use rand::prelude::*;
 
-use std::convert::*;
 use std::fmt;
 use std::marker::PhantomData;
 use std::mem::{size_of, MaybeUninit, };
@@ -20,27 +21,29 @@ use std::ops::*;
 use std::ptr::slice_from_raw_parts_mut;
 use std::rc::Rc;
 use std::time::*;
+use std::sync::Arc;
 
 /// All row major.
 #[derive(GeobacterDeps)]
-struct GemmArgs<'a, 'b, E> {
-  a: RawPoolBox<[E]>,
-  b: RawPoolBox<[E]>,
+struct GemmArgs<'a, 'b, E>
+  where E: Copy + Deps,
+{
+  a: H2DGlobalRLapBoxMemTransfer<'a, [E], ()>,
+  b: H2DGlobalRLapBoxMemTransfer<'a, [E], ()>,
   c: *mut [E],
-  _lt0: PhantomData<&'a E>,
   _lt1: PhantomData<&'b mut E>,
 }
 
 impl<'a, 'b, E> GemmArgs<'a, 'b, E>
-  where E: Copy,
+  where E: Copy + Deps,
 {
-  fn new_device(a: RawPoolBox<[E]>, b: RawPoolBox<[E]>,
+  fn new_device(a: H2DGlobalRLapBoxMemTransfer<'a, [E], ()>,
+                b: H2DGlobalRLapBoxMemTransfer<'a, [E], ()>,
                 c: &'b mut LapBox<[E]>) -> Self {
     GemmArgs {
       a,
       b,
       c: slice_from_raw_parts_mut(c.as_mut_ptr(), c.len()),
-      _lt0: PhantomData,
       _lt1: PhantomData,
     }
   }
@@ -184,8 +187,8 @@ fn gemm_kernel(args: &GemmArgs<ETy>) {
   static mut S_C: MaybeUninit<[ETy; BLOCK_SIZE]> = MaybeUninit::uninit();
 
   unsafe {
-    let a = MaybeCheckedSlice::unchecked(args.a.as_ref());
-    let b = MaybeCheckedSlice::unchecked(args.b.as_ref());
+    let a = MaybeCheckedSlice::unchecked(args.a.dst().as_ref());
+    let b = MaybeCheckedSlice::unchecked(args.b.dst().as_ref());
     let c = MaybeCheckedMutSlice::unchecked(args.c as _);
     let sa = MaybeCheckedMutSlice::unchecked(&mut *S_A.as_mut_ptr());
     let sb = MaybeCheckedMutSlice::unchecked(&mut *S_B.as_mut_ptr());
@@ -207,13 +210,14 @@ unsafe fn gemm_v1<F, E>(a: MaybeCheckedSlice<E>,
                         (wg_x, wg_y): (u32, u32),
                         sync_threads: F)
   where F: AllWorkItems,
-        E: Copy + AddAssign + Mul<Output = E> + From<f32> + PartialEq + fmt::Debug,
+        E: Copy + AddAssign + Mul<Output = E> + PartialEq + fmt::Debug + 'static,
+        u32: AsPrimitive<E>,
 {
   let stride = stride.get();
   let mod_k = mod_block_k();
 
   sync_threads.forall_workitems(|wi_x, wi_y| {
-    sc[(wi_y * smem_stride + wi_x) as usize] = E::from(0.0f32);
+    sc[(wi_y * smem_stride + wi_x) as usize] = 0u32.as_();
   });
 
   let mut k = 0usize;
@@ -235,12 +239,12 @@ unsafe fn gemm_v1<F, E>(a: MaybeCheckedSlice<E>,
       sa[sao] = if mod_k || (ao_y < stride && ao_x < stride) {
         a[ao]
       } else {
-        E::from(0.0f32)
+        0u32.as_()
       };
       sb[sbo] = if mod_k || (bo_y < stride && bo_x < stride) {
         b[bo]
       } else {
-        E::from(0.0f32)
+        0u32.as_()
       };
     });
 
@@ -276,7 +280,7 @@ unsafe fn gemm_v1<F, E>(a: MaybeCheckedSlice<E>,
     let idx = i_y * stride + i_x;
     if mod_k || (i_y < stride && i_x < stride) {
       // ensure each output is written only once.
-      host_debug_assert_eq!(c[idx], E::from(0.0f32));
+      host_debug_assert_eq!(c[idx], 0u32.as_());
       let vc = &sc[(wi_y * smem_stride + wi_x) as usize];
       c[idx] = *vc;
     }
@@ -432,7 +436,6 @@ pub fn main() {
 
   const AXIS_SIZE_: usize = 4 * 4096 + 1024;
   const AXIS_SIZE: usize = ((AXIS_SIZE_ - 1) / BLOCK_K + 1) * BLOCK_K;
-  //const AXIS_SIZE: usize = 8;
   const SIZE: usize = AXIS_SIZE * AXIS_SIZE;
   const GRID: usize = AXIS_SIZE;
 
@@ -458,17 +461,18 @@ pub fn main() {
     LapVec::with_capacity_in(SIZE, alloc.clone()); // for verification
   let mut nd_lc = LapVec::with_capacity_in(SIZE, alloc);
 
-  la.resize(SIZE, ETy::from(0.0f32));
-  lb.resize(SIZE, ETy::from(0.0f32));
-  lc.resize(SIZE, ETy::from(0.0f32));
-  nd_lc.resize(SIZE, ETy::from(0.0f32));
+  la.resize(SIZE, 0u32.as_());
+  lb.resize(SIZE, 0u32.as_());
+  lc.resize(SIZE, 0u32.as_());
+  nd_lc.resize(SIZE, 0u32.as_());
 
-  let do_madvise = |b: &LapVec<_>| {
-    use grt_amd::async_copy::CopyDataObject;
+  let setup_memory = |b: &mut LapVec<_>| {
     use nix::sys::mman::*;
 
+    b.add_access(&dev).expect("grant GPU access to host memory");
+
     unsafe {
-      let b_region = b.pool_copy_region().unwrap();
+      let b_region = b.pool_ptr().unwrap();
       let r = madvise(b_region.as_ptr().as_ptr() as _,
                       b_region.len() as _,
                       MmapAdvise::MADV_HUGEPAGE);
@@ -477,15 +481,15 @@ pub fn main() {
       }
     }
   };
-  do_madvise(&la);
-  do_madvise(&lb);
-  do_madvise(&lc);
-  do_madvise(&nd_lc);
+  setup_memory(&mut la);
+  setup_memory(&mut lb);
+  setup_memory(&mut lc);
+  setup_memory(&mut nd_lc);
 
   let mut nd_lc = nd_lc.into_boxed_slice();
 
   let mut rng = SmallRng::seed_from_u64(1);
-  let dist = Uniform::new(ETy::from(-0.5f32), 0.5);
+  let dist = Uniform::new(0u32 as ETy, 1u32 as ETy);
   let mut rng_mat = |l: &mut LapVec<_>| {
     let mut l = nd::aview_mut1(&mut l[..]).into_shape(shape).unwrap();
     for mut l in l.axis_iter_mut(nd::Axis(0)) {
@@ -509,28 +513,7 @@ pub fn main() {
     println!("B = {:?}", b);
   }
 
-  let da: RawPoolBox<[ETy]> = unsafe {
-    dev.alloc_device_local_slice(SIZE)
-      .unwrap()
-  };
-  let db: RawPoolBox<[ETy]> = unsafe {
-    dev.alloc_device_local_slice(SIZE)
-      .unwrap()
-  };
-
-  println!("a: host ptr: 0x{:p}-0x{:p}, agent ptr: 0x{:p}-0x{:p}",
-           la.as_ptr(), unsafe { (la.as_ptr() as *const ETy).add(la.len()) },
-           da.as_ptr(), unsafe { (da.as_ptr() as *const ETy).add(da.len()) },
-  );
-  println!("b: host ptr: 0x{:p}-0x{:p}, agent ptr: 0x{:p}-0x{:p}",
-           lb.as_ptr(), unsafe { (lb.as_ptr() as *const ETy).add(lb.len()) },
-           db.as_ptr(), unsafe { (db.as_ptr() as *const ETy).add(db.len()) },
-  );
-  println!("c: host ptr: 0x{:p}-0x{:p}",
-           lc.as_ptr(), unsafe { (lc.as_ptr() as *const ETy).add(lc.len()) },
-  );
-
-  let async_copy_signal = GlobalSignal::new(2).unwrap();
+  let mut async_copy_signal = Arc::new(GlobalSignal::new(0).unwrap());
   let kernel_signal = GlobalSignal::new(1).unwrap();
 
   let wg = (BLOCK_K, BLOCK_K);
@@ -548,14 +531,37 @@ pub fn main() {
   invoc.workgroup_dims(wg);
   invoc.grid_dims(grid);
 
-  unsafe {
-    dev.unchecked_async_copy_into(&la, &da, &[], &async_copy_signal)
-      .expect("HsaAmdGpuAccel::async_copy_into A");
-  }
-  unsafe {
-    dev.unchecked_async_copy_into(&lb, &db, &[], &async_copy_signal)
-      .expect("HsaAmdGpuAccel::async_copy_into B");
-  }
+  println!("a: host ptr: 0x{:p}-0x{:p}",
+           la.as_ptr(), unsafe { (la.as_ptr() as *const ETy).add(la.len()) },
+  );
+  println!("b: host ptr: 0x{:p}-0x{:p}",
+           lb.as_ptr(), unsafe { (lb.as_ptr() as *const ETy).add(lb.len()) },
+  );
+  println!("c: host ptr: 0x{:p}-0x{:p}",
+           lc.as_ptr(), unsafe { (lc.as_ptr() as *const ETy).add(lc.len()) },
+  );
+
+  let (da, db) = (&la, &lb)
+    .memcopy(&dev, (), &mut async_copy_signal)
+    .expect("HsaAmdGpuAccel::async_copy_into");
+
+  println!("a: host ptr: 0x{:p}-0x{:p}, agent ptr: 0x{:p}-0x{:p}",
+           la.as_ptr(), unsafe { (la.as_ptr() as *const ETy).add(la.len()) },
+           da.dst().as_ptr(),
+           unsafe {
+             (da.dst().as_ptr() as *const ETy).add(da.dst().len())
+           },
+  );
+  println!("b: host ptr: 0x{:p}-0x{:p}, agent ptr: 0x{:p}-0x{:p}",
+           lb.as_ptr(), unsafe { (lb.as_ptr() as *const ETy).add(lb.len()) },
+           db.dst().as_ptr(),
+           unsafe {
+             (db.dst().as_ptr() as *const ETy).add(db.dst().len())
+           },
+  );
+  println!("c: host ptr: 0x{:p}-0x{:p}",
+           lc.as_ptr(), unsafe { (lc.as_ptr() as *const ETy).add(lc.len()) },
+  );
 
   let args_pool = time("alloc args pool", || {
     ArgsPool::new::<GemmArgs<ETy>>(&dev, 1)
@@ -571,7 +577,9 @@ pub fn main() {
 
   // ensure the invocation doesn't block on this step:
   invoc.compile().expect("kernel cross codegen");
-  async_copy_signal.wait_for_zero(false).unwrap();
+  da.wait_for_zero(false).unwrap();
+  // Don't need this second one, but w/e.
+  db.wait_for_zero(false).unwrap();
   println!("starting GPU gemm...");
 
   bench("gpu gemm", hardness, || {

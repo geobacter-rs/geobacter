@@ -30,7 +30,7 @@ use hsa_rt::ext::amd::{lock_memory, unlock_memory, MemoryPool, MemoryPoolAlloc,
 use log::{error, };
 
 use crate::{HsaAmdGpuAccel, };
-use crate::async_copy::{CopyDataObject, };
+use crate::mem::{BoxPoolPtr, };
 
 #[deprecated]
 pub struct BoxSlice<T>
@@ -278,11 +278,11 @@ impl<T, U> CoerceUnsized<RawPoolBox<U>> for RawPoolBox<T>
   where T: Unsize<U> + ?Sized,
         U: ?Sized,
 { }
-impl<T> CopyDataObject for RawPoolBox<T>
-  where T: ?Sized + Unpin,
+impl<T> BoxPoolPtr for RawPoolBox<T>
+  where T: ?Sized,
 {
   #[doc(hidden)]
-  unsafe fn pool_copy_region(&self) -> Option<MemoryPoolPtr<[u8]>> {
+  unsafe fn pool_ptr(&self) -> Option<MemoryPoolPtr<[u8]>> {
     if self.size() == 0 { return None; }
 
     Some(self.as_pool_ptr().into_bytes())
@@ -456,11 +456,11 @@ impl<T, U> CoerceUnsized<LocallyAccessiblePoolBox<U>> for LocallyAccessiblePoolB
         U: ?Sized,
 { }
 
-impl<T> CopyDataObject for LocallyAccessiblePoolBox<T>
-  where T: ?Sized + Unpin,
+impl<T> BoxPoolPtr for LocallyAccessiblePoolBox<T>
+  where T: ?Sized,
 {
   #[doc(hidden)]
-  unsafe fn pool_copy_region(&self) -> Option<MemoryPoolPtr<[u8]>> {
-    self.0.pool_copy_region()
+  unsafe fn pool_ptr(&self) -> Option<MemoryPoolPtr<[u8]>> {
+    self.0.pool_ptr()
   }
 }

@@ -63,6 +63,8 @@ use log::{info, warn, error, };
 
 use serde::{Deserialize, Serialize, };
 
+use smallvec::SmallVec;
+
 use hsa_rt::ApiContext;
 use hsa_rt::agent::{Agent, Profiles, DefaultFloatRoundingModes, IsaInfo,
                     DeviceType, Feature, };
@@ -74,7 +76,7 @@ use hsa_rt::ext::amd::{MemoryPool, MemoryPoolPtr, AgentAccess,
                        GlobalFlags, };
 use hsa_rt::mem::region::{RegionAlloc, };
 use hsa_rt::queue::{KernelSingleQueue, KernelMultiQueue};
-use hsa_rt::signal::{SignalRef, Signal};
+use hsa_rt::signal::Signal;
 
 use grt_core::{Accelerator, AcceleratorTargetDesc,
                PlatformTargetDesc, Device, };
@@ -84,22 +86,24 @@ use shared_defs::platform::{Platform, host_platform, hsa, };
 use shared_defs::platform::hsa::AmdGpu;
 
 use codegen::Codegenner;
-use crate::module::HsaModuleData;
 
 pub use grt_core::AcceleratorId;
 pub use grt_core::context::Context;
 
 use crate::alloc::*;
-use crate::async_copy::CopyDataObject;
 use crate::boxed::{RawPoolBox, };
-use crate::signal::{HostSignal, DeviceSignal, DeviceConsumable, SignalHandle};
+use crate::mem::*;
+use crate::module::{HsaModuleData, Deps};
+use crate::signal::{HostSignal, DeviceSignal, SignalHandle};
 
 pub mod alloc;
-pub mod async_copy;
 pub mod boxed;
 pub mod codegen;
+pub mod mem;
 pub mod module;
 pub mod signal;
+
+mod utils;
 
 #[derive(Debug)]
 struct HsaAmdNode {
@@ -312,6 +316,7 @@ impl HsaAmdGpuAccel {
       id: self.id(),
       device_agent: self.agent().clone(),
       pool: self.host_nodes()[node as usize].coarse.clone(),
+      accessible: None,
     }
   }
   /// Returns an allocator interface for allocating in the provided NUMA node
@@ -326,6 +331,7 @@ impl HsaAmdGpuAccel {
         .as_ref()
         .unwrap()
         .clone(),
+      accessible: None,
     }
   }
 
@@ -376,18 +382,19 @@ impl HsaAmdGpuAccel {
   /// then the result is undefined.
   ///
   /// The HSA runtime internally uses a device queue to implement waiting on `deps`.
-  pub unsafe fn unchecked_async_copy_into<T, U, CS>(&self,
-                                                    from: T,
-                                                    into: U,
-                                                    deps: &[&dyn DeviceConsumable],
-                                                    completion: &CS)
+  pub unsafe fn unchecked_async_copy_into<T, U, D, CS>(&self,
+                                                       from: &T,
+                                                       into: &mut U,
+                                                       deps: &D,
+                                                       completion: &CS)
     -> Result<(), Box<dyn Error>>
-    where T: CopyDataObject,
-          U: CopyDataObject,
+    where T: BoxPoolPtr,
+          U: BoxPoolPtr,
+          D: ?Sized + Deps,
           CS: SignalHandle,
   {
-    let from = from.pool_copy_region();
-    let into = into.pool_copy_region();
+    let from = from.pool_ptr();
+    let into = into.pool_ptr();
     if from.is_none() || into.is_none() {
       // nothing to do
       completion.signal_ref().subtract_screlease(1);
@@ -416,13 +423,13 @@ impl HsaAmdGpuAccel {
       },
     }
 
-    // TODO avoid allocation.
-    let deps: Vec<&SignalRef> = deps.iter()
-      .map(|dep| {
-        dep.mark_consumed();
-        dep.signal_ref()
-      })
-      .collect();
+    let mut signals: SmallVec<[_; 32]> = SmallVec::new();
+    deps.iter_deps(&mut |dep| {
+      dep.mark_consumed();
+      let signal = dep.signal_ref();
+      signals.push(signal);
+      Ok(())
+    })?;
 
     let dst_agent = self.agent();
     let src_agent = self.first_host_agent();
@@ -433,22 +440,23 @@ impl HsaAmdGpuAccel {
 
     async_copy(into, from, bytes,
                dst_agent, src_agent,
-               &deps, completion.signal_ref())?;
+               &signals, completion.signal_ref())?;
 
     Ok(())
   }
-  pub unsafe fn unchecked_async_copy_from<T, U, CS>(&self,
-                                                    from: T,
-                                                    into: U,
-                                                    deps: &[&dyn DeviceConsumable],
-                                                    completion: &CS)
+  pub unsafe fn unchecked_async_copy_from<T, U, D, CS>(&self,
+                                                       from: &T,
+                                                       into: &mut U,
+                                                       deps: &D,
+                                                       completion: &CS)
     -> Result<(), Box<dyn Error>>
-    where T: CopyDataObject,
-          U: CopyDataObject,
+    where T: BoxPoolPtr,
+          U: BoxPoolPtr,
+          D: ?Sized + Deps,
           CS: SignalHandle,
   {
-    let from = from.pool_copy_region();
-    let into = into.pool_copy_region();
+    let from = from.pool_ptr();
+    let into = into.pool_ptr();
     if from.is_none() || into.is_none() {
       // nothing to do
       completion.signal_ref().subtract_screlease(1);
@@ -475,13 +483,13 @@ impl HsaAmdGpuAccel {
       },
     }
 
-    // TODO avoid allocation.
-    let deps: Vec<&SignalRef> = deps.iter()
-      .map(|dep| {
-        dep.mark_consumed();
-        dep.signal_ref()
-      })
-      .collect();
+    let mut signals: SmallVec<[_; 32]> = SmallVec::new();
+    deps.iter_deps(&mut |dep| {
+      dep.mark_consumed();
+      let signal = dep.signal_ref();
+      signals.push(signal);
+      Ok(())
+    })?;
 
     let dst_agent = self.first_host_agent();
     let src_agent = self.agent();
@@ -491,23 +499,24 @@ impl HsaAmdGpuAccel {
     let bytes = ::std::cmp::min(from_len, into_len);
 
     async_copy(into, from, bytes, dst_agent, src_agent,
-               &deps, completion.signal_ref())?;
+               &signals, completion.signal_ref())?;
 
     Ok(())
   }
-  pub unsafe fn unchecked_async_copy_from_p2p<T, U, CS>(&self,
-                                                        from: T,
-                                                        into_dev: &HsaAmdGpuAccel,
-                                                        into: U,
-                                                        deps: &[&dyn DeviceConsumable],
-                                                        completion: &CS)
+  pub unsafe fn unchecked_async_copy_from_p2p<T, U, D, CS>(&self,
+                                                           from: &T,
+                                                           into_dev: &HsaAmdGpuAccel,
+                                                           into: &mut U,
+                                                           deps: &D,
+                                                           completion: &CS)
     -> Result<(), Box<dyn Error>>
-    where T: CopyDataObject,
-          U: CopyDataObject,
+    where T: BoxPoolPtr,
+          U: BoxPoolPtr,
+          D: ?Sized + Deps,
           CS: SignalHandle,
   {
-    let from = from.pool_copy_region();
-    let into = into.pool_copy_region();
+    let from = from.pool_ptr();
+    let into = into.pool_ptr();
     if from.is_none() || into.is_none() {
       // nothing to do
       completion.signal_ref().subtract_screlease(1);
@@ -541,13 +550,13 @@ impl HsaAmdGpuAccel {
       },
     }
 
-    // TODO avoid allocation.
-    let deps: Vec<&SignalRef> = deps.iter()
-      .map(|dep| {
-        dep.mark_consumed();
-        dep.signal_ref()
-      })
-      .collect();
+    let mut signals: SmallVec<[_; 32]> = SmallVec::new();
+    deps.iter_deps(&mut |dep| {
+      dep.mark_consumed();
+      let signal = dep.signal_ref();
+      signals.push(signal);
+      Ok(())
+    })?;
 
     let dst_agent = into_dev.agent();
     let src_agent = self.agent();
@@ -557,7 +566,7 @@ impl HsaAmdGpuAccel {
     let bytes = ::std::cmp::min(from_len, into_len);
 
     async_copy(into, from, bytes, dst_agent, src_agent,
-               &deps, completion.signal_ref())?;
+               &signals, completion.signal_ref())?;
 
     Ok(())
   }
@@ -592,14 +601,14 @@ impl HsaAmdGpuAccel {
                                              self.clone().into())?;
     v.set_len(count);
     let mut v = v.try_into_boxed_slice()?;
-    v.set_accessible(&[&*self])?;
+    v.add_access(&*self)?;
     Ok(v)
   }
   pub fn alloc_host_visible<T>(self: &Arc<Self>, v: T) -> Result<LapBox<T>, HsaError>
     where T: Sized,
   {
     let mut v = LapBox::new_in(v, self.clone().into());
-    v.set_accessible(&[&*self])?;
+    v.add_access(&*self)?;
     Ok(v)
   }
 

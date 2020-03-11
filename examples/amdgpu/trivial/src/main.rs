@@ -23,7 +23,6 @@ use rand::{Rng, SeedableRng, };
 use rt_core::context::{Context, };
 use rt_amd::HsaAmdGpuAccel;
 use rt_amd::alloc::*;
-use rt_amd::async_copy::CopyDataObject;
 use rt_amd::module::{Invoc, ArgsPool, };
 use rt_amd::signal::*;
 
@@ -155,19 +154,17 @@ pub fn main() {
       let results_signal = accel.new_host_signal(1)
         .expect("HsaAmdGpuAccel::new_host_signal: results_signal");
 
-      if accels.len() != 1 {
-        time("grant gpu access: `original_values` and `values`", || {
-          original_values.set_accessible(&[&*accel])
-            .expect("grant_agents_access");
-          values.set_accessible(&[&*accel])
-            .expect("grant_agents_access");
-        });
-      }
+      time("grant gpu access: `original_values` and `values`", || {
+        original_values.add_access(&*accel)
+          .expect("grant_agents_access");
+        values.add_access(&*accel)
+          .expect("grant_agents_access");
+      });
 
       unsafe {
         accel.unchecked_async_copy_into(&original_values,
                                         &mut device_values_ptr,
-                                        &[], &async_copy_signal)
+                                        &(), &async_copy_signal)
           .expect("HsaAmdGpuAccel::async_copy_into");
       }
 
@@ -208,7 +205,7 @@ pub fn main() {
       unsafe {
         accel.unchecked_async_copy_from(&device_values_ptr,
                                         &mut values,
-                                        &[], &results_signal)
+                                        &(), &results_signal)
           .expect("HsaAmdGpuAccel::async_copy_from");
       }
       time("gpu -> cpu async copy", || {
