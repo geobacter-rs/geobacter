@@ -59,3 +59,4 @@ geobacter-runtime-nv = { path = "runtime-nv" }
 geobacter-runtime-vk = { path = "runtime-vk" }
 geobacter-amd-std = { path = "amdgpu-std" }
 geobacter-intrinsics-common = { path = "shared-intrinsics/common" }
+alloc-wg = { git = "https://github.com/TimDiekmann/alloc-wg.git" }

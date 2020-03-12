@@ -18,6 +18,7 @@ dependencies = [
 [[package]]
 name = "alloc-wg"
 version = "0.7.0"
+source = "git+https://github.com/TimDiekmann/alloc-wg.git#0fe6734bb2f1b6f537b244731c679ea34f3aceee"
 
 [[package]]
 name = "amd-comgr"
