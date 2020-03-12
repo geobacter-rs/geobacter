@@ -10,8 +10,8 @@ path = "main.rs"
 
 [dependencies]
 env_logger = "0.6.0"
-nd = { package = "ndarray", version = "0.13.0", features = ["approx"] }
-rand = { version = "0.7.3", features = ["small_rng"] }
+nd = { package = "ndarray", version = "0.13.0" }
+rand = "0.7.3"
 lodepng = "2.0.0"
 gstd-amd = { version = "1.0.0", package = "geobacter-amd-std" }
 grt-core = { version = "1.0.0", package = "geobacter-runtime-core" }
