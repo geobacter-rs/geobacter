@@ -4,16 +4,17 @@ version = "0.1.0"
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[[bin]]
+name = "examples-amdgpu-fractal"
+path = "main.rs"
 
 [dependencies]
 env_logger = "0.6.0"
-log = "0.4.7"
-ndarray = "0.12.1"
-rand = "0.5.5"
+nd = { package = "ndarray", version = "0.13.0", features = ["approx"] }
+rand = { version = "0.7.3", features = ["small_rng"] }
 lodepng = "2.0.0"
-geobacter-core = "1.0.0"
-geobacter-runtime-core = "1.0.0"
-geobacter-runtime-amd = "1.0.0"
-geobacter-amd-std = { path = "../../../amdgpu-std" }
+gstd-amd = { version = "1.0.0", package = "geobacter-amd-std" }
+grt-core = { version = "1.0.0", package = "geobacter-runtime-core" }
+grt-amd  = { version = "1.0.0", package = "geobacter-runtime-amd" }
 hsa-rt = "0.1.0"
+packed_simd = { git = "https://github.com/rust-lang-nursery/packed_simd.git" }

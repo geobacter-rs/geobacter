@@ -376,14 +376,13 @@ version = "0.1.0"
 dependencies = [
  "env_logger",
  "geobacter-amd-std",
- "geobacter-core",
  "geobacter-runtime-amd",
  "geobacter-runtime-core",
  "hsa-rt",
  "lodepng",
- "log",
- "ndarray 0.12.1",
- "rand 0.5.6",
+ "ndarray 0.13.0",
+ "packed_simd",
+ "rand 0.7.3",
 ]
 
 [[package]]
