@@ -946,19 +946,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a785740271256c230f57462d3b83e52f998433a7062fc18f96d5999474a9f915"
 
 [[package]]
-name = "mut-slice-ub"
-version = "0.1.0"
-dependencies = [
- "env_logger",
- "geobacter-amd-std",
- "geobacter-core",
- "geobacter-runtime-amd",
- "geobacter-runtime-core",
- "hsa-rt",
- "log",
-]
-
-[[package]]
 name = "ndarray"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
