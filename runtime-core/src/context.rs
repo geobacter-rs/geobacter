@@ -110,21 +110,24 @@ impl Context {
     Ok(r)
   }
 
-  pub fn take_accel_id(&self) -> Result<AcceleratorId, Box<dyn Error>> {
-    let id = self.0.next_accel_id.fetch_add(1, Ordering::Relaxed);
-    Ok(AcceleratorId::new(id))
+  pub fn take_accel_id(&self) -> AcceleratorId {
+    let id = self.0.next_accel_id
+      .fetch_add(1, Ordering::AcqRel);
+    if id > usize::max_value() / 2 {
+      panic!("too many accelerators");
+    }
+    AcceleratorId::new(id)
   }
 
   /// Internal. User code most probably *shouldn't* use this function.
   #[doc = "hidden"]
   pub fn initialize_accel<T>(&self, accel: &mut Arc<T>)
-    -> Result<(), Box<dyn Error>>
+    -> Result<(), Box<dyn Error + Send + Sync + 'static>>
     where T: Device,
   {
-    if Arc::get_mut(accel).is_none() {
-      // TODO better message? OTOH, this is basically just a debug check.
-      return Err("invalid usage".into());
-    }
+    debug_assert!(!Arc::get_mut(accel).is_none(),
+                  "improper Context::initialize_accel usage");
+
     let target_desc = accel.accel_target_desc().clone();
 
     let mut w = self.0.m.write();
@@ -277,7 +280,7 @@ impl ModuleData {
                        accel: &Arc<D>,
                        desc: PKernelDesc<P>,
                        codegen: &CodegenDriver<P>)
-    -> Result<Arc<D::ModuleData>, Box<dyn Error>>
+    -> Result<Arc<D::ModuleData>, D::Error>
     where D: Device<Codegen = P>,
           P: PlatformCodegen<Device = D>,
   {

@@ -2,7 +2,6 @@
 use std::any::Any;
 use std::cmp::{Eq, PartialEq, };
 use std::collections::BTreeMap;
-use std::error::Error;
 use std::fmt::{self, Debug, };
 use std::hash;
 use std::mem::size_of;
@@ -204,7 +203,7 @@ pub trait PlatformIntrinsicInsert {
 /// XXX a lot of code assumes this is just a marker type (ie contains no
 /// data)
 pub trait PlatformCodegen: Sized + Clone + Debug + Send + Sync + 'static {
-  type Device: Accelerator;
+  type Device: crate::Device<Codegen = Self> + Accelerator;
   /// Info which is compiled by the host compiler
   type KernelDesc: PlatformKernelDesc + Clone;
   /// Info which is compiled by the runtime compiler. This is used, eg,
@@ -249,7 +248,7 @@ pub trait PlatformCodegen: Sized + Clone + Debug + Send + Sync + 'static {
                 instance: Instance<'tcx>,
                 tcx: TyCtxt<'tcx>,
                 dd: &DriverData<'tcx, Self>)
-    -> Result<PCodegenDesc<'tcx, Self>, Box<dyn Error + Send + Sync + 'static>>;
+    -> Result<PCodegenDesc<'tcx, Self>, <Self::Device as crate::Device>::Error>;
 
   /// Compute the list of conditions to be used. Called once before codegen
   /// is started.
@@ -257,7 +256,7 @@ pub trait PlatformCodegen: Sized + Clone + Debug + Send + Sync + 'static {
                            root: &PCodegenDesc<'tcx, Self>,
                            tcx: TyCtxt<'tcx>,
                            dd: &DriverData<'tcx, Self>)
-    -> Result<Vec<Self::Condition>, Box<dyn Error + Send + Sync + 'static>>;
+    -> Result<Vec<Self::Condition>, <Self::Device as crate::Device>::Error>;
 
   /// Called once the `tcx` is available. Use to populate DataDriver Stuff
   /// ahead of any of the query system queries, like types of generated
@@ -265,7 +264,7 @@ pub trait PlatformCodegen: Sized + Clone + Debug + Send + Sync + 'static {
   fn pre_codegen<'tcx>(&self,
                        tcx: TyCtxt<'tcx>,
                        dd: &DriverData<'tcx, Self>)
-    -> Result<(), Box<dyn Error + Send + Sync + 'static>>;
+    -> Result<(), <Self::Device as crate::Device>::Error>;
 
   /// Take the "raw" codegen results (typically in the form of LLVM bitcode),
   /// and run it through any platform specific *codegen* steps. This doesn't
@@ -278,7 +277,7 @@ pub trait PlatformCodegen: Sized + Clone + Debug + Send + Sync + 'static {
                   target_desc: &Arc<AcceleratorTargetDesc>,
                   tdir: &Path,
                   codegen: &mut PCodegenResults<Self>)
-    -> Result<(), Box<dyn Error + Send + Sync + 'static>>;
+    -> Result<(), <Self::Device as crate::Device>::Error>;
 
   // The following are all overrides for queries.
 

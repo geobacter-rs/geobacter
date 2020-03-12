@@ -101,7 +101,7 @@ pub trait Accelerator: Debug + Any + Send + Sync + 'static {
   /// `AcceleratorTargetDesc`.
   /// Used by the context only during initialization.
   fn create_target_codegen(self: &mut Arc<Self>, ctxt: &Context)
-    -> Result<Arc<dyn Any + Send + Sync + 'static>, Box<dyn Error>>
+    -> Result<Arc<dyn Any + Send + Sync + 'static>, Box<dyn Error + Send + Sync + 'static>>
     where Self: Sized;
   /// Used by the context only during initialization.
   fn set_target_codegen(self: &mut Arc<Self>,
@@ -166,6 +166,7 @@ pub trait Accelerator: Debug + Any + Send + Sync + 'static {
 }
 
 pub trait Device: Accelerator + Sized {
+  type Error: From<codegen::error::Error<Self::Error>> + Send;
   type Codegen: PlatformCodegen<Device = Self>;
   type TargetDesc: PlatformTargetDesc;
   type ModuleData: PlatformModuleData;
@@ -180,7 +181,7 @@ pub trait Device: Accelerator + Sized {
   /// Note: the returned `PlatformModuleData` will be stored in a
   /// per-function *global*; `self` references should probably be weak.
   fn load_kernel(self: &Arc<Self>, results: &PCodegenResults<Self::Codegen>)
-    -> Result<Arc<Self::ModuleData>, Box<dyn Error>>;
+    -> Result<Arc<Self::ModuleData>, Self::Error>;
 }
 
 /// A hashable structure describing what is best supported by a device.

@@ -53,7 +53,7 @@ use std::any::Any;
 use std::cmp::max;
 use std::collections::{BTreeMap, };
 use std::convert::*;
-use std::error::Error;
+use std::error::{Error as StdError};
 use std::fmt;
 use std::ptr::{NonNull, };
 use std::str::FromStr;
@@ -71,9 +71,8 @@ use hsa_rt::agent::{Agent, Profiles, DefaultFloatRoundingModes, IsaInfo,
 use hsa_rt::code_object::CodeObjectReaderRef;
 pub use hsa_rt::error::Error as HsaError;
 use hsa_rt::executable::{Executable, CommonExecutable};
-use hsa_rt::ext::amd::{MemoryPool, MemoryPoolPtr, AgentAccess,
-                       async_copy, unlock_memory, MemoryPoolAlloc,
-                       GlobalFlags, };
+use hsa_rt::ext::amd::{MemoryPool, MemoryPoolPtr, async_copy, unlock_memory,
+                       MemoryPoolAlloc, GlobalFlags, };
 use hsa_rt::mem::region::{RegionAlloc, };
 use hsa_rt::queue::{KernelSingleQueue, KernelMultiQueue};
 use hsa_rt::signal::Signal;
@@ -90,6 +89,8 @@ use codegen::Codegenner;
 pub use grt_core::AcceleratorId;
 pub use grt_core::context::Context;
 
+pub use crate::error::Error;
+
 use crate::alloc::*;
 use crate::boxed::{RawPoolBox, };
 use crate::mem::*;
@@ -99,6 +100,7 @@ use crate::signal::{HostSignal, DeviceSignal, SignalHandle};
 pub mod alloc;
 pub mod boxed;
 pub mod codegen;
+pub mod error;
 pub mod mem;
 pub mod module;
 pub mod signal;
@@ -135,14 +137,14 @@ impl HsaAmdGpuAccel {
   pub fn new(ctx: &Context,
              host_agents: &[&Agent],
              device_agent: Agent)
-    -> Result<Arc<Self>, Box<dyn Error>>
+    -> Result<Arc<Self>, Error>
   {
     if host_agents.len() == 0 {
-      return Err("no CPU agent found".into());
+      return Err(Error::NoCpuAgent);
     }
     #[cfg(target_endian = "big")] {
       if ::std::env::var_os("GEOBACTER_IGNORE_ENDIANNESS").is_none() {
-        return Err("endianness translation is not (yet) supported".into());
+        return Err(Error::UnsupportedBigEndianHost);
       } else {
         warn!("ignoring host/device endianness mismatch; you're on your own!");
       }
@@ -160,7 +162,7 @@ impl HsaAmdGpuAccel {
           _ => false,
         }
       })
-      .ok_or_else(|| "no kernel argument region")?
+      .ok_or(Error::MissingKernelArgumentsRegion)?
       .try_into()?;
 
     fn find_pool_flags<'a, F>(pools: &'a [MemoryPool], select_flags: F)
@@ -214,14 +216,14 @@ impl HsaAmdGpuAccel {
 
     let isa = device_agent.isas()?
       .get(0)
-      .ok_or("device has no available ISA")?
+      .ok_or(Error::NoGpuAgentIsa)?
       .info()?;
     let target_desc = TargetDesc {
       isa,
     };
 
     let mut out = HsaAmdGpuAccel {
-      id: ctx.take_accel_id()?,
+      id: ctx.take_accel_id(),
 
       ctx: ctx.clone(),
 
@@ -245,7 +247,7 @@ impl HsaAmdGpuAccel {
 
     let gpu = &out.target_desc.target.options.cpu;
     let gpu = AmdGpu::from_str(gpu)
-      .map_err(|()| format!("unknown AMDGPU: {}", gpu))?;
+      .map_err(|()| Error::UnknownAmdGpuArch(gpu.to_string()) )?;
     out.platform = Platform::Hsa(hsa::Device::AmdGcn(gpu));
 
     let mut out = Arc::new(out);
@@ -256,7 +258,7 @@ impl HsaAmdGpuAccel {
   }
 
   /// Find and return the first GPU found.
-  pub fn first_device(ctx: &Context) -> Result<Arc<Self>, Box<dyn Error>> {
+  pub fn first_device(ctx: &Context) -> Result<Arc<Self>, Error> {
     let hsa_context = ApiContext::try_upref()?;
     let agents = hsa_context.agents()?;
     let hosts = agents.iter()
@@ -265,12 +267,12 @@ impl HsaAmdGpuAccel {
 
     let device = agents.iter()
       .find(|agent| agent.feature().ok() == Some(Feature::Kernel))
-      .ok_or("no accelerator found")?;
+      .ok_or(Error::NoGpuAgent)?;
 
     Self::new(ctx, &hosts,
               device.clone())
   }
-  pub fn nth_device(ctx: &Context, n: usize) -> Result<Arc<Self>, Box<dyn Error>> {
+  pub fn nth_device(ctx: &Context, n: usize) -> Result<Arc<Self>, Error> {
     let hsa_context = ApiContext::try_upref()?;
     let agents = hsa_context.agents()?;
     let hosts = agents.iter()
@@ -280,11 +282,11 @@ impl HsaAmdGpuAccel {
     let agent = agents.iter()
       .filter(|agent| agent.feature().ok() == Some(Feature::Kernel))
       .nth(n)
-      .ok_or("404")?;
+      .ok_or(Error::NoGpuAgent)?;
 
     Self::new(ctx, &hosts, agent.clone())
   }
-  pub fn all_devices(ctx: &Context) -> Result<Vec<Arc<Self>>, Box<dyn Error>> {
+  pub fn all_devices(ctx: &Context) -> Result<Vec<Arc<Self>>, Error> {
     let hsa_context = ApiContext::try_upref()?;
     let agents = hsa_context.agents()?;
     let hosts = agents.iter()
@@ -387,7 +389,7 @@ impl HsaAmdGpuAccel {
                                                        into: &mut U,
                                                        deps: &D,
                                                        completion: &CS)
-    -> Result<(), Box<dyn Error>>
+    -> Result<(), Error>
     where T: BoxPoolPtr,
           U: BoxPoolPtr,
           D: ?Sized + Deps,
@@ -402,26 +404,6 @@ impl HsaAmdGpuAccel {
     }
     let from = from.unwrap();
     let into = into.unwrap();
-
-    // check that `into` is in our pool.
-    match into.pool().agent_access(self.agent())? {
-      AgentAccess::DefaultAllowed => {},
-      _ => {
-        return Err("destination pool is not owned by this device".into());
-      },
-    }
-    // ditto `from`. `from` has to be locked, and should be a device pointer.
-    match from.pool().agent_access(self.agent())? {
-      AgentAccess::DefaultAllowed => {},
-      AgentAccess::DefaultDisallowed => {
-        // we assume the user has granted us access. We'll error in `async_copy` if
-        // not.
-      },
-      access => {
-        return Err(format!("source pool is not accessible by this device: {:?}",
-                           access).into());
-      },
-    }
 
     let mut signals: SmallVec<[_; 32]> = SmallVec::new();
     deps.iter_deps(&mut |dep| {
@@ -449,7 +431,7 @@ impl HsaAmdGpuAccel {
                                                        into: &mut U,
                                                        deps: &D,
                                                        completion: &CS)
-    -> Result<(), Box<dyn Error>>
+    -> Result<(), Error>
     where T: BoxPoolPtr,
           U: BoxPoolPtr,
           D: ?Sized + Deps,
@@ -464,24 +446,6 @@ impl HsaAmdGpuAccel {
     }
     let from = from.unwrap();
     let into = into.unwrap();
-
-    match into.pool().agent_access(self.agent())? {
-      AgentAccess::DefaultAllowed => {},
-      AgentAccess::DefaultDisallowed => {
-        // we assume the user has granted us access. We'll error in `async_copy` if
-        // not.
-      },
-      _ => {
-        return Err("destination pool is not accessible by this device".into());
-      },
-    }
-    match from.pool().agent_access(self.agent())? {
-      AgentAccess::DefaultAllowed => {},
-      access => {
-        return Err(format!("source pool is not owned by this device: {:?}",
-                           access).into());
-      },
-    }
 
     let mut signals: SmallVec<[_; 32]> = SmallVec::new();
     deps.iter_deps(&mut |dep| {
@@ -509,7 +473,7 @@ impl HsaAmdGpuAccel {
                                                            into: &mut U,
                                                            deps: &D,
                                                            completion: &CS)
-    -> Result<(), Box<dyn Error>>
+    -> Result<(), Error>
     where T: BoxPoolPtr,
           U: BoxPoolPtr,
           D: ?Sized + Deps,
@@ -524,31 +488,6 @@ impl HsaAmdGpuAccel {
     }
     let from = from.unwrap();
     let into = into.unwrap();
-
-    // check that `into` is in our pool.
-    match into.pool().agent_access(self.agent())? {
-      AgentAccess::DefaultAllowed => {},
-      AgentAccess::DefaultDisallowed => {
-        // we assume the user has granted us access. We'll error in `async_copy` if
-        // not.
-      },
-      access => {
-        return Err(format!("destination pool is not accessible by this device: {:?}",
-                           access).into());
-      },
-    }
-    // ditto `from`. `from` has to be locked, and should be a device pointer.
-    match from.pool().agent_access(self.agent())? {
-      AgentAccess::DefaultAllowed => {},
-      AgentAccess::DefaultDisallowed => {
-        // we assume the user has granted us access. We'll error in `async_copy` if
-        // not
-      },
-      access => {
-        return Err(format!("source pool is not accessible by this device: {:?}",
-                           access).into());
-      },
-    }
 
     let mut signals: SmallVec<[_; 32]> = SmallVec::new();
     deps.iter_deps(&mut |dep| {
@@ -594,7 +533,7 @@ impl HsaAmdGpuAccel {
   }
 
   pub unsafe fn alloc_host_visible_slice<T>(self: &Arc<Self>, count: usize)
-    -> Result<LapBox<[T]>, HsaError>
+    -> Result<LapBox<[T]>, Error>
     where T: Sized + Unpin,
   {
     let mut v = LapVec::try_with_capacity_in(count,
@@ -604,7 +543,7 @@ impl HsaAmdGpuAccel {
     v.add_access(&*self)?;
     Ok(v)
   }
-  pub fn alloc_host_visible<T>(self: &Arc<Self>, v: T) -> Result<LapBox<T>, HsaError>
+  pub fn alloc_host_visible<T>(self: &Arc<Self>, v: T) -> Result<LapBox<T>, Error>
     where T: Sized,
   {
     let mut v = LapBox::new_in(v, self.clone().into());
@@ -706,7 +645,7 @@ impl Accelerator for HsaAmdGpuAccel {
   }
 
   fn create_target_codegen(self: &mut Arc<Self>, ctxt: &Context)
-    -> Result<Arc<dyn Any + Send + Sync + 'static>, Box<dyn Error>>
+    -> Result<Arc<dyn Any + Send + Sync + 'static>, Box<dyn StdError + Send + Sync + 'static>>
     where Self: Sized,
   {
     let cg = CodegenDriver::new(ctxt,
@@ -773,6 +712,7 @@ impl Accelerator for HsaAmdGpuAccel {
   }
 }
 impl Device for HsaAmdGpuAccel {
+  type Error = Error;
   type Codegen = codegen::Codegenner;
   type TargetDesc = TargetDesc;
   type ModuleData = module::HsaModuleData;
@@ -784,7 +724,7 @@ impl Device for HsaAmdGpuAccel {
   }
 
   fn load_kernel(self: &Arc<Self>, codegen: &PCodegenResults<Self::Codegen>)
-    -> Result<Arc<Self::ModuleData>, Box<dyn Error>>
+    -> Result<Arc<Self::ModuleData>, Error>
   {
     let profiles = Profiles::base();
     let rounding_mode = DefaultFloatRoundingModes::near();
@@ -794,9 +734,7 @@ impl Device for HsaAmdGpuAccel {
 
     {
       let exe_bin = codegen.exe_ref().unwrap();
-      let exe_reader = CodeObjectReaderRef::new(exe_bin.as_ref())
-        .expect("CodeObjectReaderRef::new");
-
+      let exe_reader = CodeObjectReaderRef::new(exe_bin.as_ref())?;
       exe.load_agent_code_object(agent, &exe_reader, "")?;
     }
     let exe = exe.freeze("")?;
@@ -823,10 +761,11 @@ impl Device for HsaAmdGpuAccel {
           }
         })
         .ok_or_else(|| {
-          format!("failed to find {}", root.symbol)
+          let name = codegen.entries[0].kernel_instance.name.clone();
+          Error::MissingKernelSymbol(name)
         })?;
       kernel_symbol.kernel_object()?
-         .ok_or_else(|| "unexpected 0 for kernel object id" )?
+         .ok_or(Error::UnexpectedNullKernelObject)?
     };
 
     Ok(Arc::new(HsaModuleData {
@@ -852,7 +791,7 @@ impl fmt::Debug for HsaAmdGpuAccel {
 
 // private methods
 impl HsaAmdGpuAccel {
-  fn init_target_desc(&mut self) -> Result<(), Box<dyn Error>> {
+  fn init_target_desc(&mut self) -> Result<(), Error> {
     use rustc_target::spec::{PanicStrategy, abi::Abi, AddrSpaceKind,
                              AddrSpaceIdx, AddrSpaceProps, };
 

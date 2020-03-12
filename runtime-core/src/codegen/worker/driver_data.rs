@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::error::Error;
 use std::fs::File;
 use std::io::Read;
 use std::mem::transmute;
@@ -24,6 +23,7 @@ use crate::codegen::*;
 use crate::context::{Context};
 
 use crate::codegen::products::{PCodegenResults, CodegenResults, EntryDesc};
+use crate::codegen::worker::error::{PError, Error};
 
 // TODO move this in with shared driver stuffs.
 
@@ -101,25 +101,26 @@ impl<'tcx, P> PlatformDriverData<'tcx, P>
   pub(super) fn init_root(&self,
                           desc: PKernelDesc<P>,
                           tcx: TyCtxt<'tcx>)
-    -> Result<(), Box<dyn Error + Send + Sync + 'static>>
+    -> Result<(), PError<P>>
   {
     let instance = tcx.convert_kernel_instance(desc.instance)
-      .ok_or("failed to convert Geobacter kernel instance into \
-              Rust's Instance")?;
+      .ok_or_else(|| Error::ConvertKernelInstance(desc.instance))?;
     let root = self.platform
-      .root(desc, instance, tcx, self.dd())?;
+      .root(desc, instance, tcx, self.dd())
+      .map_err(Error::InitRoot)?;
     self.driver_data.roots
       .write()
       .push(root);
     Ok(())
   }
   pub(super) fn init_conditions(&'tcx self, tcx: TyCtxt<'tcx>)
-    -> Result<(), Box<dyn Error + Send + Sync + 'static>>
+    -> Result<(), PError<P>>
   {
     let conds = {
       let root = self.driver_data.root();
       self.platform
-        .root_conditions(&*root, tcx, &self.driver_data)?
+        .root_conditions(&*root, tcx, &self.driver_data)
+        .map_err(Error::InitConditions)?
     };
     self.driver_data.root_conditions.write()
       .extend(conds.into_iter());
@@ -127,15 +128,16 @@ impl<'tcx, P> PlatformDriverData<'tcx, P>
     Ok(())
   }
   pub(super) fn pre_codegen(&self, tcx: TyCtxt<'tcx>)
-    -> Result<(), Box<dyn Error + Send + Sync + 'static>>
+    -> Result<(), PError<P>>
   {
     let dd = unsafe { transmute(&self.driver_data) };
     self.platform.pre_codegen(tcx, dd)
+      .map_err(Error::PreCodegen)
   }
   pub(super) fn post_codegen(&self, tcx: TyCtxt<'tcx>,
                              tmpdir: &Path,
                              out: &OutputFilenames)
-    -> Result<PCodegenResults<P>, Box<dyn Error + Send + Sync + 'static>>
+    -> Result<PCodegenResults<P>, PError<P>>
   {
     use crate::rustc::session::config::*;
 

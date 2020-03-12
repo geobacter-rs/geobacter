@@ -1,7 +1,5 @@
 
 use std::alloc::Layout;
-use std::error::Error;
-use std::fmt;
 use std::marker::{PhantomData, Unsize, };
 use std::mem::{transmute, size_of, };
 use std::num::NonZeroU64;
@@ -36,7 +34,7 @@ use crate::grt_core::codegen as core_codegen;
 use crate::grt_core::codegen::PKernelDesc;
 use crate::grt_core::context::{ModuleContextData, PlatformModuleData, ModuleData, };
 
-use crate::HsaAmdGpuAccel;
+use crate::{HsaAmdGpuAccel, Error};
 use crate::codegen::{Codegenner, KernelDesc, CodegenDesc};
 use crate::signal::{DeviceConsumable, HostConsumable, SignalHandle,
                     SignaledDeref, Value};
@@ -126,11 +124,11 @@ impl<A> FuncModule<A> {
   }
 }
 impl<A> FuncModule<A> {
-  pub fn group_size(&mut self) -> Result<u32, ::std::boxed::Box<dyn Error>> {
+  pub fn group_size(&mut self) -> Result<u32, Error> {
     let module_data = self.compile_internal()?;
     Ok(module_data.desc.group_segment_size + self.dynamic_group_size)
   }
-  pub fn private_size(&mut self) -> Result<u32, ::std::boxed::Box<dyn Error>> {
+  pub fn private_size(&mut self) -> Result<u32, Error> {
     let module_data = self.compile_internal()?;
     Ok(module_data.desc.private_segment_size + self.dynamic_private_size)
   }
@@ -188,7 +186,7 @@ impl<A> FuncModule<A> {
   }
 
   fn compile_internal(&mut self)
-    -> Result<&HsaModuleData, ::std::boxed::Box<dyn Error>>
+    -> Result<&HsaModuleData, Error>
   {
     if self.module_data.is_none() {
       let module_data = self.context_data
@@ -198,7 +196,7 @@ impl<A> FuncModule<A> {
     }
     Ok(self.module_data.as_ref().unwrap())
   }
-  pub fn compile(&mut self) -> Result<(), ::std::boxed::Box<dyn Error>> {
+  pub fn compile(&mut self) -> Result<(), Error> {
     self.compile_internal()?;
     Ok(())
   }
@@ -252,25 +250,7 @@ impl<A> FuncModule<A> {
   }
 }
 
-#[derive(Debug)]
-pub enum CallError {
-  Queue(QueueError),
-  Compile(::std::boxed::Box<dyn Error>),
-  Oom,
-  CompletionSignal(::std::boxed::Box<dyn Error>),
-  Overflow,
-}
-impl fmt::Display for CallError {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "{:?}", self) // TODO
-  }
-}
-impl std::error::Error for CallError { }
-impl From<QueueError> for CallError {
-  fn from(v: QueueError) -> Self {
-    CallError::Queue(v)
-  }
-}
+pub type CallError = crate::error::Error;
 
 /// A trait so downstream crates don't need ndarray to use generic dims.
 pub trait LaunchDims: Copy {
@@ -346,7 +326,7 @@ impl<A, Dim> Invoc<A, Dim>
         Dim: LaunchDims,
 {
   pub fn new<F>(accel: &Arc<HsaAmdGpuAccel>, f: F)
-    -> Result<Self, ::std::boxed::Box<dyn Error>>
+    -> Result<Self, Error>
     where F: for<'a> Fn(&'a A) + Sized,
   {
     let fmod = FuncModule::new(accel, f);
@@ -358,7 +338,7 @@ impl<A, Dim> Invoc<A, Dim>
   }
   pub fn new_dims<F>(accel: &Arc<HsaAmdGpuAccel>,
                      f: F, wg: Dim, grid: Dim)
-    -> Result<Self, ::std::boxed::Box<dyn Error>>
+    -> Result<Self, Error>
     where F: for<'a> Fn(&'a A) + Sized,
   {
     let fmod = FuncModule::new(accel, f);
@@ -436,8 +416,7 @@ impl<A, Dim> Invoc<A, Dim>
   {
     let kernel_object = {
       let kernel = self.fmod
-        .compile_internal()
-        .map_err(CallError::Compile)?;
+        .compile_internal()?;
 
       assert!(kernel.desc.kernarg_segment_size as usize <= size_of::<(&A, )>());
 
@@ -447,7 +426,7 @@ impl<A, Dim> Invoc<A, Dim>
     };
 
     let mut kernargs = args_pool.alloc::<(A, &A, )>()
-      .ok_or(CallError::Oom)?;
+      .ok_or(CallError::KernelArgsPoolOom)?;
     let kargs = kernargs.cast();
     let kargs_ref = (&mut kernargs.as_mut().1) as *mut &A;
 

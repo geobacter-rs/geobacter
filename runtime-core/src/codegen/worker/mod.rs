@@ -63,6 +63,7 @@ mod util;
 use super::{PlatformCodegen, PKernelDesc, };
 use super::products::*;
 use crate::codegen::{PlatformIntrinsicInsert, };
+use crate::codegen::worker::error::PError;
 use crate::metadata::{CrateMetadataLoader, CrateMetadata, CrateNameHash, DummyMetadataLoader};
 use crate::utils::env::{use_llc, print_opt_remarks};
 
@@ -95,7 +96,7 @@ impl<P> CodegenDriver<P>
   }
 
   pub fn codegen(&self, desc: PKernelDesc<P>)
-    -> Result<Arc<PCodegenResults<P>>, error::Error>
+    -> Result<Arc<PCodegenResults<P>>, error::PError<P>>
   {
     self.0.codegen_kernel(desc)
   }
@@ -113,7 +114,7 @@ pub(crate) enum Message<P>
   AddAccel(Weak<P::Device>),
   Codegen {
     desc: PKernelDesc<P>,
-    ret: Sender<Result<Arc<PCodegenResults<P>>, error::Error>>,
+    ret: Sender<Result<Arc<PCodegenResults<P>>, error::PError<P>>>,
   },
 }
 
@@ -344,7 +345,7 @@ impl<P> WorkerTranslatorData<P>
     })
   }
   fn codegen_kernel(&self, desc: PKernelDesc<P>)
-    -> Result<Arc<PCodegenResults<P>>, error::Error>
+    -> Result<Arc<PCodegenResults<P>>, error::PError<P>>
   {
     use std::collections::hash_map::Entry;
     loop {
@@ -408,7 +409,7 @@ impl<P> WorkerTranslatorData<P>
                           desc: PKernelDesc<P>,
                           sess: Session,
                           cstore: CStore)
-    -> Result<PCodegenResults<P>, error::Error>
+    -> Result<PCodegenResults<P>, error::PError<P>>
   {
     use self::util::get_codegen_backend;
     use syntax::ast;
@@ -519,7 +520,7 @@ impl<P> WorkerTranslatorData<P>
       Some(driver_data),
     );
 
-    let results: Result<PCodegenResults<P>, error::Error> = ty::tls::enter_global(&gcx, |tcx| {
+    let results: Result<PCodegenResults<P>, PError<P>> = ty::tls::enter_global(&gcx, |tcx| {
       // Do some initialization of the DepGraph that can only be done with the
       // tcx available.
       tcx.sess.time("dep graph tcx init", || rustc_incremental::dep_graph_tcx_init(tcx));
@@ -527,14 +528,11 @@ impl<P> WorkerTranslatorData<P>
       tcx.sess.time("platform root and condition init",
            move || {
              PlatformDriverData::<P>::with(tcx, |tcx, pd| {
-               pd.init_root(desc, tcx)
-                 .map_err(error::Error::InitRoot)?;
+               pd.init_root(desc, tcx)?;
 
-               pd.init_conditions(tcx)
-                 .map_err(error::Error::InitConditions)?;
+               pd.init_conditions(tcx)?;
 
                pd.pre_codegen(tcx)
-                 .map_err(error::Error::PreCodegen)
              })
            })?;
 
@@ -550,22 +548,19 @@ impl<P> WorkerTranslatorData<P>
            || {
              codegen.join_codegen(ongoing_codegen, &sess, &dep_graph)
                .map_err(|_| {
-                 error!("codegen failed!");
-                 error::Error::Codegen(instance)
+                 error::Error::Codegen
                })
            })?;
       tcx.sess.time("link",
                     || {
                       codegen.link(&sess, codegen_results, &out)
                         .map_err(|_| {
-                          error!("linking failed!");
-                          error::Error::Codegen(instance)
+                          error::Error::Linking
                         })
                     })?;
 
       let results = PlatformDriverData::<P>::with(tcx, |tcx, pd| {
         pd.post_codegen(tcx, &tmpdir.path(), &out)
-          .map_err(error::Error::PostCodegen)
       })?;
 
       Ok(results)

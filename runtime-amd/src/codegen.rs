@@ -1,6 +1,5 @@
 
 use std::collections::HashMap;
-use std::error::Error;
 use std::env::var_os;
 use std::fs::{File, };
 use std::io::{Write, Read, stderr, };
@@ -33,7 +32,7 @@ use crate::intrinsics_common::CurrentPlatform;
 use crate::serde::{Serialize, Deserialize, };
 use crate::rmps::decode::{from_slice as rmps_from_slice, };
 
-use crate::{HsaAmdGpuAccel, HsaAmdTargetDescHelper, };
+use crate::{HsaAmdGpuAccel, HsaAmdTargetDescHelper, Error};
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Codegenner;
@@ -71,7 +70,7 @@ impl PlatformCodegen for Codegenner {
                 instance: Instance<'tcx>,
                 _tcx: TyCtxt<'tcx>,
                 _dd: &DriverData<'tcx, Self>)
-    -> Result<PCodegenDesc<'tcx, Self>, Box<dyn Error + Send + Sync + 'static>>
+    -> Result<PCodegenDesc<'tcx, Self>, Error>
   {
     Ok(core_codegen::CodegenDesc {
       instance,
@@ -86,7 +85,7 @@ impl PlatformCodegen for Codegenner {
                            _root: &PCodegenDesc<'tcx, Self>,
                            _tcx: TyCtxt<'tcx>,
                            _dd: &DriverData<'tcx, Self>)
-    -> Result<Vec<Self::Condition>, Box<dyn Error + Send + Sync + 'static>>
+    -> Result<Vec<Self::Condition>, Error>
   {
     Ok(vec![attrs::Condition::Platform])
   }
@@ -94,7 +93,7 @@ impl PlatformCodegen for Codegenner {
   fn pre_codegen<'tcx>(&self,
                        _tcx: TyCtxt<'tcx>,
                        _dd: &DriverData<'tcx, Self>)
-    -> Result<(), Box<dyn Error + Send + Sync + 'static>>
+    -> Result<(), Error>
   {
     Ok(())
   }
@@ -103,7 +102,7 @@ impl PlatformCodegen for Codegenner {
                   target_desc: &Arc<AcceleratorTargetDesc>,
                   tdir: &Path,
                   codegen: &mut PCodegenResults<Self>)
-    -> Result<(), Box<dyn Error + Send + Sync + 'static>>
+    -> Result<(), Error>
   {
     use goblin::Object;
 
@@ -119,7 +118,7 @@ impl PlatformCodegen for Codegenner {
       // TODO send LLVM patches upstream so that amd-comgr is useful for this.
 
       let bc = codegen.take_bitcode()
-        .ok_or("no object output")?;
+        .expect("no object output");
 
       let linked_bc = tdir.join("linked.bc");
       {
@@ -241,7 +240,7 @@ impl PlatformCodegen for Codegenner {
       }
 
       let metadata = metadata
-        .ok_or("missing NT_AMDGPU_METADATA note")?;
+        .ok_or(Error::MissingKernelMetadataNote)?;
 
       let name_to_idx: HashMap<_, _> = metadata
         .kernels
@@ -254,7 +253,7 @@ impl PlatformCodegen for Codegenner {
 
       for root in codegen.entries.iter_mut() {
         let &idx = name_to_idx.get(&root.symbol[..])
-          .ok_or("missing metadata kernel record")?;
+          .ok_or(Error::MissingKernelMetadataNote)?;
         let kernel_md = metadata.kernels
           .get(idx)
           .unwrap();
@@ -368,11 +367,11 @@ struct HsaKernelMetadataMap<'a> {
   max_flat_workgroup_size: u32,
 }
 
-pub fn run_cmd(mut cmd: Command) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+pub fn run_cmd(mut cmd: Command) -> Result<(), Error> {
   info!("running command {:?}", cmd);
   let mut child = cmd.spawn()?;
   if !child.wait()?.success() {
-    Err(format!("command failed: {:?}", cmd).into())
+    Err(Error::Cmd(format!("command failed: {:?}", cmd).into()))
   } else {
     Ok(())
   }
