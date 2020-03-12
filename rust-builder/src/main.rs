@@ -321,7 +321,7 @@ debuginfo-level = {}
 debuginfo-level-std = 2
 incremental = true
 parallel-compiler = true
-lld = true
+lld = false
 llvm-tools = true
 "#,
            self.rust_dbg_info_lvl(),
