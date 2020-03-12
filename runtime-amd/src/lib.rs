@@ -1,5 +1,7 @@
 
-//! A runtime crate for AMDGPUs.
+//! A runtime crate for AMDGPUs. Most of this API should be considered
+//! unstable; many details related to making these APIs safe are still
+//! up in the air.
 //!
 //! Includes WIP support for management of device resources via signals
 //!
