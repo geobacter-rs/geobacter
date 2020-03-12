@@ -395,7 +395,7 @@ dependencies = [
  "geobacter-amd-std",
  "geobacter-runtime-amd",
  "geobacter-runtime-core",
- "ndarray 0.12.1",
+ "ndarray 0.13.0",
  "ndarray-parallel",
  "rand 0.7.3",
 ]
