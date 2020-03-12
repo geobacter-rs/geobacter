@@ -14,7 +14,7 @@ use packed_simd::*;
 use lodepng::{encode32_file, RGBA, };
 
 pub type Elem = u8x4;
-const X_SIZE: usize = 1024 * 32;
+const X_SIZE: usize = 1024 * 4;
 const Y_SIZE: usize = X_SIZE;
 
 const WORKITEM_SIZE: usize = 16;
