@@ -68,7 +68,7 @@ impl Kernel for Args {
     where Self: Sized,
   {
     if let Some(tensor) = self.tensor_view() {
-      let &idx = vp.gl_id();
+      let idx = vp.gl_id();
       if let Some(dest) = tensor.get_mut(idx as usize) {
         calc(dest, self.value);
       }

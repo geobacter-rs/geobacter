@@ -305,7 +305,7 @@ mod one_d {
 
     fn trivial_f(dst: *mut [u32], vp: VectorParams<Dim1D<Range<u32>>>) {
       unsafe {
-        (&mut *dst)[*vp.gl_id() as usize] = *vp.gl_id();
+        (&mut *dst)[vp.gl_id() as usize] = vp.gl_id();
       }
     }
 
@@ -335,7 +335,7 @@ mod one_d {
     fn trivial_f(dst: *mut [u32], vp: VectorParams<Dim1D<Range<u32>>>) {
       let glid = gamd_std::dispatch_packet().global_linear_id();
       unsafe {
-        (&mut *dst)[glid] = *vp.gl_id();
+        (&mut *dst)[glid] = vp.gl_id();
       }
     }
 
@@ -368,7 +368,7 @@ mod one_d {
     fn trivial_f(dst: *mut [u32], vp: VectorParams<Dim1D<Range<u32>>>) {
       let glid = gamd_std::dispatch_packet().global_linear_id();
       unsafe {
-        (&mut *dst)[glid] = *vp.gl_id();
+        (&mut *dst)[glid] = vp.gl_id();
       }
     }
 
@@ -501,7 +501,7 @@ mod three_d {
 
     fn trivial_f(dst: *mut [u32], vp: VectorParams<Dim3D<Range<u32>>>) {
       unsafe {
-        (&mut *dst)[*vp.gl_id() as usize] = *vp.gl_id();
+        (&mut *dst)[vp.gl_id() as usize] = vp.gl_id();
       }
     }
 
@@ -533,7 +533,7 @@ mod three_d {
     fn trivial_f(dst: *mut [u32], vp: VectorParams<Dim3D<Range<u32>>>) {
       let glid = gamd_std::dispatch_packet().global_linear_id();
       unsafe {
-        (&mut *dst)[glid] = *vp.gl_id();
+        (&mut *dst)[glid] = vp.gl_id();
       }
     }
 

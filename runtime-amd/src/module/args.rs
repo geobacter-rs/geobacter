@@ -23,7 +23,7 @@ pub struct VectorParams<G>
   // wg_size comes from A
   wg_id: G::Idx,
   wg_idx: G::Idx,
-  grid_size: G,
+  grid_size: G::Idx,
   grid_id: G::Idx,
   gid: G::Elem,
 }
@@ -37,10 +37,7 @@ impl<G> VectorParams<G>
     let wi = G::workitem_id();
 
     // check that this is not an extra workitem (ie in the rounded up portion of the grid).
-    if grid.grid_oob(wg_size,
-                     &wg,
-                     &wi)
-    {
+    if grid.grid_oob(wg_size, &wg, &wi) {
       return None;
     }
 
@@ -48,37 +45,37 @@ impl<G> VectorParams<G>
       gid: grid.global_linear_id(wg_size, &wg, &wi),
       wg_idx: G::workgroup_idx(wg_size, &wg),
       grid_id: grid.grid_id(wg_size, &wg, &wi),
-      grid_size: grid.clone(),
+      grid_size: grid.len(),
       wi,
       wg_id: wg,
     })
   }
 
   #[inline(always)]
-  pub fn wi(&self) -> &<G::Workgroup as WorkgroupDims>::Idx {
-    &self.wi
+  pub fn wi(&self) -> <G::Workgroup as WorkgroupDims>::Idx {
+    self.wi
   }
   #[inline(always)]
-  pub fn wg_id(&self) -> &G::Idx {
-    &self.wg_id
+  pub fn wg_id(&self) -> G::Idx {
+    self.wg_id
   }
   #[inline(always)]
-  pub fn wg_idx(&self) -> &G::Idx {
-    &self.wg_idx
+  pub fn wg_idx(&self) -> G::Idx {
+    self.wg_idx
   }
   #[inline(always)]
-  pub fn grid_size(&self) -> &G {
-    &self.grid_size
+  pub fn grid_size(&self) -> G::Idx {
+    self.grid_size
   }
   #[inline(always)]
-  pub fn grid_id(&self) -> &G::Idx {
-    &self.grid_id
+  pub fn grid_id(&self) -> G::Idx {
+    self.grid_id
   }
 
   /// Globally Linear Id.
   #[inline(always)]
-  pub fn gl_id(&self) -> &G::Elem {
-    &self.gid
+  pub fn gl_id(&self) -> G::Elem {
+    self.gid
   }
 }
 impl<G> Clone for VectorParams<G>

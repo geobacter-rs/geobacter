@@ -16,7 +16,7 @@ pub unsafe trait GridDims: Sized + Clone + fmt::Debug {
   #[doc(hidden)]
   type Elem: Sized + Copy + fmt::Display + Default;
   #[doc(hidden)]
-  type Idx;
+  type Idx: Copy;
   #[doc(hidden)]
   type Workgroup: WorkgroupDims;
 
@@ -24,6 +24,7 @@ pub unsafe trait GridDims: Sized + Clone + fmt::Debug {
   #[doc(hidden)]
   fn full_launch_grid(&self) -> Result<Dim3D<u32>, Error>;
 
+  fn len(&self) -> Self::Idx;
   fn linear_len(&self) -> Option<Self::Elem>;
 
   #[doc(hidden)] #[inline(always)]
@@ -114,8 +115,9 @@ macro_rules! grid_impl {
           },)*
         }
       }
+      /// Used by the workgroup grid dim trait.
       #[inline(always)]
-      pub fn len<U>(&self) -> $ty<U>
+      pub fn _len<U>(&self) -> $ty<U>
         where T: RequireUpperBounds<U>,
               U: for<'a> Add<&'a U, Output = U> + for<'a> Sub<&'a U, Output = U>,
               U: Copy + One + Zero,
@@ -482,6 +484,20 @@ macro_rules! grid_dims_impl {
       }
 
       #[inline(always)]
+      fn len(&self) -> $gty<Self::Elem> {
+        $gty {
+          $($field: match (self.$field.start_bound(), self.$field.end_bound()) {
+            (Bound::Included(&l), Bound::Included(&r)) => r - &l + &<Self::Elem as One>::one(),
+            (Bound::Included(&l), Bound::Excluded(&r)) => r - &l,
+            // XXX possible overflow.
+            (Bound::Unbounded, Bound::Included(&r)) => r + &<Self::Elem as One>::one(),
+            (Bound::Unbounded, Bound::Excluded(&r)) => r,
+            _ => unreachable!(),
+          },)*
+        }
+      }
+
+      #[inline(always)]
       fn linear_len(&self) -> Option<Self::Elem> {
         let len = self.checked_len().ok()?;
         let mut acc: Self::Elem = One::one();
@@ -523,7 +539,7 @@ macro_rules! grid_dims_impl {
       {
         let wg_idx = Self::workgroup_idx(wg_size, wg_id);
         let idx = wg_idx + wi_id.as_::<u32>();
-        let len = self.len();
+        let len = GridDims::len(self);
         $(idx.$field >= len.$field)||*
       }
 
@@ -534,7 +550,7 @@ macro_rules! grid_dims_impl {
                           wi_id: &<Self::Workgroup as WorkgroupDims>::Idx)
         -> Self::Elem
       {
-        self.grid_id(wg_size, wg_id, wi_id).glid(self.len())
+        self.grid_id(wg_size, wg_id, wi_id).glid(GridDims::len(self))
       }
     }
   )*}
@@ -582,84 +598,47 @@ pub trait WorkgroupDims: Sized + Copy + fmt::Debug {
   #[doc(hidden)]
   type Elem: Sized + Copy + fmt::Display;
   #[doc(hidden)]
-  type Idx;
+  type Idx: Copy;
 
   #[doc(hidden)] fn full_launch_grid(&self) -> Result<Dim3D<u16>, Error>;
 
+  fn len(&self) -> Self::Idx;
+
   #[doc(hidden)] fn workitem_id() -> Self::Idx;
 }
-impl<T> WorkgroupDims for Dim1D<RangeTo<T>>
-  where T: Sized + Copy + ToPrimitive + fmt::Display + fmt::Debug + 'static,
-        u32: AsPrimitive<T>,
-{
-  type Elem = T;
-  type Idx = Dim1D<T>;
+macro_rules! workgroup_dims_impl {
+  ($(($gty:ident, $range:ident, $prim:ty, ($($field:ident, $axis_dim:ident, )*), ), )*) => {$(
+    impl WorkgroupDims for $gty<$range<$prim>> {
+      type Elem = $prim;
+      type Idx = $gty<$prim>;
 
-  #[doc(hidden)]
-  #[inline(always)]
-  fn full_launch_grid(&self) -> Result<Dim3D<u16>, Error> {
-    Ok(Dim3D {
-      x: self.x.end.to_u16().ok_or(Error::Overflow)?,
-      y: 1,
-      z: 1,
-    })
-  }
+      #[doc(hidden)]
+      #[inline(always)]
+      fn full_launch_grid(&self) -> Result<Dim3D<u16>, Error> {
+        let l = self._len();
+        let l = $gty {
+          $($field: l.$field.to_u16().ok_or(Error::Overflow)?,)*
+        };
+        Ok(l.into())
+      }
 
-  #[doc(hidden)]
-  fn workitem_id() -> Self::Idx {
-    Dim1D {
-      x: AxisDimX.workitem_id().as_(),
+      #[inline(always)]
+      fn len(&self) -> Self::Idx {
+        self._len()
+      }
+
+      #[doc(hidden)]
+      #[inline(always)]
+      fn workitem_id() -> Self::Idx {
+        $gty {
+          $($field: $axis_dim.workitem_id().as_(),)*
+        }
+      }
     }
-  }
+  )*}
 }
-impl<T> WorkgroupDims for Dim2D<RangeTo<T>>
-  where T: Sized + Copy + ToPrimitive + fmt::Display + fmt::Debug + 'static,
-        u32: AsPrimitive<T>,
-{
-  type Elem = T;
-  type Idx = Dim2D<T>;
-
-  #[doc(hidden)]
-  #[inline(always)]
-  fn full_launch_grid(&self) -> Result<Dim3D<u16>, Error> {
-    Ok(Dim3D {
-      x: self.x.end.to_u16().ok_or(Error::Overflow)?,
-      y: self.y.end.to_u16().ok_or(Error::Overflow)?,
-      z: 1,
-    })
-  }
-
-  #[doc(hidden)]
-  fn workitem_id() -> Self::Idx {
-    Dim2D {
-      x: AxisDimX.workitem_id().as_(),
-      y: AxisDimY.workitem_id().as_(),
-    }
-  }
-}
-impl<T> WorkgroupDims for Dim3D<RangeTo<T>>
-  where T: Sized + Copy + ToPrimitive + fmt::Display + fmt::Debug + 'static,
-        u32: AsPrimitive<T>,
-{
-  type Elem = T;
-  type Idx = Dim3D<T>;
-
-  #[doc(hidden)]
-  #[inline(always)]
-  fn full_launch_grid(&self) -> Result<Dim3D<u16>, Error> {
-    Ok(Dim3D {
-      x: self.x.end.to_u16().ok_or(Error::Overflow)?,
-      y: self.y.end.to_u16().ok_or(Error::Overflow)?,
-      z: self.z.end.to_u16().ok_or(Error::Overflow)?,
-    })
-  }
-
-  #[doc(hidden)]
-  fn workitem_id() -> Self::Idx {
-    Dim3D {
-      x: AxisDimX.workitem_id().as_(),
-      y: AxisDimY.workitem_id().as_(),
-      z: AxisDimZ.workitem_id().as_()
-    }
-  }
+workgroup_dims_impl! {
+  (Dim1D, RangeTo, u16, (x, AxisDimX, ), ),
+  (Dim2D, RangeTo, u16, (x, AxisDimX, y, AxisDimY, ), ),
+  (Dim3D, RangeTo, u16, (x, AxisDimX, y, AxisDimY, z, AxisDimZ, ), ),
 }
