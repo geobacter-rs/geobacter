@@ -3,7 +3,7 @@ use std::alloc::Layout;
 use std::marker::{PhantomData, Unsize, };
 use std::mem::{transmute, size_of, };
 use std::num::NonZeroU64;
-use std::ops::{CoerceUnsized, Deref, DerefMut, };
+use std::ops::{CoerceUnsized, Deref, };
 use std::pin::Pin;
 use std::ptr::{self, Unique, };
 use std::sync::{Arc, atomic, };
@@ -15,14 +15,12 @@ use arrayvec::ArrayVec;
 
 use log::{error, };
 
-use num_traits::{ToPrimitive, };
-
 use geobacter_core::kernel::{KernelInstance, OptionalFn, };
 use gcore::ref_::*;
 
 use hsa_rt::agent::Agent;
 use hsa_rt::executable::FrozenExecutable;
-use hsa_rt::queue::{DispatchPacket, IQueue, QueueKind, };
+use hsa_rt::queue::{DispatchPacket, RingQueue, };
 use hsa_rt::signal::SignalRef;
 
 pub use hsa_rt::queue::{FenceScope, QueueError, };
@@ -41,51 +39,37 @@ use crate::signal::{DeviceConsumable, HostConsumable, SignalHandle,
 
 use self::args_pool::ArgsPoolAlloc;
 
+pub use self::args::*;
 pub use self::args_pool::ArgsPool;
+pub use self::grid::*;
 pub use self::deps::Deps;
 
 pub mod args;
 pub mod args_pool;
+pub mod grid;
 pub mod deps;
+
+#[cfg(test)]
+mod test;
 
 // TODO refactor common stuff into runtime-core
 
-/// Closures are *explicitly not supported*, so we don't keep the function
-/// around as a member or as a type param.
-/// This struct used to have an `F` param, but it was realized that this
-/// prevented selecting a kernel based on, eg, an enum and then using it
-/// as a value (where `F` wasn't specific to the function anymore).
-/// Closures have never been supported, so I decided to just drop `F`.
-#[derive(Clone)]
-pub struct Function {
-  instance: KernelInstance,
-  context_data: ModuleContextData,
-  desc: KernelDesc,
-  spec_params: core_codegen::SpecParamsDesc,
-}
-
-impl Function {
-  pub fn new<F, A, R>(f: F) -> Self
-    where F: Fn<A, Output = R> + Sized,
-  {
-    Function {
-      instance: f.kernel_instance().unwrap(),
-      context_data: ModuleContextData::get(&f),
-      desc: KernelDesc::new(&f),
-      spec_params: Default::default(),
-    }
-  }
-  pub fn desc(&self) -> PKernelDesc<Codegenner> {
-    core_codegen::KernelDesc {
-      instance: self.instance.clone(),
-      spec_params: self.spec_params.clone(),
-      platform_desc: self.desc.clone(),
-    }
+/// This is the kernel that the GPU directly runs. This function should probably call
+/// Self::kernel after doing some light bookkeeping.
+fn launch_kernel<A>(this: &LaunchArgs<A>)
+  where A: Kernel + Sized,
+{
+  let params = VectorParams::new(&this.grid, &A::WORKGROUP);
+  if let Some(params) = params {
+    this.args.kernel(params)
   }
 }
 
-#[derive(Clone)]
-pub struct FuncModule<A> {
+type InvocArgs<'a, A> = (A, LaunchArgs<'a, A>, &'a LaunchArgs<'a, A>, );
+
+pub struct FuncModule<A>
+  where A: Kernel,
+{
   device: Arc<HsaAmdGpuAccel>,
   context_data: Arc<ModuleData>,
   module_data: Option<Arc<HsaModuleData>>,
@@ -98,32 +82,44 @@ pub struct FuncModule<A> {
   begin_fence: FenceScope,
   end_fence: FenceScope,
 
-  f: Function,
+  instance: KernelInstance,
+  desc: KernelDesc,
+  spec_params: core_codegen::SpecParamsDesc,
+
   /// To ensure we are only called with this argument type.
   _arg: PhantomData<*const A>,
 }
-impl<A> FuncModule<A> {
-  pub fn new<F>(accel: &Arc<HsaAmdGpuAccel>, f: F) -> Self
-    where F: for<'a> Fn(&'a A) + Sized,
-  {
-    let f = Function::new(f);
-    let context_data = f.context_data
-      .get_cache_data(accel.ctx());
+impl<A> FuncModule<A>
+  where A: Kernel,
+{
+  pub fn new(accel: &Arc<HsaAmdGpuAccel>) -> Self {
+    let f = launch_kernel::<A>;
 
     FuncModule {
       device: accel.clone(),
-      context_data,
       module_data: None,
       dynamic_group_size: 0,
       dynamic_private_size: 0,
       begin_fence: FenceScope::System,
       end_fence: FenceScope::System,
-      f,
+
+      instance: f.kernel_instance().unwrap(),
+      context_data: ModuleContextData::get(&f)
+        .get_cache_data(accel.ctx()),
+      desc: KernelDesc { },
+      spec_params: Default::default(),
+
       _arg: PhantomData,
     }
   }
-}
-impl<A> FuncModule<A> {
+  fn desc(&self) -> PKernelDesc<Codegenner> {
+    core_codegen::KernelDesc {
+      instance: self.instance.clone(),
+      spec_params: self.spec_params.clone(),
+      platform_desc: self.desc.clone(),
+    }
+  }
+
   pub fn group_size(&mut self) -> Result<u32, Error> {
     let module_data = self.compile_internal()?;
     Ok(module_data.desc.group_segment_size + self.dynamic_group_size)
@@ -190,7 +186,7 @@ impl<A> FuncModule<A> {
   {
     if self.module_data.is_none() {
       let module_data = self.context_data
-        .compile(&self.device, self.f.desc(),
+        .compile(&self.device, self.desc(),
                  &self.device.codegen())?;
       self.module_data = Some(module_data);
     }
@@ -206,7 +202,7 @@ impl<A> FuncModule<A> {
     if self.module_data.is_none() {
       let context_data = self.context_data.clone();
       let device = self.device.clone();
-      let desc = self.f.desc();
+      let desc = self.desc();
       spawn(move || {
         // ignore errors here; if an error does happen,
         // we'll compile again to get the actual error from codegen.
@@ -219,7 +215,7 @@ impl<A> FuncModule<A> {
   /// again.
   pub fn clear_params(&mut self) {
     self.module_data.take();
-    self.f.spec_params.clear();
+    self.spec_params.clear();
   }
   /// Undefine a specialization entry. If the key (`f`) has no entry, this does nothing.
   ///
@@ -228,7 +224,7 @@ impl<A> FuncModule<A> {
     where F: Fn() -> R,
   {
     self.module_data.take();
-    self.f.spec_params.undefine(f)
+    self.spec_params.undefine(f)
   }
   /// (Re-)Define a specialization param, keyed by `f`. Specialization params are like
   /// constants, but allow one to redefine them at will at runtime. Thus one can create multiple
@@ -246,220 +242,201 @@ impl<A> FuncModule<A> {
           R: Copy + Unpin + 'static,
   {
     self.module_data.take();
-    self.f.spec_params.define(f, value)
+    self.spec_params.define(f, value)
   }
-}
 
-pub type CallError = crate::error::Error;
-
-/// A trait so downstream crates don't need ndarray to use generic dims.
-pub trait LaunchDims: Copy {
-  fn default_unit() -> Self;
-  fn workgroup(self) -> Result<(u16, u16, u16), CallError>;
-  fn grid(self) -> Result<(u32, u32, u32), CallError>;
-}
-// HSA/AMDGPUs only support up to 3d, so that's all we're going to support here.
-macro_rules! impl_launch_dims {
-  ($($ty:ty,)*) => ($(
-
-impl LaunchDims for ($ty, ) {
-  fn default_unit() -> Self { (1, ) }
-  fn workgroup(self) -> Result<(u16, u16, u16), CallError> {
-    Ok((self.0.to_u16().ok_or(CallError::Overflow)?, 1, 1, ))
-  }
-  fn grid(self) -> Result<(u32, u32, u32), CallError> {
-    Ok((self.0.to_u32().ok_or(CallError::Overflow)?, 1, 1, ))
-  }
-}
-impl LaunchDims for ($ty, $ty, ) {
-  fn default_unit() -> Self { (1, 1, ) }
-  fn workgroup(self) -> Result<(u16, u16, u16), CallError> {
-    Ok((
-      self.0.to_u16().ok_or(CallError::Overflow)?,
-      self.1.to_u16().ok_or(CallError::Overflow)?,
-      1,
-    ))
-  }
-  fn grid(self) -> Result<(u32, u32, u32), CallError> {
-    Ok((
-      self.0.to_u32().ok_or(CallError::Overflow)?,
-      self.1.to_u32().ok_or(CallError::Overflow)?,
-      1,
-    ))
-  }
-}
-impl LaunchDims for ($ty, $ty, $ty, ) {
-  fn default_unit() -> Self { (1, 1, 1, ) }
-  fn workgroup(self) -> Result<(u16, u16, u16), CallError> {
-    Ok((
-      self.0.to_u16().ok_or(CallError::Overflow)?,
-      self.1.to_u16().ok_or(CallError::Overflow)?,
-      self.2.to_u16().ok_or(CallError::Overflow)?,
-    ))
-  }
-  fn grid(self) -> Result<(u32, u32, u32), CallError> {
-    Ok((
-      self.0.to_u32().ok_or(CallError::Overflow)?,
-      self.1.to_u32().ok_or(CallError::Overflow)?,
-      self.2.to_u32().ok_or(CallError::Overflow)?,
-    ))
-  }
-}
-
-  )*);
-}
-impl_launch_dims!(u16, u32, u64, usize, );
-
-#[derive(Clone)]
-pub struct Invoc<A, Dim>
-  where A: Sized + Unpin,
-        Dim: LaunchDims,
-{
-  pub workgroup_dim: Dim,
-  pub grid_dim: Dim,
-
-  fmod: FuncModule<A>,
-}
-
-impl<A, Dim> Invoc<A, Dim>
-  where A: Deps + Sized + Unpin,
-        Dim: LaunchDims,
-{
-  pub fn new<F>(accel: &Arc<HsaAmdGpuAccel>, f: F)
-    -> Result<Self, Error>
-    where F: for<'a> Fn(&'a A) + Sized,
-  {
-    let fmod = FuncModule::new(accel, f);
-    Ok(Invoc {
-      workgroup_dim: Dim::default_unit(),
-      grid_dim: Dim::default_unit(),
-      fmod,
-    })
-  }
-  pub fn new_dims<F>(accel: &Arc<HsaAmdGpuAccel>,
-                     f: F, wg: Dim, grid: Dim)
-    -> Result<Self, Error>
-    where F: for<'a> Fn(&'a A) + Sized,
-  {
-    let fmod = FuncModule::new(accel, f);
-    Ok(Invoc {
-      workgroup_dim: wg,
-      grid_dim: grid,
-      fmod,
-    })
-  }
-}
-
-impl<A, Dim> Invoc<A, Dim>
-  where A: Deps + Sized + Unpin,
-        Dim: LaunchDims,
-{
-  pub fn from(fmod: FuncModule<A>,
-              wg: Dim, grid: Dim) -> Self
+  /// Attach a kernel args pool, in preparation for dispatching.
+  pub fn invoc<P>(&self, pool: P) -> Invoc<A, P, Self>
+    where P: Deref<Target = ArgsPool> + Clone,
   {
     Invoc {
-      workgroup_dim: wg,
-      grid_dim: grid,
-      fmod,
+      pool,
+      f: self.clone(),
+      _p: PhantomData,
     }
   }
-
-
-  pub fn workgroup_dims(&mut self, dim: Dim) -> &mut Self
-    where Dim: LaunchDims + Copy,
-  {
-    self.workgroup_dim = dim;
-    self
-  }
-  pub fn grid_dims(&mut self, dim: Dim) -> &mut Self
-    where Dim: LaunchDims + Copy,
-  {
-    self.grid_dim = dim;
-    self
-  }
-
-  /// `completion` must already have the correct value set, eg set to `1`.
-  /// This function does no argument checking to ensure, eg, you're not passing
-  /// anything by mutable reference or something with drop code by value.
-  pub unsafe fn unchecked_call_async<P, Q, T, K, CS>(&mut self,
-                                                     args: A,
-                                                     queue: Q,
-                                                     completion: CS,
-                                                     args_pool: P)
-    -> Result<InvocCompletion<P, A, Q, CS>, CallError>
+  pub fn into_invoc<P>(self, pool: P) -> Invoc<A, P, Self>
     where P: Deref<Target = ArgsPool> + Clone,
-          Q: Deref<Target = T>,
-          T: IQueue<K>,
-          K: QueueKind,
-          CS: SignalHandle,
   {
-    let mut args = Some(args);
-    let mut queue = Some(queue);
-    let mut completion = Some(completion);
-    self.try_unchecked_call_async(&mut args, &mut queue, &mut completion,
-                                  args_pool)
+    Invoc {
+      pool,
+      f: self,
+      _p: PhantomData,
+    }
+  }
+  pub fn invoc_mut<P>(&mut self, pool: P) -> Invoc<A, P, &mut Self>
+    where P: Deref<Target = ArgsPool> + Clone,
+  {
+    Invoc {
+      pool,
+      f: self,
+      _p: PhantomData,
+    }
+  }
+}
+
+impl<A> Clone for FuncModule<A>
+  where A: Kernel,
+{
+  fn clone(&self) -> Self {
+    FuncModule {
+      device: self.device.clone(),
+      module_data: self.module_data.clone(),
+      dynamic_group_size: self.dynamic_group_size,
+      dynamic_private_size: self.dynamic_private_size,
+      begin_fence: self.begin_fence,
+      end_fence: self.end_fence,
+
+      instance: self.instance,
+      context_data: self.context_data.clone(),
+      desc: self.desc.clone(),
+      spec_params: self.spec_params.clone(),
+
+      _arg: PhantomData,
+    }
+  }
+}
+
+/// Just a simple helper for owned and mutable types.
+#[doc(hidden)]
+pub trait FuncModuleMut<A>
+  where A: Kernel,
+{
+  fn fm_mut(&mut self) -> &mut FuncModule<A>;
+}
+impl<A> FuncModuleMut<A> for FuncModule<A>
+  where A: Kernel,
+{
+  fn fm_mut(&mut self) -> &mut FuncModule<A> { self }
+}
+impl<'a, A> FuncModuleMut<A> for &'a mut FuncModule<A>
+  where A: Kernel,
+{
+  fn fm_mut(&mut self) -> &mut FuncModule<A> { self }
+}
+
+pub struct Invoc<A, P, FM>
+  where A: Kernel,
+        P: Deref<Target = ArgsPool> + Clone,
+        FM: FuncModuleMut<A>,
+{
+  pool: P,
+  f: FM,
+  _p: PhantomData<*const A>,
+}
+
+impl<A, P, FM> Invoc<A, P, FM>
+  where A: Kernel,
+        P: Deref<Target = ArgsPool> + Clone,
+        FM: FuncModuleMut<A>,
+{
+  /// The associated completion signal should already have the correct value set, eg set to `1`.
+  pub unsafe fn unchecked_call_async(&mut self, grid: &A::Grid, args: A)
+    -> Result<InvocCompletion<P, A, A::CompletionSignal>, Error>
+    where A::Queue: RingQueue,
+  {
+    self.try_unchecked_call_async(grid, args)
+      .map_err(|(err, _)| err )
   }
   /// Kernarg allocation can fail, so this function allows you re-call without having
-  /// to also recreate the arguments (since we move).
-  /// If allocation fails, the provided arguments will still be `Some()`.
-  pub unsafe fn try_unchecked_call_async<P, Q, T, K, CS>(&mut self,
-                                                         args: &mut Option<A>,
-                                                         queue: &mut Option<Q>,
-                                                         completion: &mut Option<CS>,
-                                                         args_pool: P)
-    -> Result<InvocCompletion<P, A, Q, CS>, CallError>
-    where P: Deref<Target = ArgsPool> + Clone,
-          Q: Deref<Target = T>,
-          T: IQueue<K>,
-          K: QueueKind,
-          CS: SignalHandle,
+  /// to also recreate the arguments (since we move them into a pinned box internally).
+  pub unsafe fn try_unchecked_call_async(&mut self, grid: &A::Grid, args: A)
+    -> Result<InvocCompletion<P, A, A::CompletionSignal>, (Error, A)>
+    where A::Queue: RingQueue,
   {
+    let mut args = Some(args);
+    match self._try_unchecked_call_async(grid, &mut args) {
+      Ok(v) => Ok(v),
+      Err(err) => Err((err, args.take().unwrap())),
+    }
+  }
+  unsafe fn _try_unchecked_call_async(&mut self, grid: &A::Grid, args: &mut Option<A>)
+    -> Result<InvocCompletion<P, A, A::CompletionSignal>, Error>
+    where A::Queue: RingQueue,
+  {
+    use num_traits::ops::checked::*;
+
+    let wg_size = A::WORKGROUP.full_launch_grid()?;
+    let grid_size = grid.full_launch_grid()?;
+
+    if wg_size.x == 0 || wg_size.y == 0 || wg_size.z == 0
+      || grid_size.x == 0 || grid_size.y == 0 || grid_size.z == 0
+    {
+      return Err(Error::ZeroGridLaunchAxis);
+    }
+
+    // Check the device kernel launch limits:
+    // Do this first so errors won't waste args pool space.
+    {
+      let isa = self.f.fm_mut()
+        .device
+        .isa_info();
+      let wg_max_dims = &isa.workgroup_max_dim;
+      if wg_size.x > wg_max_dims[0] || wg_size.y > wg_max_dims[1]
+        || wg_size.z > wg_max_dims[2]
+      {
+        return Err(Error::KernelWorkgroupDimTooLargeForDevice);
+      }
+      let wg_len = wg_size.as_::<u32>()
+        .checked_linear_len()?;
+      if wg_len > isa.workgroup_max_size {
+        return Err(Error::KernelWorkgroupLenTooLargeForDevice);
+      }
+      let grid_max_dims = &isa.grid_max_dim;
+      if grid_size.x > grid_max_dims[0] || grid_size.y > grid_max_dims[1]
+        || grid_size.z > grid_max_dims[2]
+      {
+        return Err(Error::LaunchGridDimTooLargeForDevice);
+      }
+      let grid_len = grid_size.as_::<u64>()
+        .checked_linear_len()?;
+      if grid_len > isa.grid_max_size {
+        return Err(Error::LaunchGridLenTooLargeForDevice);
+      }
+    }
+
+    let grid_size: Dim3D<u32> = {
+      // Round the grid size up a multiple of the workgroup size.
+      // This can overflow, so all ops must be checked.
+      let wg_size = wg_size.as_::<u32>();
+      let one = Dim3D::from(1u32);
+      ((grid_size - one) / wg_size) // can't over/under flow because we've already checked for zero
+        .checked_add(&one).ok_or(Error::Overflow)?
+        .checked_mul(&wg_size).ok_or(Error::Overflow)?
+    };
+
     let kernel_object = {
-      let kernel = self.fmod
+      let kernel = self.f
+        .fm_mut()
         .compile_internal()?;
 
-      assert!(kernel.desc.kernarg_segment_size as usize <= size_of::<(&A, )>());
+      let kargs_size = kernel.desc.kernarg_segment_size as usize;
+      assert!(kargs_size == size_of::<(&LaunchArgs<A>, )>(),
+              "internal error: unexpected codegen argument size: \
+              {} actual vs {} expected", kargs_size,
+              size_of::<(&LaunchArgs<A>, )>());
 
       kernel
         .kernel_object
         .get()
     };
 
-    let mut kernargs = args_pool.alloc::<(A, &A, )>()
-      .ok_or(CallError::KernelArgsPoolOom)?;
+    args.as_ref().expect("provide args");
+
+    let mut kernargs = self.pool.alloc::<InvocArgs<A>>()
+      .ok_or(Error::KernelArgsPoolOom)?;
     let kargs = kernargs.cast();
-    let kargs_ref = (&mut kernargs.as_mut().1) as *mut &A;
-
-    let Invoc {
-      workgroup_dim,
-      grid_dim,
-      ref mut fmod,
-    } = self;
-
-    let q = queue.as_ref().expect("provide a queue pls");
-    let c = completion.as_ref()
-      .map(|c| c.signal_ref() );
-
-    let dispatch = DispatchPacket {
-      workgroup_size: workgroup_dim.workgroup()?,
-      grid_size: grid_dim.grid()?,
-      group_segment_size: fmod.group_size().unwrap(),
-      private_segment_size: fmod.private_size().unwrap(),
-      scaquire_scope: fmod.begin_fence.clone(),
-      screlease_scope: fmod.end_fence.clone(),
-      ordered: c.is_none(),
-      kernel_object,
-      kernel_args: &*kargs_ref,
-      completion_signal: c,
-    };
+    let launch_args = (&mut kernargs.as_mut().1) as *mut LaunchArgs<A>;
+    let launch_args_ref = (&mut kernargs.as_mut().2) as *mut &LaunchArgs<A>;
 
     // enqueue the dep barriers. this is done after kernarg allocation
     // so that this step isn't repeated if we're called again as a result
     // of kernarg alloc failure.
     {
+      let q = args.as_ref().unwrap().queue();
       let mut signals: ArrayVec<[SignalRef; 5]> = ArrayVec::new();
       {
-        let mut f = |sig: &dyn DeviceConsumable| -> Result<(), CallError> {
+        let mut f = |sig: &dyn DeviceConsumable| -> Result<(), Error> {
           sig.mark_consumed();
           let sig = ::std::mem::transmute_copy(sig.signal_ref());
           signals.push(sig);
@@ -475,7 +452,7 @@ impl<A, Dim> Invoc<A, Dim>
           Ok(())
         };
         args.as_ref().unwrap()
-          .iter_deps(&mut f)?;
+          .iter_arg_deps(&mut f)?;
       }
       if signals.len() > 0 {
         let mut deps = signals.iter();
@@ -485,67 +462,57 @@ impl<A, Dim> Invoc<A, Dim>
     }
 
     ptr::write(kargs.as_ptr(), args.take().unwrap());
-    ptr::write(kargs_ref, kargs.as_ref());
+    ptr::write(launch_args, LaunchArgs {
+      args: kargs.as_ref(),
+      grid: grid.clone(),
+    });
+    ptr::write(launch_args_ref, launch_args.as_ref().unwrap());
+
+    let dispatch = DispatchPacket {
+      workgroup_size: (wg_size.x, wg_size.y, wg_size.z, ),
+      grid_size: (grid_size.x, grid_size.y, grid_size.z, ),
+      group_segment_size: self.f.fm_mut().group_size().unwrap(),
+      private_segment_size: self.f.fm_mut().private_size().unwrap(),
+      scaquire_scope: self.f.fm_mut().begin_fence.clone(),
+      screlease_scope: self.f.fm_mut().end_fence.clone(),
+      ordered: false,
+      kernel_object,
+      kernel_args: &*launch_args_ref,
+      completion_signal: Some(kargs.as_ref()
+        .completion()
+        .signal_ref()),
+    };
+
     // Ensure the writes to the kernel args are all the way to memory:
     atomic::fence(Ordering::SeqCst);
 
+    match kargs.as_ref().queue().try_enqueue_kernel_dispatch(dispatch) {
+      Ok(()) => { },
+      Err(err) => {
+        // return args:
+        *args = Some(ptr::read(kargs.as_ptr()));
+        return Err(err.into());
+      }
+    }
+
     let kargs = Box::from_raw_in(kargs.as_ptr(),
-                                 ArgsPoolAlloc(args_pool));
+                                 ArgsPoolAlloc(self.pool.clone()));
 
-    q.try_enqueue_kernel_dispatch(dispatch)?;
-
-    let inner = InvocCompletion {
-      _queue: queue.take().unwrap(),
-      signal: completion.take().unwrap(),
+    Ok(InvocCompletion {
       waited: AtomicBool::new(false),
       args: Box::into_pin(kargs),
-    };
-    Ok(inner)
+    })
   }
-}
-impl<A, WGDim> Deref for Invoc<A, WGDim>
-  where A: Sized + Unpin,
-        WGDim: LaunchDims,
-{
-  type Target = FuncModule<A>;
-  fn deref(&self) -> &FuncModule<A> { &self.fmod }
-}
-impl<A, WGDim> DerefMut for Invoc<A, WGDim>
-  where A: Sized + Unpin,
-        WGDim: LaunchDims,
-{
-  fn deref_mut(&mut self) -> &mut FuncModule<A> { &mut self.fmod }
 }
 
-unsafe impl<P, A, Q, S> deps::Deps for InvocCompletion<P, A, Q, S>
-  where P: Deref<Target = ArgsPool> + Clone,
-        S: DeviceConsumable,
-        A: ?Sized,
-{
-  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
-    -> Result<(), CallError>
-  {
-    f(&self.signal)
-  }
-}
-impl<P, A, Q, S> Deref for InvocCompletion<P, A, Q, S>
-  where P: Deref<Target = ArgsPool> + Clone,
-        S: SignalHandle,
-        A: ?Sized,
-{
-  type Target = A;
-  fn deref(&self) -> &Self::Target {
-    &self.args
-  }
-}
+pub type CallError = crate::error::Error;
+
 #[must_use]
-pub struct InvocCompletion<P, A, Q, S>
+pub struct InvocCompletion<P, A, S>
   where P: Deref<Target = ArgsPool> + Clone,
-        S: SignalHandle,
-        A: ?Sized,
+        S: SignalHandle + ?Sized,
+        A: Completion<CompletionSignal = S> + ?Sized,
 {
-  _queue: Q,
-  signal: S,
   /// a flag which we will set when we get used as a dep in
   /// another invoc. Only used when our completion signal
   /// is a device signal.
@@ -553,23 +520,23 @@ pub struct InvocCompletion<P, A, Q, S>
   /// Keep this last so we can be unsized
   args: Pin<Box<A, args_pool::ArgsPoolAlloc<P>>>,
 }
-impl<P, A, Q, S> InvocCompletion<P, A, Q, S>
+impl<P, A, S> InvocCompletion<P, A, S>
   where P: Deref<Target = ArgsPool> + Clone,
-        S: SignalHandle,
-        A: ?Sized,
+        S: SignalHandle + ?Sized,
+        A: Completion<CompletionSignal = S> + ?Sized,
 {
   pub unsafe fn wait_ref<F, R>(&self, f: F) -> SignaledDeref<R, &S>
     where F: FnOnce(Pin<&A>) -> R,
           S: HostConsumable,
   {
     let args = self.args.as_ref();
-    let signal = &self.signal;
+    let signal = self.args.completion();
     let r = f(args);
 
     SignaledDeref::new(r, signal)
   }
 
-  pub fn ret<R>(self, ret: R) -> InvocCompletionReturn<P, A, Q, S, R>
+  pub fn ret<R>(self, ret: R) -> InvocCompletionReturn<P, A, S, R>
     where A: Sized,
   {
     InvocCompletionReturn {
@@ -578,20 +545,41 @@ impl<P, A, Q, S> InvocCompletion<P, A, Q, S>
     }
   }
 }
-impl<P, A, Q, S> InvocCompletion<P, A, Q, S>
+impl<P, A, S> InvocCompletion<P, A, S>
   where P: Deref<Target = ArgsPool> + Clone,
         S: HostConsumable,
-        A: ?Sized,
+        A: Completion<CompletionSignal = S> + ?Sized,
 { }
-// impl the signal traits so that invoc completions can be reused for multiple
-// kernel dispatches.
-impl<P, A, Q, S> SignalHandle for InvocCompletion<P, A, Q, S>
+unsafe impl<P, A> deps::Deps for InvocCompletion<P, A, dyn DeviceConsumable>
+  where P: Deref<Target = ArgsPool> + Clone,
+        A: Completion<CompletionSignal = dyn DeviceConsumable> + ?Sized,
+{
+  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+    -> Result<(), CallError>
+  {
+    f(self.args.completion())
+  }
+}
+impl<P, A, S> Deref for InvocCompletion<P, A, S>
   where P: Deref<Target = ArgsPool> + Clone,
         S: SignalHandle,
-        A: ?Sized,
+        A: Completion<CompletionSignal = S> + ?Sized,
+{
+  type Target = A;
+  fn deref(&self) -> &Self::Target {
+    &self.args
+  }
+}
+// impl the signal traits so that invoc completions can be reused for multiple
+// kernel dispatches.
+impl<P, A, S> SignalHandle for InvocCompletion<P, A, S>
+  where P: Deref<Target = ArgsPool> + Clone,
+        S: SignalHandle + ?Sized,
+        A: Completion<CompletionSignal = S> + ?Sized,
 {
   fn signal_ref(&self) -> &SignalRef {
-    self.signal
+    self.args
+      .completion()
       .signal_ref()
   }
 
@@ -601,45 +589,51 @@ impl<P, A, Q, S> SignalHandle for InvocCompletion<P, A, Q, S>
   }
 
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
-    self.signal
+    self.args
+      .completion()
       .as_host_consumable()
   }
 }
-impl<P, A, Q, S> DeviceConsumable for InvocCompletion<P, A, Q, S>
+impl<P, A, S> DeviceConsumable for InvocCompletion<P, A, S>
   where P: Deref<Target = ArgsPool> + Clone,
-        S: DeviceConsumable,
-        A: ?Sized,
+        S: DeviceConsumable + ?Sized,
+        A: Completion<CompletionSignal = S> + ?Sized,
 {
   fn usable_on_device(&self, id: AcceleratorId) -> bool {
-    self.signal
+    self.args
+      .completion()
       .usable_on_device(id)
   }
 }
-impl<P, A, Q, S> HostConsumable for InvocCompletion<P, A, Q, S>
+impl<P, A, S> HostConsumable for InvocCompletion<P, A, S>
   where P: Deref<Target = ArgsPool> + Clone,
-        S: HostConsumable,
-        A: ?Sized,
+        S: HostConsumable + ?Sized,
+        A: Completion<CompletionSignal = S> + ?Sized,
 {
   unsafe fn wait_for_zero_relaxed(&self, spin: bool) -> Result<(), Value> {
-    self.signal.wait_for_zero_relaxed(spin)?;
+    self.args
+      .completion()
+      .wait_for_zero_relaxed(spin)?;
     self.mark_consumed();
     Ok(())
   }
   fn wait_for_zero(&self, spin: bool) -> Result<(), Value> {
-    self.signal.wait_for_zero(spin)?;
+    self.args
+      .completion()
+      .wait_for_zero(spin)?;
     unsafe { self.mark_consumed() };
     Ok(())
   }
 }
-impl<P, A, Q, S> Drop for InvocCompletion<P, A, Q, S>
+impl<P, A, S> Drop for InvocCompletion<P, A, S>
   where P: Deref<Target = ArgsPool> + Clone,
-        S: SignalHandle,
-        A: ?Sized,
+        S: SignalHandle + ?Sized,
+        A: Completion<CompletionSignal = S> + ?Sized,
 {
   fn drop(&mut self) {
     let mut waited = self.waited.load(Ordering::Acquire);
     if !waited {
-      if let Some(host) = self.signal.as_host_consumable() {
+      if let Some(host) = self.args.completion().as_host_consumable() {
         if let Err(code) = host.wait_for_zero(false) {
           error!("got negative signal from dispatch: {}", code);
         }
@@ -663,25 +657,25 @@ impl<P, A, Q, S> Drop for InvocCompletion<P, A, Q, S>
     }
   }
 }
-impl<P, A1, A2, Q, S> CoerceUnsized<InvocCompletion<P, A2, Q, S>> for InvocCompletion<P, A1, Q, S>
+impl<P, A1, A2, S> CoerceUnsized<InvocCompletion<P, A2, S>> for InvocCompletion<P, A1, S>
   where P: Deref<Target = ArgsPool> + Clone,
         S: SignalHandle,
-        A1: Unsize<A2> + ?Sized,
-        A2: ?Sized,
+        A1: Unsize<A2> + Completion<CompletionSignal = S> + ?Sized,
+        A2: Completion<CompletionSignal = S> + ?Sized,
 { }
 
-pub struct InvocCompletionReturn<P, A, Q, S, R>
+pub struct InvocCompletionReturn<P, A, S, R>
   where P: Deref<Target = ArgsPool> + Clone,
-        S: SignalHandle,
-        A: ?Sized,
+        S: SignalHandle + ?Sized,
+        A: Completion<CompletionSignal = S> + ?Sized,
 {
   ret: R,
-  invoc: InvocCompletion<P, A, Q, S>,
+  invoc: InvocCompletion<P, A, S>,
 }
-impl<P, A, Q, S, R> SignalHandle for InvocCompletionReturn<P, A, Q, S, R>
+impl<P, A, S, R> SignalHandle for InvocCompletionReturn<P, A, S, R>
   where P: Deref<Target = ArgsPool> + Clone,
-        S: SignalHandle,
-        A: ?Sized,
+        S: SignalHandle + ?Sized,
+        A: Completion<CompletionSignal = S> + ?Sized,
 {
   fn signal_ref(&self) -> &SignalRef {
     self.invoc.signal_ref()
@@ -695,19 +689,19 @@ impl<P, A, Q, S, R> SignalHandle for InvocCompletionReturn<P, A, Q, S, R>
     self.invoc.as_host_consumable()
   }
 }
-impl<P, A, Q, S, R> DeviceConsumable for InvocCompletionReturn<P, A, Q, S, R>
+impl<P, A, S, R> DeviceConsumable for InvocCompletionReturn<P, A, S, R>
   where P: Deref<Target = ArgsPool> + Clone,
-        S: DeviceConsumable,
-        A: ?Sized,
+        S: DeviceConsumable + ?Sized,
+        A: Completion<CompletionSignal = S> + ?Sized,
 {
   fn usable_on_device(&self, id: AcceleratorId) -> bool {
     self.invoc.usable_on_device(id)
   }
 }
-impl<P, A, Q, S, R> HostConsumable for InvocCompletionReturn<P, A, Q, S, R>
+impl<P, A, S, R> HostConsumable for InvocCompletionReturn<P, A, S, R>
   where P: Deref<Target = ArgsPool> + Clone,
-        S: HostConsumable,
-        A: ?Sized,
+        S: HostConsumable + ?Sized,
+        A: Completion<CompletionSignal = S> + ?Sized,
 {
   unsafe fn wait_for_zero_relaxed(&self, spin: bool) -> Result<(), Value> {
     self.invoc.wait_for_zero_relaxed(spin)
@@ -716,10 +710,9 @@ impl<P, A, Q, S, R> HostConsumable for InvocCompletionReturn<P, A, Q, S, R>
     self.invoc.wait_for_zero(spin)
   }
 }
-unsafe impl<P, A, Q, S, R> deps::Deps for InvocCompletionReturn<P, A, Q, S, R>
+unsafe impl<P, A, R> deps::Deps for InvocCompletionReturn<P, A, dyn DeviceConsumable, R>
   where P: Deref<Target = ArgsPool> + Clone,
-        S: DeviceConsumable,
-        A: ?Sized,
+        A: Completion<CompletionSignal = dyn DeviceConsumable> + ?Sized,
         R: deps::Deps,
 {
   fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
@@ -731,23 +724,23 @@ unsafe impl<P, A, Q, S, R> deps::Deps for InvocCompletionReturn<P, A, Q, S, R>
 }
 /// We are only *safely* deref-able on the device, where the command process will ensure
 /// this invocation is complete.
-impl<P, A, Q, S, R> Deref for InvocCompletionReturn<P, A, Q, S, R>
+impl<P, A, S, R> Deref for InvocCompletionReturn<P, A, S, R>
   where P: Deref<Target = ArgsPool> + Clone,
-        S: DeviceConsumable,
-        A: ?Sized,
+        S: DeviceConsumable + ?Sized,
+        A: Completion<CompletionSignal = S> + ?Sized,
 {
   type Target = AccelRefRaw<R>;
   fn deref(&self) -> &Self::Target {
     unsafe { transmute(&self.ret) }
   }
 }
-impl<P, A1, A2, Q, S, R>
-  CoerceUnsized<InvocCompletionReturn<P, A2, Q, S, R>> for
-    InvocCompletionReturn<P, A1, Q, S, R>
+impl<P, A1, A2, S, R>
+  CoerceUnsized<InvocCompletionReturn<P, A2, S, R>> for
+    InvocCompletionReturn<P, A1, S, R>
   where P: Deref<Target = ArgsPool> + Clone,
         S: SignalHandle,
-        A1: Unsize<A2> + ?Sized,
-        A2: ?Sized,
+        A1: Unsize<A2> + Completion<CompletionSignal = S> + ?Sized,
+        A2: Completion<CompletionSignal = S> + ?Sized,
 { }
 
 #[derive(Debug, Eq, PartialEq, Hash)]

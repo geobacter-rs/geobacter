@@ -303,13 +303,7 @@ impl PlatformCodegen for Codegenner {
 pub struct KernelDesc {
   // TODO
 }
-impl KernelDesc {
-  pub fn new<F, Args, Ret>(_f: &F) -> Self
-    where F: Fn<Args, Output = Ret> + ?Sized,
-  {
-    KernelDesc { }
-  }
-}
+impl KernelDesc { }
 impl PlatformKernelDesc for KernelDesc { }
 
 /// Most fields are filled in during `post_codegen`, after the worker

@@ -12,7 +12,6 @@
 //!
 
 #![feature(rustc_private)]
-#![feature(unboxed_closures)]
 #![feature(arbitrary_self_types)]
 #![feature(alloc_layout_extra, ptr_internals)]
 #![feature(core_intrinsics)]

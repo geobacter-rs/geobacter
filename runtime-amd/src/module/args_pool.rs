@@ -24,13 +24,13 @@ pub struct ArgsPool {
 impl ArgsPool {
   /// Create storage for `n` function calls for use on the provided accelerator.
   pub fn new<A>(accel: &Arc<HsaAmdGpuAccel>, count: usize) -> Result<Self, HsaError>
-    where A: Sized,
+    where A: Kernel + Sized,
   {
     use std::cmp::max;
 
     let kernargs_region = accel.kernargs_region().clone();
 
-    let layout = NonZeroLayout::new::<(A, &A, )>()
+    let layout = NonZeroLayout::new::<super::InvocArgs<A>>()
       .unwrap(); // the reference means ^ is never zero sized.
     let pool_alignment = kernargs_region.alloc_alignment();
     if pool_alignment < layout.align().get() {

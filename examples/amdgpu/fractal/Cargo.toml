@@ -13,8 +13,6 @@ env_logger = "0.6.0"
 nd = { package = "ndarray", version = "0.13.0" }
 rand = "0.7.3"
 lodepng = "2.0.0"
-gstd-amd = { version = "1.0.0", package = "geobacter-amd-std" }
 grt-core = { version = "1.0.0", package = "geobacter-runtime-core" }
 grt-amd  = { version = "1.0.0", package = "geobacter-runtime-amd" }
-hsa-rt = "0.1.0"
 packed_simd = { git = "https://github.com/rust-lang-nursery/packed_simd.git" }

@@ -6,8 +6,7 @@ version = "0.1.0"
 
 [dependencies]
 env_logger = "0.6.0"
-ndarray = "0.13.0"
-ndarray-parallel = "0.9"
+nd = { version = "0.13.0", package = "ndarray", features = ["rayon"] }
 rand = { version = "0.7.0", features = ["small_rng", ] }
 geobacter-runtime-core = "1.0.0"
 geobacter-runtime-amd = "1.0.0"

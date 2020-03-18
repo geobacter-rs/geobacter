@@ -1,7 +1,4 @@
-#![feature(core_intrinsics)]
 
-extern crate ndarray as nd;
-extern crate ndarray_parallel as ndp;
 extern crate env_logger;
 extern crate rand;
 
@@ -11,11 +8,10 @@ extern crate geobacter_runtime_amd as rt_amd;
 extern crate geobacter_amd_std as amdgpu_std;
 
 use std::mem::{size_of, };
+use std::ops::*;
 use std::time::Instant;
 
 use alloc_wg::{vec::Vec, };
-
-use ndp::prelude::*;
 
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng, };
@@ -23,10 +19,8 @@ use rand::{Rng, SeedableRng, };
 use rt_core::context::{Context, };
 use rt_amd::HsaAmdGpuAccel;
 use rt_amd::alloc::*;
-use rt_amd::module::{Invoc, ArgsPool, };
+use rt_amd::module::*;
 use rt_amd::signal::*;
-
-use amdgpu_std::{dispatch_packet, };
 
 pub type Elem = f32;
 const COUNT_MUL: usize = 64;
@@ -34,19 +28,6 @@ const COUNT: usize = 1024 * 1024 * COUNT_MUL;
 const ITERATIONS: usize = 16;
 
 const WG_SIZE: usize = 256;
-
-/// This is the kernel that is run on the GPU
-pub fn vector_foreach(args: &Args) {
-  if let Some(tensor) = args.tensor_view() {
-    let value = args.value;
-
-    let idx = dispatch_packet().global_id_x();
-
-    let dest = &mut tensor[idx as usize];
-
-    calc(dest, value);
-  }
-}
 
 fn calc(dest: &mut Elem, value: Elem) {
   let mut i = 0u16;
@@ -64,6 +45,35 @@ pub struct Args {
   copy: DeviceSignal,
   tensor: *mut [Elem],
   pub value: Elem,
+  queue: DeviceSingleQueue,
+  completion: GlobalSignal,
+}
+impl Completion for Args {
+  type CompletionSignal = GlobalSignal;
+  fn completion(&self) -> &GlobalSignal { &self.completion }
+}
+impl Kernel for Args {
+  type Grid = Dim1D<Range<u32>>;
+  const WORKGROUP: <Self::Grid as GridDims>::Workgroup = Dim1D {
+    x: ..WG_SIZE as _,
+  };
+  type Queue = DeviceSingleQueue;
+
+  fn queue(&self) -> &Self::Queue {
+    &self.queue
+  }
+
+  /// This is the kernel that is run on the GPU
+  fn kernel(&self, vp: KVectorParams<Self>)
+    where Self: Sized,
+  {
+    if let Some(tensor) = self.tensor_view() {
+      let &idx = vp.gl_id();
+      if let Some(dest) = tensor.get_mut(idx as usize) {
+        calc(dest, self.value);
+      }
+    }
+  }
 }
 
 impl Args {
@@ -73,6 +83,8 @@ impl Args {
     }
   }
 }
+unsafe impl Send for Args { }
+unsafe impl Sync for Args { }
 
 pub fn time<F, R>(what: &str, f: F) -> R
   where F: FnOnce() -> R,
@@ -106,14 +118,11 @@ pub fn main() {
   let mut original_values: Vec<Elem, _> = time("alloc original_values", || {
     Vec::with_capacity_in(COUNT, lap_alloc.clone())
   });
-  unsafe {
-    // no initialization:
-    original_values.set_len(COUNT);
-  }
+  original_values.resize_with(COUNT, Default::default);
   let mut values: LapVec<Elem> = time("alloc host output slice", || {
     LapVec::with_capacity_in(COUNT, lap_alloc.clone())
   });
-  unsafe { values.set_len(COUNT); }
+  values.resize_with(COUNT, Default::default);
 
   let mut rng = SmallRng::from_entropy();
 
@@ -130,9 +139,8 @@ pub fn main() {
     for accel in accels.iter() {
       println!("Testing device {}", accel.agent().name().unwrap());
 
-      let mut invoc: Invoc<_, _> =
-        Invoc::new(&accel, vector_foreach)
-          .expect("Invoc::new");
+      let mut invoc: FuncModule<Args> =
+        FuncModule::new(&accel);
       invoc.compile_async();
       unsafe {
         invoc.no_acquire_fence();
@@ -149,7 +157,7 @@ pub fn main() {
 
       let async_copy_signal = accel.new_device_signal(1)
         .expect("HsaAmdGpuAccel::new_device_signal: async_copy_signal");
-      let kernel_signal = accel.new_host_signal(1)
+      let kernel_signal = GlobalSignal::new(1)
         .expect("HsaAmdGpuAccel::new_host_signal: kernel_signal");
       let results_signal = accel.new_host_signal(1)
         .expect("HsaAmdGpuAccel::new_host_signal: results_signal");
@@ -181,16 +189,21 @@ pub fn main() {
         copy: async_copy_signal,
         tensor: device_values_ptr.as_ptr(),
         value: VALUE,
+        completion: kernel_signal,
+        queue,
       };
 
-      invoc.workgroup_dims((WG_SIZE, ));
-      invoc.grid_dims((COUNT, ));
+      let grid = Dim1D {
+        x: 0u32..COUNT as _,
+      };
+
+      invoc.compile().expect("codegen failed");
+
+      let mut invoc = invoc.into_invoc(&args_pool);
 
       println!("dispatching...");
       let wait = time("dispatching", || unsafe {
-        invoc.unchecked_call_async(args, &queue,
-                                   kernel_signal,
-                                   &args_pool)
+        invoc.unchecked_call_async(&grid, args)
           .expect("Invoc::call_async")
       });
 

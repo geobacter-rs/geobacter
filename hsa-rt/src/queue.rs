@@ -281,11 +281,11 @@ impl Agent {
 }
 
 /// XXX This doesn't implement faster operations for single queue types.
-pub trait IQueue<T>
-  where T: QueueKind,
-{
+pub trait RingQueue {
+  type Kind: QueueKind + ?Sized;
+
   #[doc(hidden)]
-  fn raw_queue(&self) -> &T;
+  fn raw_queue(&self) -> &Self::Kind;
 
   fn doorbell_ref(&self) -> SignalRef;
 
@@ -431,9 +431,10 @@ pub trait IQueue<T>
   }
 }
 
-impl<T> IQueue<T> for Queue<T>
+impl<T> RingQueue for Queue<T>
   where T: QueueKind,
 {
+  type Kind = T;
   fn raw_queue(&self) -> &T { &self.sys }
   fn doorbell_ref(&self) -> SignalRef {
     SignalRef(unsafe {
@@ -441,9 +442,10 @@ impl<T> IQueue<T> for Queue<T>
     })
   }
 }
-impl<T> IQueue<T> for KernelQueue<T>
+impl<T> RingQueue for KernelQueue<T>
   where T: QueueKind,
 {
+  type Kind = T;
   fn raw_queue(&self) -> &T { &self.sys }
   fn doorbell_ref(&self) -> SignalRef {
     SignalRef(unsafe {
@@ -451,28 +453,31 @@ impl<T> IQueue<T> for KernelQueue<T>
     })
   }
 }
-impl<T, U> IQueue<U> for Rc<T>
-  where T: IQueue<U> + ?Sized,
+impl<T, U> RingQueue for Rc<T>
+  where T: RingQueue<Kind = U> + ?Sized,
         U: QueueKind,
 {
+  type Kind = U;
   fn raw_queue(&self) -> &U { (&**self).raw_queue() }
   fn doorbell_ref(&self) -> SignalRef {
     (&**self).doorbell_ref()
   }
 }
-impl<T, U> IQueue<U> for Arc<T>
-  where T: IQueue<U> + ?Sized,
+impl<T, U> RingQueue for Arc<T>
+  where T: RingQueue<Kind = U> + ?Sized,
         U: QueueKind,
 {
+  type Kind = U;
   fn raw_queue(&self) -> &U { (&**self).raw_queue() }
   fn doorbell_ref(&self) -> SignalRef {
     (&**self).doorbell_ref()
   }
 }
-impl<T, U> IQueue<U> for Box<T>
-  where T: IQueue<U> + ?Sized,
+impl<T, U> RingQueue for Box<T>
+  where T: RingQueue<Kind = U> + ?Sized,
         U: QueueKind,
 {
+  type Kind = U;
   fn raw_queue(&self) -> &U { (&**self).raw_queue() }
   fn doorbell_ref(&self) -> SignalRef {
     (&**self).doorbell_ref()

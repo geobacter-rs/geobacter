@@ -18,7 +18,6 @@ use std::marker::PhantomData;
 use std::mem::{size_of, MaybeUninit, };
 use std::num::NonZeroUsize;
 use std::ops::*;
-use std::ptr::slice_from_raw_parts_mut;
 use std::rc::Rc;
 use std::time::*;
 use std::sync::Arc;
@@ -31,23 +30,87 @@ struct GemmArgs<'a, 'b, E>
   a: H2DGlobalRLapBoxMemTransfer<'a, [E], ()>,
   b: H2DGlobalRLapBoxMemTransfer<'a, [E], ()>,
   c: *mut [E],
+  queue: DeviceSingleQueue,
+  completion: GlobalSignal,
   _lt1: PhantomData<&'b mut E>,
 }
 
-impl<'a, 'b, E> GemmArgs<'a, 'b, E>
+impl<'a, 'b, E> Completion for GemmArgs<'a, 'b, E>
   where E: Copy + Deps,
 {
-  fn new_device(a: H2DGlobalRLapBoxMemTransfer<'a, [E], ()>,
-                b: H2DGlobalRLapBoxMemTransfer<'a, [E], ()>,
-                c: &'b mut LapBox<[E]>) -> Self {
-    GemmArgs {
-      a,
-      b,
-      c: slice_from_raw_parts_mut(c.as_mut_ptr(), c.len()),
-      _lt1: PhantomData,
+  type CompletionSignal = GlobalSignal;
+  #[inline(always)] fn completion(&self) -> &GlobalSignal { &self.completion }
+}
+impl<'a, 'b> Kernel for GemmArgs<'a, 'b, ETy> {
+  type Grid = Dim2D<Range<u32>>;
+  const WORKGROUP: <Self::Grid as GridDims>::Workgroup = Dim2D {
+    x: ..BLOCK_K as _,
+    y: ..BLOCK_K as _,
+  };
+  type Queue = DeviceSingleQueue;
+
+  fn queue(&self) -> &Self::Queue {
+    &self.queue
+  }
+
+  /// This function is run on the GPU.
+  fn kernel(&self, vp: KVectorParams<Self>) {
+    #![allow(unused_attributes)] // geobacter_attr is actually not unused. TODO
+
+    #[derive(Clone, Copy, Debug)]
+    struct GpuWorkItem(u16, u16);
+    impl AllWorkItems for GpuWorkItem {
+      #[inline(always)]
+      fn forall_workitems<F>(&self, mut f: F)
+        where F: FnMut(/*wi_x:*/ u32, /*wi_y:*/ u32),
+      {
+        f(self.0 as _, self.1 as _);
+      }
+      #[inline(always)]
+      fn barrier(&self) {
+        use gstd_amd::sync::atomic::*;
+        work_group_rel_acq_barrier(Scope::WorkGroup);
+      }
+    }
+
+    let wg = (vp.wg_idx().x, vp.wg_idx().y);
+    let wi = vp.wi();
+
+    let sync_threads = GpuWorkItem(wi.x, wi.y);
+
+    let dim = dim_spec_param();
+
+    // These globals are in LDS (workgroup local) memory.
+    // XXX this function can't be generic over ETy *only* because Rust prohibits it.
+    // statics aren't allowed to close over generic parameters of the parent function.
+    // TODO dynamic group storage instead.
+    #[geobacter_attr(platform = "amdgpu", address_space = "local")]
+    static mut S_A: MaybeUninit<[ETy; BLOCK_SIZE]> = MaybeUninit::uninit();
+    #[geobacter_attr(platform = "amdgpu", address_space = "local")]
+    static mut S_B: MaybeUninit<[ETy; BLOCK_SIZE]> = MaybeUninit::uninit();
+    #[geobacter_attr(platform = "amdgpu", address_space = "local")]
+    static mut S_C: MaybeUninit<[ETy; BLOCK_SIZE]> = MaybeUninit::uninit();
+
+    unsafe {
+      let a = MaybeCheckedSlice::unchecked(self.a.dst().as_ref());
+      let b = MaybeCheckedSlice::unchecked(self.b.dst().as_ref());
+      let c = MaybeCheckedMutSlice::unchecked(self.c as _);
+      let sa = MaybeCheckedMutSlice::unchecked(&mut *S_A.as_mut_ptr());
+      let sb = MaybeCheckedMutSlice::unchecked(&mut *S_B.as_mut_ptr());
+      let sc = MaybeCheckedMutSlice::unchecked(&mut *S_C.as_mut_ptr());
+
+      gemm_v1(a, b, c, sa, sb, sc,
+              dim, BLOCK_K as _, BLOCK_K_STRIDE as _,
+              wg, sync_threads);
     }
   }
 }
+unsafe impl<'a, 'b, E> Send for GemmArgs<'a, 'b, E>
+  where E: Copy + Deps + Send,
+{ }
+unsafe impl<'a, 'b, E> Sync for GemmArgs<'a, 'b, E>
+  where E: Copy + Deps + Sync,
+{ }
 
 /// Get the dimension specialization parameter. This should only be called on
 /// the device.
@@ -143,60 +206,6 @@ trait AllWorkItems {
   {
     self.forall_workitems(f);
     self.barrier();
-  }
-}
-
-fn gemm_kernel(args: &GemmArgs<ETy>) {
-  #![allow(unused_attributes)] // geobacter_attr is actually not unused. TODO
-
-  #[derive(Clone, Copy, Debug)]
-  struct GpuWorkItem(u32, u32);
-  impl AllWorkItems for GpuWorkItem {
-    #[inline(always)]
-    fn forall_workitems<F>(&self, mut f: F)
-      where F: FnMut(/*wi_x:*/ u32, /*wi_y:*/ u32),
-    {
-      f(self.0, self.1);
-    }
-    #[inline(always)]
-    fn barrier(&self) {
-      use gstd_amd::sync::atomic::*;
-      work_group_rel_acq_barrier(Scope::WorkGroup);
-    }
-  }
-
-  let wg = workitem::workgroup_id();
-  let wg_size = dispatch_packet().workgroup_size();
-  let wg = (wg[0] * wg_size[0],
-            wg[1] * wg_size[1]);
-  let wi = workitem::workitem_id();
-
-  let sync_threads = GpuWorkItem(wi[0], wi[1]);
-
-  let dim = dim_spec_param();
-
-  // These globals are in LDS (workgroup local) memory.
-  // XXX this function can't be generic over ETy *only* because Rust prohibits it.
-  // statics aren't allowed to close over generic parameters of the parent function.
-  // TODO dynamic group storage instead.
-  #[geobacter_attr(platform = "amdgpu", address_space = "local")]
-  static mut S_A: MaybeUninit<[ETy; BLOCK_SIZE]> = MaybeUninit::uninit();
-  #[geobacter_attr(platform = "amdgpu", address_space = "local")]
-  static mut S_B: MaybeUninit<[ETy; BLOCK_SIZE]> = MaybeUninit::uninit();
-  #[geobacter_attr(platform = "amdgpu", address_space = "local")]
-  static mut S_C: MaybeUninit<[ETy; BLOCK_SIZE]> = MaybeUninit::uninit();
-
-  unsafe {
-    let a = MaybeCheckedSlice::unchecked(args.a.dst().as_ref());
-    let b = MaybeCheckedSlice::unchecked(args.b.dst().as_ref());
-    let c = MaybeCheckedMutSlice::unchecked(args.c as _);
-    let sa = MaybeCheckedMutSlice::unchecked(&mut *S_A.as_mut_ptr());
-    let sb = MaybeCheckedMutSlice::unchecked(&mut *S_B.as_mut_ptr());
-    let sc = MaybeCheckedMutSlice::unchecked(&mut *S_C.as_mut_ptr());
-
-    gemm_v1(a, b, c, sa, sb, sc,
-            dim, BLOCK_K as _, BLOCK_K_STRIDE as _,
-            wg, sync_threads);
   }
 }
 
@@ -443,9 +452,7 @@ pub fn main() {
   let dim = NonZeroUsize::new(AXIS_SIZE).unwrap();
   let hardness = (2 * AXIS_SIZE * AXIS_SIZE * AXIS_SIZE) as f64;
 
-  let mut invoc: Invoc<_, _> =
-    Invoc::new(&dev, gemm_kernel)
-      .expect("Invoc::new");
+  let mut invoc: FuncModule<GemmArgs<ETy>> = FuncModule::new(&dev);
   invoc.define_param(dim_spec_param, &dim);
   invoc.define_param(mod_block_k, &(GRID % BLOCK_K == 0));
   invoc.compile_async();
@@ -516,21 +523,6 @@ pub fn main() {
   let mut async_copy_signal = Arc::new(GlobalSignal::new(0).unwrap());
   let kernel_signal = GlobalSignal::new(1).unwrap();
 
-  let wg = (BLOCK_K, BLOCK_K);
-  assert!(wg.0 * wg.1 <= 1024);
-
-  let mut grid = (GRID, GRID);
-  let round_up = |v: &mut _, a| {
-    *v = ((*v - 1) / a + 1) * a;
-  };
-  round_up(&mut grid.0, wg.0);
-  round_up(&mut grid.1, wg.1);
-
-  assert_eq!(grid.0 % wg.0, 0);
-  assert_eq!(grid.1 % wg.1, 0);
-  invoc.workgroup_dims(wg);
-  invoc.grid_dims(grid);
-
   println!("a: host ptr: 0x{:p}-0x{:p}",
            la.as_ptr(), unsafe { (la.as_ptr() as *const ETy).add(la.len()) },
   );
@@ -577,17 +569,29 @@ pub fn main() {
 
   // ensure the invocation doesn't block on this step:
   invoc.compile().expect("kernel cross codegen");
+
+  let mut invoc = invoc.into_invoc(args_pool);
+
   da.wait_for_zero(false).unwrap();
   // Don't need this second one, but w/e.
   db.wait_for_zero(false).unwrap();
   println!("starting GPU gemm...");
 
   bench("gpu gemm", hardness, || {
-    let args = GemmArgs::new_device(da, db, &mut lc);
+    let args = GemmArgs {
+      a: da,
+      b: db,
+      c: &mut lc[..],
+      queue,
+      completion: kernel_signal,
+      _lt1: PhantomData,
+    };
+    let grid = Dim2D {
+      x: 0..GRID as u32,
+      y: 0..GRID as u32,
+    };
     let _wait = unsafe {
-      invoc.unchecked_call_async(args, &queue,
-                                 kernel_signal,
-                                 args_pool)
+      invoc.unchecked_call_async(&grid, args)
         .expect("Invoc::call_async")
     };
     // no need to copy results; the GPU writes directly to visible RAM.

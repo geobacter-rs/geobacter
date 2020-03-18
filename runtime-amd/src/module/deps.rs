@@ -11,7 +11,8 @@ use std::sync::{Arc, atomic::*, };
 
 use gcore::ptr::*;
 
-use crate::module::CallError;
+use crate::Error;
+use crate::module::{CallError, DeviceMultiQueue, DeviceSingleQueue};
 use crate::signal::{DeviceConsumable, DeviceSignal, GlobalSignal, };
 use crate::boxed::{RawPoolBox, LocallyAccessiblePoolBox, };
 use crate::alloc::{LapBox, LapVec};
@@ -301,5 +302,19 @@ unsafe impl<T> Deps for LapVec<T>
     -> Result<(), CallError>
   {
     (&**self).iter_deps(f)
+  }
+}
+unsafe impl Deps for DeviceMultiQueue {
+  fn iter_deps<'a>(&'a self, _: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), Error>)
+    -> Result<(), Error>
+  {
+    Ok(())
+  }
+}
+unsafe impl Deps for DeviceSingleQueue {
+  fn iter_deps<'a>(&'a self, _: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), Error>)
+    -> Result<(), Error>
+  {
+    Ok(())
   }
 }

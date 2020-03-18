@@ -41,13 +41,20 @@ pub enum Error {
   CodegenInitConditions(Box<Error>),
   CodegenPreCodegen(Box<Error>),
   CodegenPostCodegen(Box<Error>),
+  Underflow,
   Overflow,
+  /// The dispatch grid has a zero length along one or more of it's axes.
+  ZeroGridLaunchAxis,
   KernelArgsPoolOom,
   HsaQueue(QueueError),
   AllocError {
     layout: NonZeroLayout,
     error: HsaError,
   },
+  KernelWorkgroupDimTooLargeForDevice,
+  KernelWorkgroupLenTooLargeForDevice,
+  LaunchGridDimTooLargeForDevice,
+  LaunchGridLenTooLargeForDevice,
 }
 impl StdError for Error {
   fn source(&self) -> Option<&(dyn StdError + 'static)> {
