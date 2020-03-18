@@ -18,7 +18,7 @@ pub fn derive_geobacter_deps(input: proc_macro::TokenStream)
   for param in input.generics.lifetimes() {
     if param.lifetime.to_string() == "'deps_lt" {
       return Error::new(param.lifetime.apostrophe,
-                        "cannot deserialize when there is a \
+                        "cannot implement when there is a \
                          lifetime parameter called 'deps_lt")
         .to_compile_error()
         .into();
