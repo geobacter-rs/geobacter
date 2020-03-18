@@ -102,13 +102,8 @@ pub fn main() {
 
   let alloc = dev.fine_lap_node_alloc(0);
 
-  let workitems = dev
-    .isa_info()
-    .workgroup_max_size as usize;
-  assert!(workitems >= WORKITEM_SIZE,
-          "not enough workitems per workgroup for this example");
   println!("output size: {}x{}", X_SIZE, Y_SIZE);
-  println!("using workgroup size of {}", WORKITEM_SIZE);
+  println!("using workgroup size of {:?}", Args::WORKGROUP);
 
   let mut invoc = FuncModule::<Args>::new(&dev);
 
