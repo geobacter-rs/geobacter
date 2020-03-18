@@ -55,15 +55,18 @@ pub unsafe trait GridDims: Sized + Clone + fmt::Debug {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(GeobacterDeps)]
 pub struct Dim1D<T> {
   pub x: T,
 }
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(GeobacterDeps)]
 pub struct Dim2D<T> {
   pub x: T,
   pub y: T,
 }
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(GeobacterDeps)]
 pub struct Dim3D<T> {
   pub x: T,
   pub y: T,

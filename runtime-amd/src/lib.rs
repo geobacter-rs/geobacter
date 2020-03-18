@@ -108,6 +108,11 @@ pub mod signal;
 
 mod utils;
 
+// For `#[derive(GeobacterDeps)]`.
+mod geobacter_runtime_amd {
+  pub use crate::*;
+}
+
 #[derive(Debug)]
 struct HsaAmdNode {
   agent: Agent,

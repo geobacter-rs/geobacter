@@ -158,7 +158,7 @@ impl<'a, E, F, Q, S> Kernel for TestKernel3<'a, E, F, Q, S>
     (self.f)(self.dst, vp);
   }
 }
-/// Has to be implemented manually because our derive macro doesn't work here.
+/// Implemented manually so we don't require Deps bounds on everything.
 unsafe impl<'b, E, F, Q, S, G> Deps for TestKernel<'b, E, F, Q, S, G> {
   fn iter_deps<'a>(&'a self, _: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), Error>)
     -> Result<(), Error>
@@ -254,6 +254,7 @@ fn device_wg_limit_err() {
     y: 0..1,
   };
 
+  #[derive(GeobacterDeps)]
   struct LargeWg;
   impl Completion for LargeWg {
     type CompletionSignal = GlobalSignal;
@@ -273,13 +274,6 @@ fn device_wg_limit_err() {
       where Self: Sized,
     {
       unreachable!();
-    }
-  }
-  unsafe impl Deps for LargeWg {
-    fn iter_deps<'a>(&'a self, _: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), Error>)
-      -> Result<(), Error>
-    {
-      Ok(())
     }
   }
 

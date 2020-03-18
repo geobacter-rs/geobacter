@@ -1,11 +1,5 @@
 
-extern crate env_logger;
-extern crate rand;
-
-extern crate geobacter_runtime_core as rt_core;
-#[macro_use]
-extern crate geobacter_runtime_amd as rt_amd;
-extern crate geobacter_amd_std as amdgpu_std;
+extern crate grt_amd as geobacter_runtime_amd;
 
 use std::mem::{size_of, };
 use std::ops::*;
@@ -16,11 +10,11 @@ use alloc_wg::{vec::Vec, };
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng, };
 
-use rt_core::context::{Context, };
-use rt_amd::HsaAmdGpuAccel;
-use rt_amd::alloc::*;
-use rt_amd::module::*;
-use rt_amd::signal::*;
+use grt_core::context::{Context, };
+use grt_amd::{HsaAmdGpuAccel, GeobacterDeps, };
+use grt_amd::alloc::*;
+use grt_amd::module::*;
+use grt_amd::signal::*;
 
 pub type Elem = f32;
 const COUNT_MUL: usize = 64;

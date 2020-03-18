@@ -390,7 +390,6 @@ version = "0.1.0"
 dependencies = [
  "alloc-wg",
  "env_logger",
- "geobacter-amd-std",
  "geobacter-runtime-amd",
  "geobacter-runtime-core",
  "ndarray",

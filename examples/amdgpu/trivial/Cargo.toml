@@ -8,7 +8,6 @@ version = "0.1.0"
 env_logger = "0.6.0"
 nd = { version = "0.13.0", package = "ndarray", features = ["rayon"] }
 rand = { version = "0.7.0", features = ["small_rng", ] }
-geobacter-runtime-core = "1.0.0"
-geobacter-runtime-amd = "1.0.0"
-geobacter-amd-std = "1.0.0"
+grt-core = { version = "1.0.0", package = "geobacter-runtime-core" }
+grt-amd  = { version = "1.0.0", package = "geobacter-runtime-amd" }
 alloc-wg = "0.7.0"

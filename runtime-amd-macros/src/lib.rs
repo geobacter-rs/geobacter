@@ -36,13 +36,15 @@ pub fn derive_geobacter_deps(input: proc_macro::TokenStream)
     });
   }
 
+  let seg0 = Ident::new("crate", input.span());
   let seg1 = Ident::new("geobacter_runtime_amd", input.span());
   let seg2 = Ident::new("module", input.span());
   let seg3 = Ident::new("Deps", input.span());
   let mut deps_path = Path {
-    leading_colon: Some(Default::default()),
+    leading_colon: None,
     segments: Default::default(),
   };
+  deps_path.segments.push(seg0.into());
   deps_path.segments.push(seg1.into());
   deps_path.segments.push(seg2.into());
   deps_path.segments.push(seg3.into());
@@ -89,11 +91,12 @@ pub fn derive_geobacter_deps(input: proc_macro::TokenStream)
 
   let expanded = quote! {
 
-    unsafe impl #impl_generics ::geobacter_runtime_amd::module::Deps for #name #ty_generics #where_clause {
-      fn iter_deps<'deps_lt>(&'deps_lt self, f: &mut FnMut(&'deps_lt dyn ::geobacter_runtime_amd::signal::DeviceConsumable) -> Result<(), ::geobacter_runtime_amd::module::CallError>)
-        -> Result<(), ::geobacter_runtime_amd::module::CallError>
+    unsafe impl #impl_generics crate::geobacter_runtime_amd::module::Deps for #name #ty_generics
+    #where_clause {
+      fn iter_deps<'deps_lt>(&'deps_lt self, f: &mut FnMut(&'deps_lt dyn crate::geobacter_runtime_amd::signal::DeviceConsumable) -> Result<(), crate::geobacter_runtime_amd::module::CallError>)
+        -> Result<(), crate::geobacter_runtime_amd::module::CallError>
       {
-        use ::geobacter_runtime_amd::module::Deps;
+        use crate::geobacter_runtime_amd::module::Deps;
         #(#expanded)*
         Ok(())
       }

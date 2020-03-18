@@ -163,22 +163,10 @@ mod test {
   use super::*;
   use crate::utils::test::*;
 
+  #[derive(GeobacterDeps)]
   struct CompletionTest {
     dep: Arc<GlobalSignal>,
     completion: Arc<GlobalSignal>,
-  }
-  /// TODO make the deps derive macro work in this crate
-  unsafe impl Deps for CompletionTest {
-    #[inline(always)]
-    fn iter_deps<'a>(&'a self,
-                     f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), Error>)
-      -> Result<(), Error>
-    {
-      // Note: call `f` on both signals; otherwise there'll be silent test breakage.
-      self.dep.iter_deps(f)?;
-      self.completion.iter_deps(f)?;
-      Ok(())
-    }
   }
   impl Completion for CompletionTest {
     type CompletionSignal = Arc<GlobalSignal>;
