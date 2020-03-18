@@ -5,6 +5,7 @@ use std::marker::{PhantomData, PhantomPinned, };
 use std::num::{NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize,
                NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
                Wrapping, };
+use std::ops::*;
 use std::ptr::NonNull;
 use std::rc::{Rc, };
 use std::sync::{Arc, atomic::*, };
@@ -315,6 +316,71 @@ unsafe impl Deps for DeviceSingleQueue {
   fn iter_deps<'a>(&'a self, _: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), Error>)
     -> Result<(), Error>
   {
+    Ok(())
+  }
+}
+unsafe impl<T> Deps for Range<T>
+  where T: Deps,
+{
+  #[inline(always)]
+  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+    -> Result<(), CallError>
+  {
+    self.start.iter_deps(f)?;
+    self.end.iter_deps(f)?;
+    Ok(())
+  }
+}
+unsafe impl<T> Deps for RangeFrom<T>
+  where T: Deps,
+{
+  #[inline(always)]
+  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+    -> Result<(), CallError>
+  {
+    self.start.iter_deps(f)?;
+    Ok(())
+  }
+}
+unsafe impl Deps for RangeFull {
+  #[inline(always)]
+  fn iter_deps<'a>(&'a self, _: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+    -> Result<(), CallError>
+  {
+    Ok(())
+  }
+}
+unsafe impl<T> Deps for RangeInclusive<T>
+  where T: Deps,
+{
+  #[inline(always)]
+  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+    -> Result<(), CallError>
+  {
+    self.start().iter_deps(f)?;
+    self.end().iter_deps(f)?;
+    Ok(())
+  }
+}
+unsafe impl<T> Deps for RangeTo<T>
+  where T: Deps,
+{
+  #[inline(always)]
+  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+    -> Result<(), CallError>
+  {
+    self.end.iter_deps(f)?;
+    Ok(())
+  }
+}
+unsafe impl<T> Deps for RangeToInclusive<T>
+  where T: Deps,
+{
+  #[inline(always)]
+  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+    -> Result<(), CallError>
+  {
+    self.end.iter_deps(f)?;
     Ok(())
   }
 }
