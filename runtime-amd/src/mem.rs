@@ -1,5 +1,6 @@
 
 use std::error::Error;
+use std::mem;
 use std::ptr::{NonNull, slice_from_raw_parts_mut, };
 use std::rc::Rc;
 use std::sync::Arc;
@@ -32,6 +33,8 @@ impl<T> BoxPoolPtr for LapBox<T>
 {
   #[doc(hidden)]
   unsafe fn pool_ptr(&self) -> Option<MemoryPoolPtr<[u8]>> {
+    if mem::size_of_val(&**self) == 0 { return None; }
+
     let ptr = NonNull::new(&**self as *const T as *mut T)?;
     let pool = *self.build_alloc().pool();
 
@@ -41,7 +44,9 @@ impl<T> BoxPoolPtr for LapBox<T>
 impl<T> BoxPoolPtr for LapVec<T> {
   #[doc(hidden)]
   unsafe fn pool_ptr(&self) -> Option<MemoryPoolPtr<[u8]>> {
-    let ptr = slice_from_raw_parts_mut(self.as_ptr() as *mut T, self.len());
+    if self.capacity() == 0 || mem::size_of::<T>() == 0 { return None; }
+
+    let ptr = slice_from_raw_parts_mut(self.as_ptr() as *mut T, self.capacity());
     let ptr = NonNull::new(ptr)?;
     let pool = *self.build_alloc().pool();
 
@@ -453,6 +458,45 @@ mod test {
   use crate::signal::*;
 
   use super::*;
+
+  #[test]
+  fn zero_sized_box() {
+    let dev = device();
+
+    let b = LapBox::new_in((), dev.fine_lap_node_alloc(0));
+    assert!(unsafe { b.pool_ptr().is_none() });
+  }
+  #[test]
+  fn zero_sized_boxed_slice() {
+    let dev = device();
+
+    let b: LapVec<u32> = LapVec::new_in(dev.fine_lap_node_alloc(0));
+    let b = b.into_boxed_slice();
+
+    assert!(unsafe { b.pool_ptr().is_none() });
+
+    let mut b: LapVec<()> = LapVec::new_in(dev.fine_lap_node_alloc(0));
+    b.resize(1, ());
+    let b = b.into_boxed_slice();
+
+    assert!(unsafe { b.pool_ptr().is_none() });
+  }
+  #[test]
+  fn zero_sized_vec() {
+    let dev = device();
+
+    let v: LapVec<()> = LapVec::with_capacity_in(1, dev.fine_lap_node_alloc(0));
+    assert!(unsafe { v.pool_ptr().is_none() });
+  }
+  #[test]
+  fn vec_capacity() {
+    let dev = device();
+
+    let mut v: LapVec<u32> = LapVec::new_in(dev.fine_lap_node_alloc(0));
+    assert!(unsafe { v.pool_ptr().is_none() });
+    v.reserve(1);
+    assert!(unsafe { v.pool_ptr().is_some() });
+  }
 
   #[test]
   fn single() {
