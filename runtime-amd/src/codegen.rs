@@ -43,6 +43,14 @@ impl PlatformCodegen for Codegenner {
   type CodegenDesc = CodegenDesc;
   type Condition = attrs::Condition;
 
+  fn modify_rustc_session_options(&self, _target_desc: &Arc<AcceleratorTargetDesc>,
+                                  opts: &mut rustc::session::config::Options)
+  {
+    // we sometimes get a SCEV assertion in the SLP vectorizer; since it's not needed here,
+    // just disable.
+    opts.cg.no_vectorize_slp = true;
+  }
+
   fn insert_intrinsics<T>(&self,
                           target_desc: &Arc<AcceleratorTargetDesc>,
                           into: &mut T)

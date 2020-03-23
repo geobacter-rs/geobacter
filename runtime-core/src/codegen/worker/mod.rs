@@ -305,7 +305,12 @@ impl<P> WorkerTranslatorData<P>
           R: Send,
   {
     self.context.syntax_globals().with(|| {
-      with_rustc_session(|mut sess| {
+
+      let mut opts = create_rustc_options();
+      self.platform.modify_rustc_session_options(&self.target_desc,
+                                                 &mut opts);
+
+      with_rustc_session(opts, |mut sess| {
         sess.crate_types.set(sess.opts.crate_types.clone());
         sess.recursion_limit.set(512);
 
@@ -588,13 +593,13 @@ impl<P> WorkerTranslatorData<P>
   }
 }
 
-pub fn with_rustc_session<F, R>(f: F) -> R
+pub fn with_rustc_session<F, R>(opts: rustc::session::config::Options,
+                                f: F) -> R
   where F: FnOnce(rustc::session::Session) -> R + sync::Send,
         R: sync::Send,
 {
   use self::util::spawn_thread_pool;
 
-  let opts = create_rustc_options();
   spawn_thread_pool(move || {
     let registry = rustc_driver::diagnostics_registry();
     let sess = rustc::session::build_session(opts, None, registry);

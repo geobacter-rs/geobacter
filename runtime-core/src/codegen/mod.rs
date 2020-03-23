@@ -221,6 +221,11 @@ pub trait PlatformCodegen: Sized + Clone + Debug + Send + Sync + 'static {
     <Self::Device as Accelerator>::downcast_ref(accel).is_some()
   }
 
+  /// Change Rust `Session` options to suit.
+  fn modify_rustc_session_options(&self, _target_desc: &Arc<AcceleratorTargetDesc>,
+                                  _opts: &mut rustc::session::config::Options)
+  { }
+
   /// Add intrinsics which don't depend on the kernel. This is done once at
   /// startup.
   fn insert_intrinsics<T>(&self,
