@@ -220,9 +220,6 @@ impl<P> WorkerTranslatorData<P>
   /// Only used for host codegen queries.
   fn thread(&mut self, rx: &Receiver<Message<P>>) {
 
-    /// Our code here runs amok of Rust's borrow checker. Which is why
-    /// this code has become pretty ugly. Sorry 'bout that.
-
     enum InternalMessage<D> {
       Timeout,
       AddAccel(Weak<D>),
