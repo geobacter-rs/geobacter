@@ -295,6 +295,13 @@ impl PlatformCodegen for Codegenner {
   {
     use rustc_attr::InlineAttr;
     use rustc::session::config::*;
+    use rustc::ty::*;
+    use rustc_target::spec::AddrSpaceIdx;
+    use rustc_span::symbol::*;
+
+    use syntax::ast::NestedMetaItem;
+
+    use intrinsics_common::attrs::geobacter_attrs;
 
     if dd.is_root(id) { return; }
     if tcx.sess.opts.optimize != OptLevel::Aggressive { return; }
@@ -303,6 +310,47 @@ impl PlatformCodegen for Codegenner {
     // specific pass doesn't inline everything, which will cause us to abort in
     // LLVM
     attrs.inline = InlineAttr::Always;
+
+    // Don't overwrite any existing address space attribute:
+    if attrs.addr_space.is_some() { return; }
+
+    // XXX this is crude. This sort of "lang_item" should probably be moved into
+    // the Geobacter fork so it can be managed in the real `lang_item` system.
+    match tcx.type_of(id).kind {
+      Adt(adt_did, ..) => {
+        let rt_item = Symbol::intern("runtime_item");
+        let amdgpu = Symbol::intern("amdgpu");
+        let lds_array = Symbol::intern("lds_array");
+        geobacter_attrs(tcx, adt_did.did, |meta| {
+          if attrs.addr_space.is_some() { return; }
+
+          let item = match meta {
+            NestedMetaItem::MetaItem(item) => item,
+            _ => { return; },
+          };
+
+          if !item.check_name(amdgpu) { return; }
+
+          let inner = item.meta_item_list();
+          if inner.is_none() { return; }
+          let inner = inner.unwrap();
+
+          for item in inner.iter() {
+            if !item.check_name(rt_item) {
+              continue;
+            }
+
+            if let Some(rt_item) = item.value_str() {
+              if rt_item == lds_array {
+                attrs.addr_space = Some(AddrSpaceIdx(3));
+                break;
+              }
+            }
+          }
+        });
+      },
+      _ => { },
+    }
   }
 }
 

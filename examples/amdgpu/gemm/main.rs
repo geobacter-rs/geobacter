@@ -6,7 +6,7 @@
 extern crate grt_amd as geobacter_runtime_amd;
 
 use gstd_amd::*;
-use grt_amd::{*, alloc::*, module::*, signal::*, mem::*, };
+use grt_amd::prelude::*;
 
 use num_traits::AsPrimitive;
 
@@ -15,7 +15,7 @@ use rand::prelude::*;
 
 use std::fmt;
 use std::marker::PhantomData;
-use std::mem::{size_of, MaybeUninit, };
+use std::mem::{size_of, drop, };
 use std::num::NonZeroUsize;
 use std::ops::*;
 use std::rc::Rc;
@@ -55,54 +55,67 @@ impl<'a, 'b> Kernel for GemmArgs<'a, 'b, ETy> {
 
   /// This function is run on the GPU.
   fn kernel(&self, vp: KVectorParams<Self>) {
-    #![allow(unused_attributes)] // geobacter_attr is actually not unused. TODO
-
-    #[derive(Clone, Copy, Debug)]
-    struct GpuWorkItem(u16, u16);
-    impl AllWorkItems for GpuWorkItem {
+    struct GpuWorkItem<'a, 'b>(&'b mut LdsShared<'a, LdsArray<ETy>>,
+                               &'b mut LdsShared<'a, LdsArray<ETy>>,
+                               ETy)
+      where 'a: 'b;
+    impl<'b, 'c> AllWorkItems<ETy> for GpuWorkItem<'b, 'c>
+      where 'b: 'c,
+    {
       #[inline(always)]
-      fn forall_workitems<F>(&self, mut f: F)
-        where F: FnMut(/*wi_x:*/ u32, /*wi_y:*/ u32),
+      fn with<F, G>(&mut self,
+                    vp: &VectorParams<Dim2D<Range<u32>>>,
+                    mut init: F, mut with: G)
+        where F: for<'a> FnMut(&'a VectorParams<Dim2D<Range<u32>>>) -> (ETy, ETy),
+              G: for<'a> FnMut(&'a VectorParams<Dim2D<Range<u32>>>,
+                &'a mut ETy, &'a LdsArray<ETy>, &'a LdsArray<ETy>),
       {
-        f(self.0 as _, self.1 as _);
+        let (a, b) = init(vp);
+        let s_a = self.0.init(vp, a);
+        let s_b = self.1.init(vp, b);
+
+        with(vp, &mut self.2, &s_a, unsafe { s_b.unchecked_ref() });
+
+        drop(s_a);
+        unsafe { s_b.unsynced_drop(); } // avoid the second, unneeded, barrier.
       }
       #[inline(always)]
-      fn barrier(&self) {
-        use gstd_amd::sync::atomic::*;
-        work_group_rel_acq_barrier(Scope::WorkGroup);
+      fn write<F>(&mut self,
+                  vp: &VectorParams<Dim2D<Range<u32>>>,
+                  mut f: F)
+        where F: for<'a> FnMut(&'a VectorParams<Dim2D<Range<u32>>>, &'a ETy),
+      {
+        f(vp, &mut self.2)
       }
     }
-
-    let wg = (vp.wg_idx().x, vp.wg_idx().y);
-    let wi = vp.wi();
-
-    let sync_threads = GpuWorkItem(wi.x, wi.y);
 
     let dim = dim_spec_param();
 
     // These globals are in LDS (workgroup local) memory.
     // XXX this function can't be generic over ETy *only* because Rust prohibits it.
     // statics aren't allowed to close over generic parameters of the parent function.
-    // TODO dynamic group storage instead.
-    #[geobacter_attr(platform = "amdgpu", address_space = "local")]
-    static mut S_A: MaybeUninit<[ETy; BLOCK_SIZE]> = MaybeUninit::uninit();
-    #[geobacter_attr(platform = "amdgpu", address_space = "local")]
-    static mut S_B: MaybeUninit<[ETy; BLOCK_SIZE]> = MaybeUninit::uninit();
-    #[geobacter_attr(platform = "amdgpu", address_space = "local")]
-    static mut S_C: MaybeUninit<[ETy; BLOCK_SIZE]> = MaybeUninit::uninit();
-
-    unsafe {
-      let a = MaybeCheckedSlice::unchecked(self.a.dst().as_ref());
-      let b = MaybeCheckedSlice::unchecked(self.b.dst().as_ref());
-      let c = MaybeCheckedMutSlice::unchecked(self.c as _);
-      let sa = MaybeCheckedMutSlice::unchecked(&mut *S_A.as_mut_ptr());
-      let sb = MaybeCheckedMutSlice::unchecked(&mut *S_B.as_mut_ptr());
-      let sc = MaybeCheckedMutSlice::unchecked(&mut *S_C.as_mut_ptr());
-
-      gemm_v1(a, b, c, sa, sb, sc,
-              dim, BLOCK_K as _, BLOCK_K_STRIDE as _,
-              wg, sync_threads);
+    lds! {
+      let mut lds_sa: Lds<LdsArray<ETy>> = Lds::new();
+      let mut lds_sb: Lds<LdsArray<ETy>> = Lds::new();
     }
+
+    lds_sa.with_shared(|mut sa| {
+      // TODO: nonnull assumes in LLVM cause lds_sb to not get optimized
+      //       off the stack, slowing our kernel down by 200+Gops.
+      // Fixing SROA to split the @llvm.assume(icmp ne null) actually causes way
+      // more bugs than you'd expect; such a patch is still a WIP.
+      lds_sb.with_shared(|mut sb| {
+        let lds = GpuWorkItem(&mut sa, &mut sb, 0 as ETy);
+
+        let a = self.a.dst();
+        let b = self.b.dst();
+
+        unsafe {
+          gemm_v1(&vp, a.as_ref(), b.as_ref(),
+                  self.c, dim, lds);
+        }
+      });
+    });
   }
 }
 unsafe impl<'a, 'b, E> Send for GemmArgs<'a, 'b, E>
@@ -128,113 +141,45 @@ fn mod_block_k() -> bool {
 }
 
 const BLOCK_K: usize = 22;
+// If BLOCK_K was a power of two, this would equal to it + 1.
+// We don't need the extra row now because 22 seems to be a sweet spot on all the
+// cards benched.
 const BLOCK_K_STRIDE: usize = BLOCK_K;
-// don't need the extra row (if present).
-const BLOCK_SIZE: usize = BLOCK_K_STRIDE * BLOCK_K;
 type ETy = f32;
-
-/// u64 mul/adds/cmp are expensive, so this exists so we can run the algo with checking
-/// on the host, and disable them on the GPU.
-enum MaybeCheckedSlice<'a, E> {
-  Unchecked(*const E),
-  Checked(&'a [E]),
-}
-
-impl<'a, E> MaybeCheckedSlice<'a, E> {
-  unsafe fn unchecked(ptr: &'a [E]) -> Self {
-    MaybeCheckedSlice::Unchecked(ptr.as_ptr())
-  }
-  fn checked(s: &'a [E]) -> Self {
-    MaybeCheckedSlice::Checked(s)
-  }
-}
-
-impl<'a, E> Index<usize> for MaybeCheckedSlice<'a, E> {
-  type Output = E;
-  fn index(&self, idx: usize) -> &E {
-    match self {
-      MaybeCheckedSlice::Unchecked(ptr) => unsafe {
-        &*ptr.add(idx)
-      },
-      MaybeCheckedSlice::Checked(slice) => &slice[idx],
-    }
-  }
-}
-enum MaybeCheckedMutSlice<'a, E> {
-  Unchecked(*mut E),
-  Checked(&'a mut [E]),
-}
-impl<'a, E> MaybeCheckedMutSlice<'a, E> {
-  unsafe fn unchecked(ptr: *mut [E]) -> Self {
-    MaybeCheckedMutSlice::Unchecked((*ptr).as_mut_ptr())
-  }
-  fn checked(s: &'a mut [E]) -> Self {
-    MaybeCheckedMutSlice::Checked(s)
-  }
-}
-impl<'a, E> Index<usize> for MaybeCheckedMutSlice<'a, E> {
-  type Output = E;
-  fn index(&self, idx: usize) -> &E {
-    match self {
-      MaybeCheckedMutSlice::Unchecked(ptr) => unsafe {
-        &*ptr.add(idx)
-      },
-      MaybeCheckedMutSlice::Checked(slice) => &slice[idx],
-    }
-  }
-}
-impl<'a, E> IndexMut<usize> for MaybeCheckedMutSlice<'a, E> {
-  fn index_mut(&mut self, idx: usize) -> &mut E {
-    match self {
-      MaybeCheckedMutSlice::Unchecked(ptr) => unsafe {
-        &mut *ptr.add(idx)
-      },
-      MaybeCheckedMutSlice::Checked(slice) => &mut slice[idx],
-    }
-  }
-}
+type LdsArray<E> = [[E; BLOCK_K_STRIDE]; BLOCK_K];
 
 /// This trait abstracts running code over all workitems. Used by the kernels
 /// so that the GEMM can also be ran on a normal CPU.
-trait AllWorkItems {
-  fn forall_workitems<F>(&self, f: F)
-    where F: FnMut(/*wi_x:*/ u32, /*wi_y:*/ u32);
-  fn barrier(&self);
-  #[inline(always)]
-  fn forall_workitems_synced<F>(&self, f: F)
-    where F: FnMut(/*wi_x:*/ u32, /*wi_y:*/ u32),
-  {
-    self.forall_workitems(f);
-    self.barrier();
-  }
+trait AllWorkItems<E> {
+  fn with<F, G>(&mut self,
+                vp: &VectorParams<Dim2D<Range<u32>>>,
+                init: F, with: G)
+    where F: for<'a> FnMut(&'a VectorParams<Dim2D<Range<u32>>>) -> (E, E),
+          G: for<'a> FnMut(&'a VectorParams<Dim2D<Range<u32>>>,
+            &'a mut E, &'a LdsArray<E>, &'a LdsArray<E>);
+
+  fn write<F>(&mut self,
+              vp: &VectorParams<Dim2D<Range<u32>>>,
+              f: F)
+    where F: for<'a> FnMut(&'a VectorParams<Dim2D<Range<u32>>>, &'a E);
 }
 
-unsafe fn gemm_v1<F, E>(a: MaybeCheckedSlice<E>,
-                        b: MaybeCheckedSlice<E>,
-                        mut c: MaybeCheckedMutSlice<E>,
-                        mut sa: MaybeCheckedMutSlice<E>,
-                        mut sb: MaybeCheckedMutSlice<E>,
-                        mut sc: MaybeCheckedMutSlice<E>,
-                        stride: NonZeroUsize, smem_len: u32, smem_stride: u32,
-                        (wg_x, wg_y): (u32, u32),
-                        sync_threads: F)
-  where F: AllWorkItems,
+fn gemm_v1<F, E>(vp: &VectorParams<Dim2D<Range<u32>>>,
+                 a: &[E], b: &[E], c: *mut [E],
+                 stride: NonZeroUsize, mut lds: F)
+  where F: AllWorkItems<E>,
         E: Copy + AddAssign + Mul<Output = E> + PartialEq + fmt::Debug + 'static,
         u32: AsPrimitive<E>,
 {
   let stride = stride.get();
   let mod_k = mod_block_k();
 
-  sync_threads.forall_workitems(|wi_x, wi_y| {
-    sc[(wi_y * smem_stride + wi_x) as usize] = 0u32.as_();
-  });
-
   let mut k = 0usize;
   while k < stride {
     // init SMEM:
-    sync_threads.forall_workitems_synced(|wi_x, wi_y| {
-      let sao = (wi_y * smem_stride as u32 + wi_x) as usize;
-      let sbo = (wi_x * smem_stride as u32 + wi_y) as usize;
+    lds.with(vp, |vp| {
+      let Dim2D { x: wi_x, y: wi_y, } = vp.wi().as_::<u32>();
+      let Dim2D { x: wg_x, y: wg_y, } = vp.wg_idx();
 
       let ao_y = (wg_y + wi_y) as usize;
       let ao_x = k + wi_x as usize;
@@ -245,112 +190,45 @@ unsafe fn gemm_v1<F, E>(a: MaybeCheckedSlice<E>,
       let ao = ao_y * stride + ao_x;
       let bo = bo_y * stride + bo_x;
 
-      sa[sao] = if mod_k || (ao_y < stride && ao_x < stride) {
+      let a = if mod_k || (ao_y < stride && ao_x < stride) {
         a[ao]
       } else {
         0u32.as_()
       };
-      sb[sbo] = if mod_k || (bo_y < stride && bo_x < stride) {
+      let b = if mod_k || (bo_y < stride && bo_x < stride) {
         b[bo]
       } else {
         0u32.as_()
       };
-    });
-
-    // naive gemm from SMEM:
-    sync_threads.forall_workitems_synced(|wi_x, wi_y| {
-      let vcp = &mut sc[(wi_y * smem_stride + wi_x) as usize];
-
+      (a, b)
+    }, |vp, acc, sa, sb| {
+      let Dim2D { x: wi_x, y: wi_y, } = vp.wi();
       let mut kci = 0u16;
-      while kci < (smem_len as u16) {
+      while kci < (BLOCK_K as u16) {
         {
           let kci = kci as u32;
-
-          let ia = (wi_y * smem_stride + kci) as usize;
-          let ib = (wi_x * smem_stride + kci) as usize;
-
-          let va = sa[ia];
-          let vb = sb[ib];
-
-          *vcp += va * vb;
+          let va = sa[kci as usize][wi_y as usize];
+          let vb = sb[wi_x as usize][kci as usize];
+          *acc += va * vb;
         }
-
         kci += 1;
       }
     });
-
-    k += smem_len as usize;
+    k += BLOCK_K;
   }
 
   // copy sc back to C:
-  sync_threads.forall_workitems(|wi_x, wi_y| {
+  lds.write(vp, |vp, acc| {
+    let Dim2D { x: wi_x, y: wi_y, } = vp.wi().as_::<u32>();
+    let Dim2D { x: wg_x, y: wg_y, } = vp.wg_idx();
+
     let i_y = (wg_y + wi_y) as usize;
     let i_x = (wg_x + wi_x) as usize;
     let idx = i_y * stride + i_x;
     if mod_k || (i_y < stride && i_x < stride) {
-      // ensure each output is written only once.
-      host_debug_assert_eq!(c[idx], 0u32.as_());
-      let vc = &sc[(wi_y * smem_stride + wi_x) as usize];
-      c[idx] = *vc;
+      unsafe { (&mut *c)[idx] = *acc; }
     }
   });
-}
-
-#[allow(dead_code)]
-fn test_gemm_v1(a: &[ETy], b: &[ETy], c: &mut [ETy], dim: NonZeroUsize) {
-
-  #[derive(Clone, Copy, Debug)]
-  struct HostAllWorkItems;
-  impl AllWorkItems for HostAllWorkItems {
-    #[inline(always)]
-    fn forall_workitems<F>(&self, mut f: F)
-      where F: FnMut(/*wi_x:*/ u32, /*wi_y:*/ u32),
-    {
-      let mut wi_y = 0u32;
-      while wi_y < BLOCK_K as u32 {
-        let mut wi_x = 0u32;
-        while wi_x < BLOCK_K as u32 {
-
-          f(wi_x, wi_y);
-
-          wi_x += 1;
-        }
-        wi_y += 1;
-      }
-    }
-    #[inline(always)]
-    fn barrier(&self) { }
-  }
-
-  let sync_threads = HostAllWorkItems;
-
-  (0..dim.get())
-    .step_by(BLOCK_K)
-    .flat_map(|wg_y| {
-      (0..dim.get())
-        .step_by(BLOCK_K)
-        .map(move |wg_x| (wg_x, wg_y) )
-    })
-    .for_each(|(wg_x, wg_y)| {
-      let a = MaybeCheckedSlice::checked(a);
-      let b = MaybeCheckedSlice::checked(b);
-      let c = MaybeCheckedMutSlice::checked(c);
-
-      let mut t_a: MaybeUninit<[ETy; BLOCK_SIZE]> = MaybeUninit::uninit();
-      let mut t_b: MaybeUninit<[ETy; BLOCK_SIZE]> = MaybeUninit::uninit();
-      let mut t_c: MaybeUninit<[ETy; BLOCK_SIZE]> = MaybeUninit::uninit();
-      let wg = (wg_x as _, wg_y as _);
-
-      unsafe {
-        let sa = MaybeCheckedMutSlice::checked(&mut *t_a.as_mut_ptr());
-        let sb = MaybeCheckedMutSlice::checked(&mut *t_b.as_mut_ptr());
-        let sc = MaybeCheckedMutSlice::checked(&mut *t_c.as_mut_ptr());
-
-        gemm_v1(a, b, c, sa, sb, sc,
-                dim, BLOCK_K as _, BLOCK_K_STRIDE as _,
-                wg, sync_threads);
-      }
-    });
 }
 
 pub fn time<F, R>(what: &str, f: F) -> R
@@ -599,8 +477,6 @@ pub fn main() {
     // writing to VRAM and then copying.
   });
 
-  //test_gemm_v1(&la, &lb, &mut lc, dim);
-
   time("nd linalg gemm", || {
     let a = nd::aview1(&la[..]).into_shape(shape).unwrap();
     let b = nd::aview1(&lb[..]).into_shape(shape).unwrap();
@@ -611,6 +487,6 @@ pub fn main() {
                                 0.0 as ETy, &mut c);
 
     let lc = nd::aview1(&lc[..]).into_shape(shape).unwrap();
-    approx::assert_relative_eq!(c, lc, epsilon = 5000.0 * std::f32::EPSILON);
+    approx::assert_relative_eq!(c, lc, epsilon = 500000.0 * std::f32::EPSILON);
   });
 }

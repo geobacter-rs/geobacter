@@ -18,6 +18,11 @@
 #![feature(specialization)]
 #![feature(coerce_unsized, unsize)]
 #![feature(raw)]
+#![feature(dropck_eyepatch)]
+
+// TODO: make the Geobacter attributes "known" to rustc.
+#![feature(register_attr)]
+#![register_attr(geobacter, geobacter_attr)]
 
 #![allow(incomplete_features)]
 #![feature(const_generics)]
@@ -36,6 +41,7 @@ extern crate rustc_data_structures;
 extern crate rustc_hir;
 extern crate rustc_target;
 extern crate serialize as rustc_serialize;
+extern crate rustc_span;
 
 extern crate geobacter_core as gcore;
 extern crate hsa_rt;
@@ -105,6 +111,29 @@ pub mod error;
 pub mod mem;
 pub mod module;
 pub mod signal;
+pub mod lds;
+
+pub mod prelude {
+  pub use std::ops::{Range, RangeInclusive, RangeTo, RangeToInclusive, };
+
+  pub use grt_core::AcceleratorId;
+  pub use grt_core::context::Context;
+
+  pub use geobacter_runtime_amd_macros::*;
+
+  pub use crate::{lds, HsaAmdGpuAccel, };
+  pub use crate::alloc::*;
+  pub use crate::error::Error;
+  pub use crate::mem::*;
+  pub use crate::module::*;
+  pub use crate::signal::*;
+  pub use crate::lds::{
+    Lds,
+    Shared as LdsShared,
+    Unique as LdsUnique,
+    Singleton as LdsSingleton,
+  };
+}
 
 mod utils;
 
