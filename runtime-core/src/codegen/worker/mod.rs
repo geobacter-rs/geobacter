@@ -664,12 +664,15 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
   opts.cg.llvm_args.push("-polly-register-tiling".into());
   opts.cg.llvm_args.push("-polly-check-vectorizable".into());
   opts.cg.llvm_args.push("-enable-polly-aligned".into());
-  // TODO: -polly-target=gpu produces host side code which
-  // then triggers the gpu side code.
-  //opts.cg.llvm_args.push("-polly-target=gpu".into());
   opts.cg.llvm_args.push("-polly-vectorizer=stripmine".into());
   //opts.cg.llvm_args.push("-polly-position=early".into());
   opts.cg.llvm_args.push("-polly-enable-polyhedralinfo".into());
+
+  // Disable these alignment assumptions inserted during optimization:
+  // They aren't really helpful and in fact block a lot of possible mem2reg promotions as a
+  // result of their presence.
+  opts.cg.llvm_args
+    .push("-preserve-alignment-assumptions-during-inlining=false".into());
   opts
 }
 
