@@ -601,7 +601,7 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
   opts.debugging_opts.query_dep_graph = true;
   opts.optimize = OptLevel::No;
   opts.optimize = OptLevel::Aggressive;
-  //opts.debuginfo = DebugInfo::Full;
+  opts.debuginfo = DebugInfo::Full;
 
   let output = (OutputType::Bitcode, None);
   let ir_out = (OutputType::LlvmAssembly, None);
