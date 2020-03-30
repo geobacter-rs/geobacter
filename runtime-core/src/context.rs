@@ -3,30 +3,63 @@ use std::any::Any;
 use std::collections::hash_map::{Entry, };
 use std::error::Error;
 use std::fmt::Debug;
+use std::intrinsics::likely;
 use std::sync::{Arc, Weak, atomic::AtomicUsize, atomic::Ordering, };
 
-use syntax;
-
 use indexvec::{Idx, IndexVec};
-use parking_lot::{RwLock, RwLockUpgradableReadGuard, };
+use parking_lot::{RwLock, RwLockUpgradableReadGuard, MappedRwLockReadGuard,
+                  RwLockReadGuard, RwLockWriteGuard, };
+
+use crate::rustc_data_structures::rayon::ThreadPoolBuilder;
 
 use crate::{Accelerator, AcceleratorId, AcceleratorTargetDesc, Device};
 use crate::codegen::{PlatformCodegen, CodegenDriver, PKernelDesc};
+use crate::metadata::{context_metadata, LoadedCrateMetadata, };
 use crate::utils::{HashMap, };
 
 pub use rustc::session::config::OutputType;
-pub use crate::metadata::{context_metadata, LoadedCrateMetadata, };
-use crate::metadata::Metadata;
 
 type Translators = HashMap<
   Arc<AcceleratorTargetDesc>,
   Weak<dyn Any + Send + Sync + 'static>,
 >;
 
+type MappedReadResult<'a, T> = Result<
+  MappedRwLockReadGuard<'a, T>,
+  Box<dyn Error + Send + Sync + 'static>,
+>;
+type LoadedMetadataResult<'a> = MappedReadResult<'a, LoadedCrateMetadata>;
+#[derive(Default)]
+struct AsyncCodegenMetadataLoader(RwLock<Option<LoadedCrateMetadata>>);
+impl AsyncCodegenMetadataLoader {
+  fn load(&self) -> LoadedMetadataResult {
+    {
+      let r = self.0.read();
+      if likely(r.is_some()) {
+        return Ok(RwLockReadGuard::map(r, |r| {
+          r.as_ref().unwrap()
+        }));
+      }
+    }
+
+    let mut w = self.0.write();
+    if likely(w.is_none()) {
+      // nobody beat us.
+      *w = Some(context_metadata()?);
+    }
+
+    let r = RwLockWriteGuard::downgrade(w);
+    return Ok(RwLockReadGuard::map(r, |r| {
+      r.as_ref().unwrap()
+    }));
+  }
+}
+
 /// This structure should be used like you'd use a singleton.
 pub struct ContextData {
-  syntax_globals: syntax::attr::Globals,
-  mapped: Vec<Metadata>,
+  #[allow(dead_code)]
+  syntax_globals: Arc<syntax::attr::Globals>,
+  metadata: AsyncCodegenMetadataLoader,
 
   next_accel_id: AtomicUsize,
 
@@ -47,13 +80,39 @@ unsafe impl Sync for Context { }
 
 impl Context {
   pub fn new() -> Result<Context, Box<dyn Error>> {
+    use crate::rustc_span::edition::Edition;
+
     crate::utils::env::initialize();
 
     crate::rustc_driver::init_rustc_env_logger();
-    let LoadedCrateMetadata {
-      globals,
-      mapped,
-    } = context_metadata()?;
+
+    let syntax_globals = syntax::attr::Globals::new(Edition::Edition2018);
+    let syntax_globals = Arc::new(syntax_globals);
+    let pool_globals = syntax_globals.clone();
+
+    ThreadPoolBuilder::new()
+      // give us a huge stack (for codegen's use):
+      .stack_size(32 * 1024 * 1024)
+      .thread_name(|id| format!("grt-core-worker-{}", id) )
+      .deadlock_handler(|| unsafe { crate::rustc::ty::query::handle_deadlock() })
+      .spawn_handler(move |tb| {
+        let mut b = std::thread::Builder::new();
+        if let Some(name) = tb.name() {
+          b = b.name(name.to_owned());
+        }
+        if let Some(stack_size) = tb.stack_size() {
+          b = b.stack_size(stack_size);
+        }
+        let pool_globals = pool_globals.clone();
+        b.spawn(move || {
+          pool_globals.with(|| {
+            tb.run()
+          })
+        })?;
+
+        Ok(())
+      })
+      .build_global()?;
 
     let accelerators = IndexVec::new();
     let translators: Translators = Default::default();
@@ -63,8 +122,8 @@ impl Context {
       translators,
     };
     let data = ContextData {
-      syntax_globals: globals,
-      mapped,
+      syntax_globals,
+      metadata: AsyncCodegenMetadataLoader::default(),
 
       next_accel_id: AtomicUsize::new(0),
 
@@ -76,11 +135,8 @@ impl Context {
     Ok(context)
   }
 
-  pub(crate) fn mapped_metadata(&self) -> &[Metadata] {
-    &self.0.mapped
-  }
-  pub(crate) fn syntax_globals(&self) -> &syntax::attr::Globals {
-    &self.0.syntax_globals
+  pub(crate) fn load_metadata(&self) -> LoadedMetadataResult {
+    self.0.metadata.load()
   }
 
   pub fn downgrade_ref(&self) -> WeakContext {

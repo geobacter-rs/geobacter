@@ -344,7 +344,7 @@ impl Clone for SharedMetadataBlob {
 unsafe impl Send for SharedMetadataBlob { }
 
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub enum CrateSource {
   Mapped(PathBuf),
   SearchPaths(PathBuf),
@@ -485,92 +485,83 @@ impl MetadataLoader for DummyMetadataLoader {
     Err("this should never be called".into())
   }
 }
-pub struct LoadedCrateMetadata {
-  pub globals: syntax::attr::Globals,
-  pub mapped: Vec<Metadata>,
-}
+pub(crate) type LoadedCrateMetadata = Box<[Metadata]>;
 
 /// Loads the Rust metadata for all linked crates. This data isn't light;
 /// you'll probably want to store it somewhere and reuse it a lot.
-pub fn context_metadata() -> Result<LoadedCrateMetadata, Box<dyn Error>> {
-  use crate::platform::os::{get_mapped_files, dylib_search_paths};
-  use crate::rustc_span::edition::Edition;
+pub(crate) fn context_metadata()
+  -> Result<LoadedCrateMetadata, Box<dyn Error + Send + Sync + 'static>>
+{
+  use crate::platform::os::{dylib_search_paths, self_exe_path};
+  use crate::rustc_data_structures::rayon::prelude::*;
 
+  use std::collections::BTreeSet;
   use std::env::consts::DLL_EXTENSION;
   use std::ffi::OsStr;
   use std::path::Component;
 
-  let syntax_globals = syntax::attr::Globals::new(Edition::Edition2018);
+  let this = CrateSource::Mapped(self_exe_path()?.canonicalize()?);
+  let mut mapped = BTreeSet::new();
+  mapped.insert(this);
+  let mut unique_metadata = new_hash_set();
 
-  let mapped = syntax_globals.with(|| -> Result<_, Box<dyn Error>> {
-    let mapped = get_mapped_files()?;
-    debug!("mapped files: {:#?}", mapped);
-    let mut unique_metadata = new_hash_set();
-    let mut rust_mapped = vec![];
+  let search_mapped = dylib_search_paths()
+    .into_par_iter()
+    .flat_map(|search_dir| {
+      search_dir.read_dir()
+        .map(|read_dir| {
+          read_dir
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+              if entry.file_type().ok()?.is_file() {
+                entry.path().canonicalize().ok()
+              } else {
+                None
+              }
+            })
+            .filter(|path| {
+              let extension = path.extension();
+              if extension != Some(DLL_EXTENSION.as_ref()) { return false; }
+              // skip other toolchains
+              // XXX revisit this when deployment code is written.
+              if path.components().any(|v| v == Component::Normal(OsStr::new(".rustup"))) {
+                return false;
+              }
 
-    for mapped in mapped.into_iter() {
-      let metadata = match Metadata::new(CrateSource::Mapped(mapped.clone())) {
-        Ok(md) => md,
-        Err(MetadataLoadingError::SectionMissing) => { continue; },
-        e => e?,
+              true
+            })
+            .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+    })
+    .map(CrateSource::SearchPaths);
+  mapped.par_extend(search_mapped);
+
+  let mapped = mapped.into_iter() // XXX using .into_par_iter() causes a deadlock...
+    .filter_map(|mapped| {
+      match Metadata::new(mapped) {
+        Err(MetadataLoadingError::SectionMissing) => { None },
+        v => Some(v),
+      }
+    })
+    .collect::<Vec<_>>();
+
+  let mut out_metadata = Vec::with_capacity(mapped.len());
+  for metadata in mapped.into_iter() {
+    let metadata = metadata?;
+
+    {
+      let owner = metadata.owner_blob();
+      let owner = owner.get_root();
+      let name = CrateNameHash {
+        name: owner.name(),
+        hash: owner.hash().as_u64(),
       };
-
-      {
-        let owner = metadata.owner_blob();
-        let owner = owner.get_root();
-        let name = CrateNameHash {
-          name: owner.name(),
-          hash: owner.hash().as_u64(),
-        };
-        if !unique_metadata.insert(name) { continue; }
-      }
-
-      rust_mapped.push(metadata);
+      if !unique_metadata.insert(name) { continue; }
     }
 
-    for search_dir in dylib_search_paths()?.into_iter() {
-      debug!("adding dylibs in search path {}", search_dir.display());
-      for entry in search_dir.read_dir()? {
-        let entry = match entry {
-          Ok(v) => v,
-          Err(_) => { continue; },
-        };
+    out_metadata.push(metadata);
+  }
 
-        let path = entry.path();
-        if !path.is_file() { continue; }
-        let extension = path.extension();
-        if extension != Some(DLL_EXTENSION.as_ref()) { continue; }
-        // skip other toolchains
-        // XXX revisit this when deployment code is written.
-        if path.components().any(|v| v == Component::Normal(OsStr::new(".rustup"))) {
-          continue;
-        }
-
-        let metadata = match Metadata::new(CrateSource::SearchPaths(path.clone())) {
-          Ok(md) => md,
-          Err(MetadataLoadingError::SectionMissing) => { continue; },
-          e => e?,
-        };
-
-        {
-          let owner = metadata.owner_blob();
-          let owner = owner.get_root();
-          let name = CrateNameHash {
-            name: owner.name(),
-            hash: owner.hash().as_u64(),
-          };
-          if !unique_metadata.insert(name) { continue; }
-        }
-
-        rust_mapped.push(metadata);
-      }
-    }
-
-    Ok(rust_mapped)
-  })?;
-
-  Ok(LoadedCrateMetadata {
-    globals: syntax_globals,
-    mapped,
-  })
+  Ok(out_metadata.into_boxed_slice())
 }

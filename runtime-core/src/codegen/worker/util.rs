@@ -74,42 +74,24 @@ pub fn default_provide_extern(providers: &mut ty::query::Providers<'_>) {
   rustc_codegen_ssa::provide_extern(providers);
 }
 
-pub fn spawn_thread_pool<F, R>(f: F) -> R
+/// Note: we could be called from arbitrary threads, but rustc generally requires a
+/// larger-than-default stack, so we *must* spawn into the global thread pool the context
+/// installed during its initialization.
+pub fn on_global_thread_pool<F, R>(f: F) -> R
   where F: FnOnce() -> R + Send,
         R: Send,
 {
-  use crate::rustc_data_structures::rayon::{ThreadBuilder,
-                                            ThreadPool,
-                                            ThreadPoolBuilder, };
+  use crate::rustc_data_structures::rayon::{scope, };
 
   let gcx_ptr = &Lock::new(0);
 
-  let config = ThreadPoolBuilder::new()
-    // Our modules are usually pretty small; no need to go wild here.
-    .num_threads(2)
-    // give us a huge stack:
-    .stack_size(32 * 1024 * 1024)
-    .deadlock_handler(|| unsafe { ty::query::handle_deadlock() });
+  let mut r = None;
 
-  let with_pool = move |pool: &ThreadPool| {
-    pool.install(move || f())
-  };
-
-  syntax::GLOBALS.with(|syntax_globals| {
-    rustc_span::GLOBALS.with(|rustc_span_globals| {
-      // The main handler runs for each Rayon worker thread and sets up
-      // the thread local rustc uses. syntax_globals and syntax_pos_globals are
-      // captured and set on the new threads. ty::tls::with_thread_locals sets up
-      // thread local callbacks from libsyntax
-      let main_handler = move |worker: ThreadBuilder| {
-        syntax::GLOBALS.set(syntax_globals, || {
-          rustc_span::GLOBALS.set(rustc_span_globals, || {
-            ty::tls::GCX_PTR.set(gcx_ptr, || worker.run() )
-          })
-        })
-      };
-
-      config.build_scoped(main_handler, with_pool).unwrap()
+  scope(|scope| {
+    scope.spawn(|_| {
+      r = Some(ty::tls::GCX_PTR.set(gcx_ptr, f))
     })
-  })
+  });
+
+  r.unwrap()
 }

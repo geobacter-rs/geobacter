@@ -16,6 +16,7 @@ use crate::alloc::LapAlloc;
 #[non_exhaustive]
 pub enum Error {
   Generic(Box<dyn StdError + Send + Sync + 'static>),
+  LoadRustcMetadata(Box<dyn StdError + Send + Sync + 'static>),
   Hsa(HsaError),
   AmdComgr(amd_comgr::error::Error),
   Cmd(Box<dyn StdError + Send + Sync + 'static>),
@@ -137,6 +138,7 @@ impl From<grt_core::codegen::error::Error<Error>> for Error {
 
     match v {
       Io(_, err) => Error::Io(err),
+      LoadMetadata(err) => Error::LoadRustcMetadata(err),
       ConvertKernelInstance(ki) => Error::ConvertKernelInstance(ki),
       Codegen => Error::Codegen,
       Linking => Error::Linking,
@@ -152,6 +154,10 @@ impl From<Box<dyn StdError + Send + Sync + 'static>> for Error {
   fn from(v: Box<dyn StdError + Send + Sync + 'static>) -> Self {
     v.downcast()
       .map(|v| *v )
+      .or_else(|v| {
+        v.downcast()
+          .map(|v: Box<IoError>| Error::Io(*v) )
+      })
       .unwrap_or_else(Error::Generic)
   }
 }

@@ -9,6 +9,7 @@ use crate::codegen::PlatformCodegen;
 #[derive(Debug)]
 pub enum Error<E> {
   Io(Option<KernelInstance>, io::Error),
+  LoadMetadata(Box<dyn StdError + Send + Sync + 'static>),
   ConvertKernelInstance(KernelInstance),
   Codegen,
   Linking,

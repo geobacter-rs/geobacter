@@ -29,7 +29,7 @@ use crate::rustc::ty::{self, TyCtxt, subst::SubstsRef, };
 use rustc::session::Session;
 use rustc::session::config::OutputFilenames;
 use rustc_data_structures::fx::{FxHashMap};
-use rustc_data_structures::sync::{self, Lrc, WorkerLocal, };
+use rustc_data_structures::sync::{Lrc, WorkerLocal, };
 use rustc_feature as feature_gate;
 use rustc_hir::def_id::{CrateNum, DefId, DefIdMap };
 use rustc_metadata;
@@ -297,53 +297,56 @@ impl<P> WorkerTranslatorData<P>
       }
     }
   }
-  fn initialize_sess<F, R>(&self, f: F) -> R
-    where F: FnOnce(Session, CStore) -> R + Send,
+  fn initialize_sess<F, R>(&self, f: F) -> Result<R, error::PError<P>>
+    where F: FnOnce(Session, CStore) -> Result<R, error::PError<P>> + Send,
           R: Send,
   {
-    self.context.syntax_globals().with(|| {
+    self::util::on_global_thread_pool(|| {
+      let metadata = self.context.load_metadata()
+        .map_err(error::Error::LoadMetadata)?;
 
       let mut opts = create_rustc_options();
       self.platform.modify_rustc_session_options(&self.target_desc,
                                                  &mut opts);
 
-      with_rustc_session(opts, |mut sess| {
-        sess.crate_types.set(sess.opts.crate_types.clone());
-        sess.recursion_limit.set(512);
 
-        sess.init_features(feature_gate::Features::default());
+      let registry = rustc_driver::diagnostics_registry();
+      let mut sess = rustc::session::build_session(opts, None, registry);
 
-        // TODO hash the accelerator target desc
-        let dis = self::util::compute_crate_disambiguator(&sess);
-        sess.crate_disambiguator.set(dis);
-        self.target_desc.rustc_target_options(&mut sess.target.target);
+      sess.crate_types.set(sess.opts.crate_types.clone());
+      sess.recursion_limit.set(512);
 
-        // initialize the cstore for this codegen:
-        // We have to do this everytime because the CStore does some
-        // behind the scenes (vs letting the query system do it) caching
-        // which causes missing allocations the second time around.
-        // XXX fix upstream to remove that implicit assumption, that is
-        // 1 cstore per 1 tcx (1 to 1 and onto).
-        let mut cstore = CStore::default();
-        {
-          let mut loader = CrateMetadataLoader::default();
-          let CrateMetadata(meta) = loader.build(self.context.mapped_metadata(),
-                                                 &mut cstore)
-            .expect("metadata error");
-          for meta in meta.into_iter() {
-            let name = CrateNameHash {
-              name: meta.root.name(),
-              hash: meta.root.hash().as_u64(),
-            };
-            let cnum = loader.lookup_cnum(&name)
-              .unwrap();
+      sess.init_features(feature_gate::Features::default());
 
-            cstore.set_crate_data(cnum, meta);
-          }
+      // TODO hash the accelerator target desc
+      let dis = self::util::compute_crate_disambiguator(&sess);
+      sess.crate_disambiguator.set(dis);
+      self.target_desc.rustc_target_options(&mut sess.target.target);
+
+      // initialize the cstore for this codegen:
+      // We have to do this everytime because the CStore does some
+      // behind the scenes (vs letting the query system do it) caching
+      // which causes missing allocations the second time around.
+      // XXX fix upstream to remove that implicit assumption, that is
+      // 1 cstore per 1 tcx (1 to 1 and onto).
+      let mut cstore = CStore::default();
+      {
+        let mut loader = CrateMetadataLoader::default();
+        let CrateMetadata(meta) = loader.build(&metadata, &mut cstore)
+          .expect("metadata error");
+        for meta in meta.into_iter() {
+          let name = CrateNameHash {
+            name: meta.root.name(),
+            hash: meta.root.hash().as_u64(),
+          };
+          let cnum = loader.lookup_cnum(&name)
+            .unwrap();
+
+          cstore.set_crate_data(cnum, meta);
         }
+      }
 
-        f(sess, cstore)
-      })
+      f(sess, cstore)
     })
   }
   fn codegen_kernel(&self, desc: PKernelDesc<P>)
@@ -588,20 +591,6 @@ impl<P> WorkerTranslatorData<P>
 
     Ok(results)
   }
-}
-
-pub fn with_rustc_session<F, R>(opts: rustc::session::config::Options,
-                                f: F) -> R
-  where F: FnOnce(rustc::session::Session) -> R + sync::Send,
-        R: sync::Send,
-{
-  use self::util::spawn_thread_pool;
-
-  spawn_thread_pool(move || {
-    let registry = rustc_driver::diagnostics_registry();
-    let sess = rustc::session::build_session(opts, None, registry);
-    f(sess)
-  })
 }
 pub fn create_rustc_options() -> rustc::session::config::Options {
   use rustc::session::config::*;
