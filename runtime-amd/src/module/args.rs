@@ -2,7 +2,9 @@
 use std::fmt;
 use std::ops::*;
 
-use crate::Error;
+use num_traits::Zero;
+
+use crate::{Error, HsaAmdGpuAccel};
 use crate::module::*;
 
 /// Do not implement drop on this type. Drop on `grid` is likewise also disallowed.
@@ -19,6 +21,8 @@ pub(super) struct LaunchArgs<'a, A>
 pub struct VectorParams<G>
   where G: GridDims,
 {
+  grid: G,
+  wg_size: G::Workgroup,
   wi: <G::Workgroup as WorkgroupDims>::Idx,
   // wg_size comes from A
   wg_id: G::Idx,
@@ -26,13 +30,14 @@ pub struct VectorParams<G>
   grid_size: G::Idx,
   grid_id: G::Idx,
   gid: G::Elem,
+  wi_lid: <G::Workgroup as WorkgroupDims>::Elem,
 }
 pub type KVectorParams<A> = VectorParams<<A as Kernel>::Grid>;
 impl<G> VectorParams<G>
   where G: GridDims,
 {
   #[inline(always)]
-  pub(super) fn new(grid: &G, wg_size: &G::Workgroup) -> Option<Self> {
+  pub(super) fn new_internal(grid: &G, wg_size: &G::Workgroup) -> Option<Self> {
     let wg = G::workgroup_id();
     let wi = G::workitem_id();
 
@@ -41,19 +46,39 @@ impl<G> VectorParams<G>
       return None;
     }
 
-    Some(VectorParams {
+    Some(Self::new(grid, wg_size, wg, wi))
+  }
+  pub fn new(grid: &G, wg_size: &G::Workgroup,
+             wg: G::Idx, wi: <G::Workgroup as WorkgroupDims>::Idx)
+    -> Self
+  {
+    VectorParams {
       gid: grid.global_linear_id(wg_size, &wg, &wi),
       wg_idx: G::workgroup_idx(wg_size, &wg),
       grid_id: grid.grid_id(wg_size, &wg, &wi),
       grid_size: grid.len(),
       wi,
       wg_id: wg,
-    })
+      wi_lid: wg_size.workitem_linear_id(wi),
+      grid: grid.clone(),
+      wg_size: wg_size.clone(),
+    }
+  }
+
+  #[inline(always)]
+  pub fn is_wi0(&self) -> bool
+    where <G::Workgroup as WorkgroupDims>::Idx: Zero,
+  {
+    self.wi.is_zero()
   }
 
   #[inline(always)]
   pub fn wi(&self) -> <G::Workgroup as WorkgroupDims>::Idx {
     self.wi
+  }
+  #[inline(always)]
+  pub fn linear_wi(&self) -> <G::Workgroup as WorkgroupDims>::Elem {
+    self.wi_lid
   }
   #[inline(always)]
   pub fn wg_id(&self) -> G::Idx {
@@ -86,7 +111,10 @@ impl<G> Clone for VectorParams<G>
 {
   fn clone(&self) -> Self {
     VectorParams {
+      grid: self.grid.clone(),
+      wg_size: self.wg_size.clone(),
       wi: self.wi.clone(),
+      wi_lid: self.wi_lid.clone(),
       wg_id: self.wg_id.clone(),
       wg_idx: self.wg_idx.clone(),
       grid_id: self.grid_id.clone(),
@@ -118,6 +146,28 @@ impl<G> fmt::Debug for VectorParams<G>
       .field("grid_size", &self.grid_size)
       .field("gid", &self.gid)
       .finish()
+  }
+}
+impl<G> DimTranspose for VectorParams<G>
+  where G: GridDims,
+        <G::Workgroup as WorkgroupDims>::Idx: Clone + DimTranspose,
+        G::Idx: Clone + DimTranspose,
+        G: Clone,
+{
+  fn transpose(self) -> Self {
+    let VectorParams {
+      wg_id,
+      wi,
+      grid,
+      wg_size,
+      ..
+    } = self;
+
+    let wi = wi.transpose();
+    let wg = wg_id.transpose();
+
+    VectorParams::new(&grid, &wg_size,
+                      wg, wi)
   }
 }
 
@@ -195,5 +245,32 @@ mod test {
       Ok(())
     })
       .unwrap();
+  }
+
+  #[test]
+  fn vector_params_transpose() {
+    let grid = Dim2D {
+      x: 0..32u32,
+      y: 0..16,
+    };
+    let wg_size = Dim2D {
+      x: ..4u16,
+      y: ..8u16,
+    };
+
+    let wg = Dim2D {
+      x: 1,
+      y: 2,
+    };
+    let wi = Dim2D {
+      x: 3,
+      y: 4,
+    };
+
+    let vp = VectorParams::new(&grid, &wg_size, wg, wi);
+    let tvp = vp.clone().transpose();
+
+    assert_eq!(vp.gl_id(), 647);
+    assert_eq!(tvp.gl_id(), 364);
   }
 }

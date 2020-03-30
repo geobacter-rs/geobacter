@@ -5,7 +5,7 @@ pub use std::sync::Arc;
 
 use crate::*;
 pub use crate::alloc::*;
-pub use crate::module::{ArgsPool, Invoc, FuncModule};
+pub use crate::module::*;
 pub use crate::signal::*;
 
 pub type TestInvoc<A> = Invoc<A, Arc<ArgsPool>, FuncModule<A>>;

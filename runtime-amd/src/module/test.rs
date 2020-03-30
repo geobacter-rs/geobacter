@@ -482,6 +482,162 @@ mod one_d {
   }
 }
 
+mod two_d {
+  use super::*;
+
+  #[test]
+  fn trivial() {
+    let dev = device();
+
+    let mut m = LapVec::new_in(dev.fine_lap_node_alloc(0));
+
+    const GRID: Dim2D<Range<u32>> = Dim2D { x: 0..16, y: 0..16, };
+
+    fn trivial_f(dst: *mut [u32], vp: VectorParams<Dim2D<Range<u32>>>) {
+      unsafe {
+        (&mut *dst)[vp.gl_id() as usize] = vp.gl_id();
+      }
+    }
+
+    unsafe {
+      let (mut invoc, k) = TestKernel::new_global(&dev, &mut m,
+                                                  &GRID, 0u32,
+                                                  trivial_f);
+      let _wait = invoc
+        .unchecked_call_async(&GRID, k)
+        .unwrap();
+    }
+
+    for (i, &v) in m.iter().enumerate() {
+      assert_eq!(v as usize, i);
+    }
+  }
+
+  #[test]
+  fn grid_rounding() {
+    let dev = device();
+
+    let mut m = LapVec::new_in(dev.fine_lap_node_alloc(0));
+
+    const GRID: Dim2D<Range<u32>> = Dim2D { x: 0..12, y: 0..12, };
+    const FULL_GRID: Dim2D<Range<u32>> = Dim2D { x: 0..16, y: 0..16, };
+
+    fn trivial_f(dst: *mut [u32], vp: VectorParams<Dim2D<Range<u32>>>) {
+      let glid = gamd_std::dispatch_packet().global_linear_id();
+      unsafe {
+        (&mut *dst)[glid] = vp.gl_id();
+      }
+    }
+
+    unsafe {
+      let (mut invoc, k) = TestKernel::new_global(&dev, &mut m,
+                                                  &FULL_GRID, 0u32,
+                                                  trivial_f);
+      let _wait = invoc
+        .unchecked_call_async(&GRID, k)
+        .unwrap();
+    }
+
+
+    for yi in GRID.y.clone() {
+      for xi in GRID.x.clone() {
+        let idx = yi * FULL_GRID.x.end + xi;
+        let v = m[idx as usize];
+        if yi < 12 && xi < 12 {
+          let i = yi * GRID.x.end + xi;
+          assert_eq!(v, i);
+        } else {
+          assert_eq!(v, 0);
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn glid_offset() {
+    let dev = device();
+
+    let mut m = LapVec::new_in(dev.fine_lap_node_alloc(0));
+
+    const GRID: Dim2D<Range<u32>> = Dim2D { x: 32..48, y: 32..48, };
+    const ALLOC_GRID: Dim2D<Range<u32>> = Dim2D { x: 0..48, y: 0..48, };
+
+    fn trivial_f(dst: *mut [u32], vp: VectorParams<Dim2D<Range<u32>>>) {
+      unsafe {
+        (&mut *dst)[vp.gl_id() as usize] = 1u32;
+      }
+    }
+
+    unsafe {
+      let (mut invoc, k) = TestKernel::new_global(&dev, &mut m,
+                                                  &ALLOC_GRID, 0u32,
+                                                  trivial_f);
+      let _wait = invoc
+        .unchecked_call_async(&GRID, k)
+        .unwrap();
+    }
+
+    let grid_size = ALLOC_GRID.len();
+    for yi in ALLOC_GRID.y.clone() {
+      for xi in ALLOC_GRID.x.clone() {
+        let idx = yi * grid_size.x + xi;
+        let v = m[idx as usize];
+        if yi >= 32 && xi >= 32 {
+          assert_eq!(v, 1, "xi = {}, yi = {}", xi, yi);
+        } else {
+          assert_eq!(v, 0, "xi = {}, yi = {}", xi, yi);
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn workitem_idx() {
+    let dev = device();
+
+    let mut m = LapVec::new_in(dev.fine_lap_node_alloc(0));
+
+    const GRID: Dim2D<Range<u32>> = Dim2D { x: 0..32, y: 0..32, };
+
+    fn trivial_f(dst: *mut [Dim2D<u16>], vp: VectorParams<Dim2D<Range<u32>>>) {
+      let glid = gamd_std::dispatch_packet().global_linear_id();
+      unsafe {
+        (&mut *dst)[glid] = vp.wi();
+      }
+    }
+
+    unsafe {
+      let (mut invoc, k) = TestKernel::new_global(&dev, &mut m,
+                                                  &GRID, Default::default(),
+                                                  trivial_f);
+      let _wait = invoc
+        .unchecked_call_async(&GRID, k)
+        .unwrap();
+    }
+
+    for (i, &v) in m.iter().enumerate() {
+      let i = i as u16;
+      let expected = Dim2D {
+        x: i % (WORKGROUP2.x.end),
+        y: (i / GRID.x.end as u16) % WORKGROUP2.y.end,
+      };
+      assert_eq!(v, expected);
+    }
+  }
+
+  #[test]
+  fn grid_range_types() {
+    // just check that this compiles
+    fn enforce_grid_dims<T>(_: &T)
+      where T: GridDims,
+    { }
+    enforce_grid_dims(&Dim2D { x: ..32, y: ..32, });
+    enforce_grid_dims(&Dim2D { x: 0..32, y: 0..32, });
+    enforce_grid_dims(&Dim2D { x: 0..=32, y: 0..=32, });
+    enforce_grid_dims(&Dim2D { x: ..=32, y: ..=32, });
+  }
+}
+
 mod three_d {
   use super::*;
 
@@ -523,25 +679,40 @@ mod three_d {
       y: (32..48).into(),
       z: (0..16).into(),
     };
+    let alloc_grid = Dim3D {
+      x: 0..16u32,
+      y: 0..48,
+      z: 0..16,
+    };
 
     fn trivial_f(dst: *mut [u32], vp: VectorParams<Dim3D<Range<u32>>>) {
-      let glid = gamd_std::dispatch_packet().global_linear_id();
       unsafe {
-        (&mut *dst)[glid] = vp.gl_id();
+        (&mut *dst)[vp.gl_id() as usize] = 1u32;
       }
     }
 
     unsafe {
       let (mut invoc, k) = TestKernel::new_global(&dev, &mut m,
-                                                  &grid, 0u32,
+                                                  &alloc_grid, 0u32,
                                                   trivial_f);
       let _wait = invoc
         .unchecked_call_async(&grid, k)
         .unwrap();
     }
 
-    for (i, &v) in m.iter().enumerate() {
-      assert_eq!(v as usize, i + 32 * 16);
+    let grid_size = alloc_grid.len();
+    for zi in alloc_grid.z.clone() {
+      for yi in alloc_grid.y.clone() {
+        for xi in alloc_grid.x.clone() {
+          let idx = (zi * grid_size.y + yi) * grid_size.x + xi;
+          let v = m[idx as usize];
+          if yi >= 32 {
+            assert_eq!(v, 1, "xi = {}, yi = {}", xi, yi);
+          } else {
+            assert_eq!(v, 0, "xi = {}, yi = {}", xi, yi);
+          }
+        }
+      }
     }
   }
   #[test]

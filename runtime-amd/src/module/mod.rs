@@ -59,7 +59,7 @@ mod test;
 fn launch_kernel<A>(this: &LaunchArgs<A>)
   where A: Kernel + Sized,
 {
-  let params = VectorParams::new(&this.grid, &A::WORKGROUP);
+  let params = VectorParams::new_internal(&this.grid, &A::WORKGROUP);
   if let Some(params) = params {
     this.args.kernel(params)
   }
