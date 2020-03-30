@@ -452,7 +452,7 @@ pub fn main() {
   let dim = NonZeroUsize::new(AXIS_SIZE).unwrap();
   let hardness = (2 * AXIS_SIZE * AXIS_SIZE * AXIS_SIZE) as f64;
 
-  let mut invoc: FuncModule<GemmArgs<ETy>> = FuncModule::new(&dev);
+  let mut invoc = GemmArgs::module(&dev);
   invoc.define_param(dim_spec_param, &dim);
   invoc.define_param(mod_block_k, &(GRID % BLOCK_K == 0));
   invoc.compile_async();

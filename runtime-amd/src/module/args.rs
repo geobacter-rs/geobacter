@@ -153,6 +153,13 @@ pub trait Kernel: Completion + Send + Sync + Unpin {
 
   fn queue(&self) -> &Self::Queue;
 
+  #[inline(always)]
+  fn module(device: &Arc<HsaAmdGpuAccel>) -> FuncModule<Self>
+    where Self: Sized,
+  {
+    FuncModule::new(device)
+  }
+
   /// Run the kernel. This function is called in every work item and group.
   fn kernel(&self, vp: KVectorParams<Self>)
     where Self: Sized;
