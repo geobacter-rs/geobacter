@@ -710,41 +710,6 @@ impl Accelerator for HsaAmdGpuAccel {
 
     self.codegen().add_accel(self);
   }
-
-  fn downcast_ref(this: &dyn Accelerator) -> Option<&Self>
-    where Self: Sized,
-  {
-    use std::any::TypeId;
-    use std::mem::transmute;
-    use std::raw::TraitObject;
-
-    if this.type_id() != TypeId::of::<Self>() {
-      return None;
-    }
-
-    // We have to do this manually.
-    let this: TraitObject = unsafe { transmute(this) };
-    let this = this.data as *mut Self;
-    Some(unsafe { &*this })
-  }
-  fn downcast_arc(this: &Arc<dyn Accelerator>) -> Option<Arc<Self>>
-    where Self: Sized,
-  {
-    use std::any::TypeId;
-    use std::mem::transmute;
-    use std::raw::TraitObject;
-
-    if this.type_id() != TypeId::of::<Self>() {
-      return None;
-    }
-
-    // We have to do this manually.
-    let this = this.clone();
-    let this = Arc::into_raw(this);
-    let this: TraitObject = unsafe { transmute(this) };
-    let this = this.data as *mut Self;
-    Some(unsafe { Arc::from_raw(this) })
-  }
 }
 impl Device for HsaAmdGpuAccel {
   type Error = Error;

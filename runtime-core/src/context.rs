@@ -244,64 +244,75 @@ impl WeakContext {
 /// here!
 pub trait PlatformModuleData: Any + Debug + Send + Sync + 'static {
   /// Sadly, `Eq` isn't trait object safe, so this must be
-  /// implemented manually.
+  /// implemented manually:
+  /// ```
+  /// # use std::sync::Arc;
+  /// # use geobacter_runtime_core::context::*;
+  /// # #[derive(Debug, Eq, PartialEq)]
+  /// # struct MyPlatformModuleData(bool);
+  /// # impl PlatformModuleData for MyPlatformModuleData {
+  ///     fn eq(&self, rhs: &dyn PlatformModuleData) -> bool {
+  ///       let rhs: Option<&Self> = Self::downcast_ref(rhs);
+  ///       if let Some(rhs) = rhs {
+  ///         self == rhs
+  ///       } else {
+  ///         false
+  ///       }
+  ///     }
+  /// # }
+  /// # let lhs = Arc::new(MyPlatformModuleData(true)) as Arc<dyn PlatformModuleData>;
+  /// # let rhs = Arc::new(MyPlatformModuleData(true)) as Arc<dyn PlatformModuleData>;
+  /// # assert!(PlatformModuleData::eq(&*lhs, &*rhs));
+  /// # let rhs = Arc::new(MyPlatformModuleData(false)) as Arc<dyn PlatformModuleData>;
+  /// # assert!(!PlatformModuleData::eq(&*lhs, &*rhs));
+  /// ```
   fn eq(&self, rhs: &dyn PlatformModuleData) -> bool;
 
   /// Special downcast helper as trait objects can't be "reunsized" into
   /// another trait object, even when this trait requires
   /// `Self: Any + 'static`.
-  ///
-  /// Must be implemented manually :(
-  /// Just paste this into your impls:
-  /// ```ignore
-  /// fn downcast_ref(this: &dyn PlatformModuleData) -> Option<&Self>
-  ///    where Self: Sized,
-  /// {
-  ///    use std::any::TypeId;
-  ///    use std::mem::transmute;
-  ///    use std::raw::TraitObject;
-  ///
-  ///    if this.type_id() != TypeId::of::<Self>() {
-  ///      return None;
-  ///    }
-  ///
-  ///    // We have to do this manually.
-  ///    let this: TraitObject = unsafe { transmute(this) };
-  ///    let this = this.data as *mut Self;
-  ///    Some(unsafe { &*this })
-  ///  }
-  /// ```
   fn downcast_ref(this: &dyn PlatformModuleData) -> Option<&Self>
-    where Self: Sized;
+    where Self: Sized,
+  {
+    use std::any::TypeId;
+    use std::mem::transmute;
+    use std::raw::TraitObject;
+
+    let this_tyid = Any::type_id(this);
+    let self_tyid = TypeId::of::<Self>();
+    if this_tyid != self_tyid {
+      return None;
+    }
+
+    // We have to do this manually.
+    let this: TraitObject = unsafe { transmute(this) };
+    let this = this.data as *mut Self;
+    Some(unsafe { &*this })
+  }
 
   /// Special downcast helper as trait objects can't be "reunsized" into
   /// another trait object, even when this trait requires
   /// `Self: Any + 'static`.
-  ///
-  /// Must be implemented manually :(
-  /// Just paste this into your impls:
-  /// ```ignore
-  /// fn downcast_ref(this: &dyn PlatformModuleData) -> Option<&Self>
-  ///    where Self: Sized,
-  /// {
-  ///    use std::any::TypeId;
-  ///    use std::mem::transmute;
-  ///    use std::raw::TraitObject;
-  ///
-  ///    if this.type_id() != TypeId::of::<Self>() {
-  ///      return None;
-  ///    }
-  ///
-  ///    // We have to do this manually.
-  ///    let this = this.clone();
-  ///    let this = Arc::into_raw(this);
-  ///    let this: TraitObject = unsafe { transmute(this) };
-  ///    let this = this.data as *mut Self;
-  ///    Some(unsafe { Arc::from_raw(this) })
-  ///  }
-  /// ```
   fn downcast_arc(this: &Arc<dyn PlatformModuleData>) -> Option<Arc<Self>>
-    where Self: Sized;
+    where Self: Sized,
+  {
+    use std::any::TypeId;
+    use std::mem::transmute;
+    use std::raw::TraitObject;
+
+    let this_tyid = Any::type_id(&**this);
+    let self_tyid = TypeId::of::<Self>();
+    if this_tyid != self_tyid {
+      return None;
+    }
+
+    // We have to do this manually.
+    let this = this.clone();
+    let this = Arc::into_raw(this);
+    let this: TraitObject = unsafe { transmute(this) };
+    let this = this.data as *mut Self;
+    Some(unsafe { Arc::from_raw(this) })
+  }
 }
 
 pub struct ModuleData {
@@ -317,7 +328,8 @@ impl ModuleData {
       entries: Default::default(),
     }
   }
-  fn get<D>(&self, accel_id: AcceleratorId) -> Option<Arc<D::ModuleData>>
+  fn get<D>(&self, accel_id: AcceleratorId,
+            expect_platform_ty: bool) -> Option<Arc<D::ModuleData>>
     where D: Device,
   {
     let read = self.entries.read();
@@ -327,7 +339,11 @@ impl ModuleData {
         <D::ModuleData as PlatformModuleData>::downcast_arc(v)
           // emit a warning if this object doesn't have the type we expect:
           .or_else(|| {
-            warn!("unexpected platform module type in accelerator slot!");
+            if expect_platform_ty {
+              panic!("unexpected platform module type in accelerator slot!");
+            } else {
+              warn!("unexpected platform module type in accelerator slot: {:#?}", v);
+            }
             None
           })
       })
@@ -335,13 +351,14 @@ impl ModuleData {
   pub fn compile<D, P>(&self,
                        accel: &Arc<D>,
                        desc: PKernelDesc<P>,
-                       codegen: &CodegenDriver<P>)
+                       codegen: &CodegenDriver<P>,
+                       expect_platform_ty: bool)
     -> Result<Arc<D::ModuleData>, D::Error>
     where D: Device<Codegen = P>,
           P: PlatformCodegen<Device = D>,
   {
     let accel_id = accel.id();
-    if let Some(entry) = self.get::<D>(accel_id) {
+    if let Some(entry) = self.get::<D>(accel_id, expect_platform_ty) {
       return Ok(entry);
     }
 
@@ -349,20 +366,25 @@ impl ModuleData {
     // to get existing entries.
     let guard = self.entries.upgradable_read();
 
+    if let Some(ref prev) = guard.get(accel_id).and_then(|v| v.as_ref() ) {
+      let prev = <D::ModuleData as PlatformModuleData>::downcast_arc(prev);
+      if let Some(module) = prev {
+        // someone beat us, don't create another platform module object
+        return Ok(module);
+      } else {
+        // ??? what?
+        if expect_platform_ty {
+          panic!("unexpected platform module type in accelerator slot!");
+        }
+      }
+    }
+
     let codegen = codegen.codegen(desc)?;
 
     // upgrade the read to a write
     let mut guard = RwLockUpgradableReadGuard::upgrade(guard);
     if guard.len() <= accel_id.index() {
       guard.resize(accel_id.index() + 1, None);
-    } else {
-      if let Some(ref prev) = guard[accel_id] {
-        let prev = <D::ModuleData as PlatformModuleData>::downcast_arc(prev);
-        if let Some(module) = prev {
-          // Don't create another platform module object
-          return Ok(module);
-        }
-      }
     }
 
     let module = D::load_kernel(accel, &*codegen)?;
@@ -491,5 +513,25 @@ impl PartialEq for ModuleContextData {
 impl<'a> PartialEq<&'a ModuleContextData> for ModuleContextData {
   fn eq(&self, rhs: &&Self) -> bool {
     self.0 as *const AtomicUsize == rhs.0 as *const AtomicUsize
+  }
+}
+
+#[cfg(test)]
+mod test {
+  use super::*;
+
+  #[derive(Debug)]
+  struct MyPlatformModuleData;
+
+  impl PlatformModuleData for MyPlatformModuleData {
+    fn eq(&self, _: &dyn PlatformModuleData) -> bool {
+      unimplemented!()
+    }
+  }
+  #[test]
+  fn module_data_downcast() {
+    let arc = Arc::new(MyPlatformModuleData) as Arc<dyn PlatformModuleData>;
+    assert!(MyPlatformModuleData::downcast_arc(&arc).is_some());
+    assert!(MyPlatformModuleData::downcast_ref(&*arc).is_some());
   }
 }

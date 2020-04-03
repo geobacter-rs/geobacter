@@ -187,7 +187,8 @@ impl<A> FuncModule<A>
     if self.module_data.is_none() {
       let module_data = self.context_data
         .compile(&self.device, self.desc(),
-                 &self.device.codegen())?;
+                 &self.device.codegen(),
+                 cfg!(test))?;
       self.module_data = Some(module_data);
     }
     Ok(self.module_data.as_ref().unwrap())
@@ -206,7 +207,8 @@ impl<A> FuncModule<A>
       spawn(move || {
         // ignore errors here; if an error does happen,
         // we'll compile again to get the actual error from codegen.
-        let _ = context_data.compile(&device, desc, device.codegen());
+        let _ = context_data.compile(&device, desc, device.codegen(),
+                                     cfg!(test));
       });
     }
   }
@@ -760,38 +762,5 @@ impl PlatformModuleData for HsaModuleData {
     } else {
       false
     }
-  }
-
-  fn downcast_ref(this: &dyn PlatformModuleData) -> Option<&Self>
-    where Self: Sized,
-  {
-    use std::any::TypeId;
-    use std::raw::TraitObject;
-
-    if this.type_id() != TypeId::of::<Self>() {
-      return None;
-    }
-
-    // We have to do this manually.
-    let this: TraitObject = unsafe { transmute(this) };
-    let this = this.data as *mut Self;
-    Some(unsafe { &*this })
-  }
-  fn downcast_arc(this: &Arc<dyn PlatformModuleData>) -> Option<Arc<Self>>
-    where Self: Sized,
-  {
-    use std::any::TypeId;
-    use std::raw::TraitObject;
-
-    if this.type_id() != TypeId::of::<Self>() {
-      return None;
-    }
-
-    // We have to do this manually.
-    let this = this.clone();
-    let this = Arc::into_raw(this);
-    let this: TraitObject = unsafe { transmute(this) };
-    let this = this.data as *mut Self;
-    Some(unsafe { Arc::from_raw(this) })
   }
 }

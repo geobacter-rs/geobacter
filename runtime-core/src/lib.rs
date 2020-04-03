@@ -111,58 +111,48 @@ pub trait Accelerator: Debug + Any + Send + Sync + 'static {
   /// Special downcast helper as trait objects can't be "reunsized" into
   /// another trait object, even when this trait requires
   /// `Self: Any + 'static`.
-  ///
-  /// Must be implemented manually :(
-  /// Just paste this into your impls:
-  /// ```ignore
-  /// fn downcast_ref(this: &dyn Accelerator) -> Option<&Self>
-  ///    where Self: Sized,
-  /// {
-  ///    use std::any::TypeId;
-  ///    use std::mem::transmute;
-  ///    use std::raw::TraitObject;
-  ///
-  ///    if this.type_id() != TypeId::of::<Self>() {
-  ///      return None;
-  ///    }
-  ///
-  ///    // We have to do this manually.
-  ///    let this: TraitObject = unsafe { transmute(this) };
-  ///    let this = this.data as *mut Self;
-  ///    Some(unsafe { &*this })
-  ///  }
-  /// ```
   fn downcast_ref(this: &dyn Accelerator) -> Option<&Self>
-    where Self: Sized;
+    where Self: Sized,
+  {
+    use std::any::TypeId;
+    use std::mem::transmute;
+    use std::raw::TraitObject;
+
+    let this_tyid = Any::type_id(this);
+    let self_tyid = TypeId::of::<Self>();
+    if this_tyid != self_tyid {
+      return None;
+    }
+
+    // We have to do this manually.
+    let this: TraitObject = unsafe { transmute(this) };
+    let this = this.data as *mut Self;
+    Some(unsafe { &*this })
+  }
 
   /// Special downcast helper as trait objects can't be "reunsized" into
   /// another trait object, even when this trait requires
   /// `Self: Any + 'static`.
-  ///
-  /// Must be implemented manually :(
-  /// Just paste this into your impls:
-  /// ```ignore
-  /// fn downcast_arc(this: &Arc<dyn Accelerator>) -> Option<Arc<Self>>
-  ///    where Self: Sized,
-  /// {
-  ///    use std::any::TypeId;
-  ///    use std::mem::transmute;
-  ///    use std::raw::TraitObject;
-  ///
-  ///    if this.type_id() != TypeId::of::<Self>() {
-  ///      return None;
-  ///    }
-  ///
-  ///    // We have to do this manually.
-  ///    let this = this.clone();
-  ///    let this = Arc::into_raw(this);
-  ///    let this: TraitObject = unsafe { transmute(this) };
-  ///    let this = this.data as *mut Self;
-  ///    Some(unsafe { Arc::from_raw(this) })
-  ///  }
-  /// ```
   fn downcast_arc(this: &Arc<dyn Accelerator>) -> Option<Arc<Self>>
-    where Self: Sized;
+    where Self: Sized,
+  {
+    use std::any::TypeId;
+    use std::mem::transmute;
+    use std::raw::TraitObject;
+
+    let this_tyid = Any::type_id(&**this);
+    let self_tyid = TypeId::of::<Self>();
+    if this_tyid != self_tyid {
+      return None;
+    }
+
+    // We have to do this manually.
+    let this = this.clone();
+    let this = Arc::into_raw(this);
+    let this: TraitObject = unsafe { transmute(this) };
+    let this = this.data as *mut Self;
+    Some(unsafe { Arc::from_raw(this) })
+  }
 }
 
 pub trait Device: Accelerator + Sized {
@@ -468,7 +458,9 @@ pub trait PlatformTargetDesc
     use std::mem::transmute;
     use std::raw::TraitObject;
 
-    if this.type_id() != TypeId::of::<Self>() {
+    let this_tyid = Any::type_id(this);
+    let self_tyid = TypeId::of::<Self>();
+    if this_tyid != self_tyid {
       return None;
     }
 
@@ -485,7 +477,9 @@ pub trait PlatformTargetDesc
     use std::mem::transmute;
     use std::raw::TraitObject;
 
-    if this.type_id() != TypeId::of::<Self>() {
+    let this_tyid = Any::type_id(&*this);
+    let self_tyid = TypeId::of::<Self>();
+    if this_tyid != self_tyid {
       return Err(this);
     }
 
@@ -494,5 +488,71 @@ pub trait PlatformTargetDesc
     let this = this.data as *mut Self;
     Ok(unsafe { Box::from_raw(this) })
   }
+  fn downcast_arc(this: &Arc<dyn PlatformTargetDesc>) -> Option<Arc<Self>>
+    where Self: Sized,
+  {
+    use std::any::TypeId;
+    use std::mem::transmute;
+    use std::raw::TraitObject;
+
+    let this_tyid = Any::type_id(&**this);
+    let self_tyid = TypeId::of::<Self>();
+    if this_tyid != self_tyid {
+      return None;
+    }
+
+    // We have to do this manually.
+    let this = this.clone();
+    let this = Arc::into_raw(this);
+    let this: TraitObject = unsafe { transmute(this) };
+    let this = this.data as *mut Self;
+    Some(unsafe { Arc::from_raw(this) })
+  }
 }
 erased_serde::serialize_trait_object!(PlatformTargetDesc);
+
+#[cfg(test)]
+mod test {
+  use super::*;
+
+  use serde::*;
+
+  #[derive(Clone, Debug, Serialize, Deserialize, Hash, Eq, PartialEq)]
+  pub struct MyTargetDesc;
+  impl PlatformTargetDesc for MyTargetDesc {
+    fn as_any_hash(&self) -> &dyn AnyHash { self }
+  }
+
+  #[test]
+  fn target_desc_downcast() {
+    let arc = Arc::new(MyTargetDesc) as Arc<dyn PlatformTargetDesc>;
+    assert!(MyTargetDesc::downcast_arc(&arc).is_some());
+    assert!(MyTargetDesc::downcast_ref(&*arc).is_some());
+    let b = Box::new(MyTargetDesc) as Box<dyn PlatformTargetDesc>;
+    assert!(MyTargetDesc::downcast_box(b).is_ok());
+  }
+
+  #[derive(Debug)]
+  struct MyAccelerator;
+
+  impl Accelerator for MyAccelerator {
+    fn id(&self) -> AcceleratorId { unimplemented!() }
+    fn platform(&self) -> Platform { unimplemented!() }
+    fn accel_target_desc(&self) -> &Arc<AcceleratorTargetDesc> { unimplemented!() }
+    fn set_accel_target_desc(&mut self, _desc: Arc<AcceleratorTargetDesc>) { unimplemented!() }
+    fn create_target_codegen(self: &mut Arc<Self>, _ctxt: &Context)
+      -> Result<Arc<dyn Any + Send + Sync + 'static>, Box<dyn Error + Send + Sync + 'static>>
+      where Self: Sized,
+    { unimplemented!() }
+    fn set_target_codegen(self: &mut Arc<Self>,
+                          _codegen_comms: Arc<dyn Any + Send + Sync + 'static>)
+      where Self: Sized,
+    { unimplemented!() }
+  }
+  #[test]
+  fn accelerator_downcast() {
+    let arc = Arc::new(MyAccelerator) as Arc<dyn Accelerator>;
+    assert!(MyAccelerator::downcast_arc(&arc).is_some());
+    assert!(MyAccelerator::downcast_ref(&*arc).is_some());
+  }
+}

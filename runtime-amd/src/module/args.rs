@@ -207,7 +207,13 @@ pub trait Kernel: Completion + Send + Sync + Unpin {
   fn module(device: &Arc<HsaAmdGpuAccel>) -> FuncModule<Self>
     where Self: Sized,
   {
-    FuncModule::new(device)
+    let out = FuncModule::new(device);
+
+    #[cfg(test)] {
+      out.compile_async();
+    }
+
+    out
   }
 
   /// Run the kernel. This function is called in every work item and group.
