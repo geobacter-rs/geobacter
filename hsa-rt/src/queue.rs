@@ -338,7 +338,7 @@ pub trait RingQueue {
   /// XXX Need a way to pass the dep signals in by value and still have them
   /// kept alive until this barrier finishes.
   fn try_enqueue_barrier_and<'a, D>(&self, deps: &mut D,
-                                    completion: Option<&Signal>)
+                                    completion: Option<&SignalRef>)
     -> Result<(), QueueError>
     where D: Iterator<Item = &'a SignalRef>,
   {
@@ -371,7 +371,7 @@ pub trait RingQueue {
     Ok(())
   }
   fn try_enqueue_barrier_or<'a, D>(&self, deps: &mut D,
-                               completion: Option<&Signal>)
+                               completion: Option<&SignalRef>)
     -> Result<(), QueueError>
     where D: Iterator<Item = &'a SignalRef>,
   {
