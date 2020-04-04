@@ -11,8 +11,6 @@ use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool, };
 
 use alloc_wg::boxed::Box;
 
-use arrayvec::ArrayVec;
-
 use log::{error, };
 
 use geobacter_core::kernel::{KernelInstance, OptionalFn, };
@@ -22,6 +20,8 @@ use hsa_rt::agent::Agent;
 use hsa_rt::executable::FrozenExecutable;
 use hsa_rt::queue::{DispatchPacket, RingQueue, };
 use hsa_rt::signal::SignalRef;
+
+use smallvec::SmallVec;
 
 pub use hsa_rt::queue::{FenceScope, QueueError, };
 pub use hsa_rt::queue::KernelMultiQueue as DeviceMultiQueue;
@@ -436,7 +436,7 @@ impl<A, P, FM> Invoc<A, P, FM>
     // of kernarg alloc failure.
     {
       let q = args.as_ref().unwrap().queue();
-      let mut signals: ArrayVec<[SignalRef; 5]> = ArrayVec::new();
+      let mut signals: SmallVec<[SignalRef; 5]> = SmallVec::new();
       {
         let mut f = |sig: &dyn DeviceConsumable| -> Result<(), Error> {
           sig.mark_consumed();
