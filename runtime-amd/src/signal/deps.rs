@@ -1,6 +1,7 @@
 
 #![allow(deprecated)]
 
+use std::cell::Cell;
 use std::marker::{PhantomData, PhantomPinned, };
 use std::num::{NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize,
                NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
@@ -10,17 +11,109 @@ use std::ptr::NonNull;
 use std::rc::{Rc, };
 use std::sync::{Arc, atomic::*, };
 
-use gcore::ptr::*;
+use hsa_rt::signal::SignalRef;
+use hsa_rt::queue::RingQueue;
 
-use crate::Error;
-use crate::module::{CallError, DeviceMultiQueue, DeviceSingleQueue};
-use crate::signal::{DeviceConsumable, DeviceSignal, GlobalSignal, };
+use gcore::ptr::*;
+use gcore::platform::is_host;
+
+use smallvec::SmallVec;
+
+use crate::{Error, HsaAmdGpuAccel};
+use crate::module::{CallError, DeviceMultiQueue, DeviceSingleQueue, Completion, };
+use crate::signal::{SignalHandle, DeviceConsumable, DeviceSignal, GlobalSignal,
+                    HostConsumable, SignalFactory, };
 use crate::boxed::{RawPoolBox, LocallyAccessiblePoolBox, };
 use crate::alloc::{LapBox, LapVec};
 
 /// This is unsafe because you must ensure the proper dep signals are registered!
 /// You should probably just use the `GeobacterDeps` derive macro to implement this.
 pub unsafe trait Deps {
+  #[doc(hidden)]
+  fn barrier_impl<F, S, Q>(&self, dev: &Arc<HsaAmdGpuAccel>,
+                           queue: &Q,
+                           completion: &mut S,
+                           mut iter_deps: F)
+    -> Result<(), Error>
+    where F: for<'a> FnMut(&'a Self,
+      &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), Error>)
+      -> Result<(), Error>,
+          S: SignalFactory,
+          Q: RingQueue,
+  {
+    let packets = {
+      let mut packets = 0i64;
+      let mut count = 0;
+
+      iter_deps(self, &mut |_| {
+        count += 1;
+        if count == 5 {
+          packets += 1;
+          count = 0;
+        }
+        Ok(())
+      })?;
+
+      if count != 0 {
+        packets += 1;
+      }
+      packets
+    };
+
+    completion.reset(dev, packets)?;
+    if packets == 0 {
+      return Ok(());
+    }
+
+    let mut signals: SmallVec<[SignalRef; 5]> = SmallVec::new();
+    {
+      let mut f = |sig: &dyn DeviceConsumable| -> Result<(), Error> {
+        let sig = unsafe {
+          ::std::mem::transmute_copy(sig.signal_ref())
+        };
+        signals.push(sig);
+        if signals.len() == 5 {
+          {
+            let mut deps = signals.iter();
+            queue.try_enqueue_barrier_and(&mut deps,
+                                          Some(completion.signal_ref()))?;
+            gamd_std::host_debug_assert_eq!(deps.len(), 0);
+          }
+          signals.clear();
+        }
+
+        Ok(())
+      };
+      iter_deps(self, &mut f)?;
+    }
+    if signals.len() > 0 {
+      let mut deps = signals.iter();
+      queue.try_enqueue_barrier_and(&mut deps,
+                                    Some(completion.signal_ref()))?;
+      gamd_std::host_debug_assert_eq!(deps.len(), 0);
+    }
+
+    Ok(())
+  }
+
+  fn barrier<S, Q>(&self, dev: &Arc<HsaAmdGpuAccel>, queue: &Q)
+    -> Result<S, Error>
+    where S: SignalFactory,
+          Q: RingQueue,
+  {
+    let mut c = S::new(dev, 0)?;
+    self.barrier_impl(dev,queue, &mut c,
+                      Self::iter_deps)?;
+
+    Ok(c)
+  }
+  fn global_barrier<Q>(&self, dev: &Arc<HsaAmdGpuAccel>, queue: &Q)
+    -> Result<GlobalSignal, Error>
+    where Q: RingQueue,
+  {
+    self.barrier(dev, queue)
+  }
+
   fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
     -> Result<(), CallError>;
 }
@@ -53,6 +146,15 @@ unsafe impl<T> Deps for Option<T>
 }
 
 unsafe impl<'b, T> Deps for &'b T
+  where T: Deps + ?Sized,
+{
+  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+    -> Result<(), CallError>
+  {
+    (&**self).iter_deps(f)
+  }
+}
+unsafe impl<'b, T> Deps for &'b mut T
   where T: Deps + ?Sized,
 {
   fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
@@ -382,5 +484,81 @@ unsafe impl<T> Deps for RangeToInclusive<T>
   {
     self.end.iter_deps(f)?;
     Ok(())
+  }
+}
+
+/// Turns the inner completion into a dep.
+pub struct CompletionDep<T>(T, Cell<bool>)
+  where T: Completion;
+
+impl<T> CompletionDep<T>
+  where T: Completion,
+{
+  pub fn new(v: T) -> Self {
+    CompletionDep(v, Cell::new(false))
+  }
+
+  fn host_wait(&self) {
+    if is_host() && !self.1.get() {
+      if let Some(host) = self.0.completion().as_host_consumable() {
+        if let Err(code) = host.wait_for_zero(false) {
+          panic!("got negative signal from signal: {}", code);
+        }
+      } else {
+        let v = self.0.completion()
+          .signal_ref()
+          .load_scacquire();
+        assert_eq!(v, 0, "can't directly wait on non-host-consumable signal");
+      }
+
+      self.1.set(true);
+    }
+  }
+}
+
+unsafe impl<T, S> Deps for CompletionDep<T>
+  where T: Completion<CompletionSignal = S>,
+        S: DeviceConsumable + Sized,
+{
+  #[inline(always)]
+  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+    -> Result<(), CallError>
+  {
+    f(unsafe {
+      std::mem::transmute(self.0.completion() as &dyn DeviceConsumable)
+    })
+  }
+}
+
+impl<T> Deref for CompletionDep<T>
+  where T: Completion,
+        T::CompletionSignal: DeviceConsumable,
+{
+  type Target = T;
+  fn deref(&self) -> &T {
+    self.host_wait();
+
+    &self.0
+  }
+}
+impl<T> DerefMut for CompletionDep<T>
+  where T: Completion,
+        T::CompletionSignal: DeviceConsumable,
+{
+  fn deref_mut(&mut self) -> &mut T {
+    self.host_wait();
+
+    &mut self.0
+  }
+}
+impl<T> SignalHandle for CompletionDep<T>
+  where T: Completion,
+{
+  fn signal_ref(&self) -> &SignalRef {
+    self.0.completion().signal_ref()
+  }
+
+  fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
+    self.0.completion().as_host_consumable()
   }
 }

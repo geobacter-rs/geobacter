@@ -442,7 +442,6 @@ impl HsaAmdGpuAccel {
 
     let mut signals: SmallVec<[_; 32]> = SmallVec::new();
     deps.iter_deps(&mut |dep| {
-      dep.mark_consumed();
       let signal = dep.signal_ref();
       signals.push(signal);
       Ok(())
@@ -484,7 +483,6 @@ impl HsaAmdGpuAccel {
 
     let mut signals: SmallVec<[_; 32]> = SmallVec::new();
     deps.iter_deps(&mut |dep| {
-      dep.mark_consumed();
       let signal = dep.signal_ref();
       signals.push(signal);
       Ok(())
@@ -526,7 +524,6 @@ impl HsaAmdGpuAccel {
 
     let mut signals: SmallVec<[_; 32]> = SmallVec::new();
     deps.iter_deps(&mut |dep| {
-      dep.mark_consumed();
       let signal = dep.signal_ref();
       signals.push(signal);
       Ok(())

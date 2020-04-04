@@ -181,6 +181,39 @@ unsafe impl<'a, E, F, Q, S, G> Sync for TestKernel<'a, E, F, Q, S, G>
         S: Sync,
 { }
 
+pub trait DynTraitTest: Completion { }
+impl<'a, E, F, S, G> DynTraitTest for TestKernel<'a, E, F, DeviceMultiQueue, S, G>
+  where Self: Kernel,
+        E: Send + Sync,
+        F: Fn(*mut [E], VectorParams<G>) + Unpin + Send + Sync,
+        S: SignalHandle + Unpin + Send + Sync,
+        G: GridDims<Elem = u32>,
+        G::Workgroup: From<RangeTo<u16>>,
+{ }
+
+#[test]
+fn invoc_completion_unsize() {
+  let dev = device();
+
+  let mut m = LapVec::new_in(dev.fine_lap_node_alloc(0));
+
+  const GRID: Dim1D<Range<u32>> = Dim1D { x: 0..16, };
+
+  fn f(_: *mut [u32], _: VectorParams<Dim1D<Range<u32>>>) { }
+
+  unsafe {
+    let (mut invoc, k) = TestKernel::new_global(&dev, &mut m,
+                                                &GRID, 0u32,
+                                                f);
+    let wait = invoc
+      .unchecked_call_async(&GRID, k)
+      .unwrap();
+
+    let _dyn_wait: LaunchCompletion<_, dyn DynTraitTest<CompletionSignal = GlobalSignal>, _, _>
+      = wait;
+  }
+}
+
 #[test]
 fn zero_grid_err() {
   let dev = device();

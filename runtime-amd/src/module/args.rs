@@ -6,17 +6,45 @@ use num_traits::Zero;
 
 use crate::{Error, HsaAmdGpuAccel};
 use crate::module::*;
+use crate::signal::{DeviceConsumable, SignalHandle};
 
-/// Do not implement drop on this type. Drop on `grid` is likewise also disallowed.
-#[derive(Copy, Clone)]
-pub(super) struct LaunchArgs<'a, A>
-  where A: Kernel + 'a,
+pub use crate::signal::completion::Completion;
+
+pub struct LaunchArgs<A, G>
+  where A: ?Sized,
 {
-  pub(super) args: &'a A,
   /// The real grid size. The grid size as given to HSA will be rounded up to align with the
   /// workgroup size. This field records the user grid size as originally given.
-  pub(super) grid: A::Grid,
+  pub(super) grid: G,
+  pub(super) args: A,
 }
+
+impl<A, G> LaunchArgs<A, G>
+  where A: ?Sized,
+{
+  #[inline(always)]
+  pub fn original_grid(&self) -> &G { &self.grid }
+}
+impl<A, G> Deref for LaunchArgs<A, G>
+  where A: ?Sized,
+{
+  type Target = A;
+  fn deref(&self) -> &A { &self.args }
+}
+impl<A, G> Completion for LaunchArgs<A, G>
+  where A: Completion + ?Sized,
+{
+  type CompletionSignal = A::CompletionSignal;
+  #[inline(always)]
+  fn completion(&self) -> &Self::CompletionSignal { self.args.completion() }
+}
+pub type KLaunchArgs<A> = LaunchArgs<A, <A as Kernel>::Grid>;
+
+impl<A1, A2, G> CoerceUnsized<LaunchArgs<A2, G>> for LaunchArgs<A1, G>
+  where A1: CoerceUnsized<A2> + Completion + ?Sized,
+        A2: Completion + ?Sized,
+        G: GridDims,
+{ }
 
 pub struct VectorParams<G>
   where G: GridDims,
@@ -171,8 +199,15 @@ impl<G> DimTranspose for VectorParams<G>
   }
 }
 
-pub trait Completion: Deps {
-  type CompletionSignal: SignalHandle + ?Sized;
+/// Implement this trait for your kernel's argument structure. In the future, a derive macro
+/// will help you deal with these details.
+pub trait Kernel: Completion + Deps + Sync + Unpin {
+  type Grid: GridDims;
+  const WORKGROUP: <Self::Grid as GridDims>::Workgroup;
+
+  type Queue: ?Sized;
+
+  fn queue(&self) -> &Self::Queue;
 
   /// Iterates over all dep signals, but will skip the completion signal.
   #[inline(always)]
@@ -189,19 +224,6 @@ pub trait Completion: Deps {
       }
     })
   }
-
-  fn completion(&self) -> &Self::CompletionSignal;
-}
-
-/// Implement this trait for your kernel's argument structure. In the future, a derive macro
-/// will help you deal with these details.
-pub trait Kernel: Completion + Send + Sync + Unpin {
-  type Grid: GridDims;
-  const WORKGROUP: <Self::Grid as GridDims>::Workgroup;
-
-  type Queue: ?Sized;
-
-  fn queue(&self) -> &Self::Queue;
 
   #[inline(always)]
   fn module(device: &Arc<HsaAmdGpuAccel>) -> FuncModule<Self>
@@ -235,6 +257,22 @@ mod test {
     type CompletionSignal = Arc<GlobalSignal>;
     fn completion(&self) -> &Self::CompletionSignal { &self.completion }
   }
+  impl Kernel for CompletionTest {
+    type Grid = Dim1D<Range<u32>>;
+    const WORKGROUP: Dim1D<RangeTo<u16>> = Dim1D {
+      x: ..1,
+    };
+
+    type Queue = DeviceSingleQueue;
+    fn queue(&self) -> &DeviceSingleQueue {
+      unimplemented!();
+    }
+
+    fn kernel(&self, _: KVectorParams<Self>) {
+      unimplemented!();
+    }
+  }
+
   #[test]
   fn no_completion_in_deps() {
     let _ = device();

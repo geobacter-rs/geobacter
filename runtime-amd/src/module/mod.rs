@@ -7,7 +7,7 @@ use std::ops::{CoerceUnsized, Deref, };
 use std::pin::Pin;
 use std::ptr::{self, Unique, };
 use std::sync::{Arc, atomic, };
-use std::sync::atomic::{AtomicUsize, Ordering, AtomicBool, };
+use std::sync::atomic::{AtomicUsize, Ordering, };
 
 use alloc_wg::boxed::Box;
 
@@ -42,12 +42,12 @@ use self::args_pool::ArgsPoolAlloc;
 pub use self::args::*;
 pub use self::args_pool::ArgsPool;
 pub use self::grid::*;
-pub use self::deps::Deps;
+pub use crate::signal::deps;
+pub use crate::signal::deps::Deps;
 
 pub mod args;
 pub mod args_pool;
 pub mod grid;
-pub mod deps;
 
 #[cfg(test)]
 mod test;
@@ -56,7 +56,7 @@ mod test;
 
 /// This is the kernel that the GPU directly runs. This function should probably call
 /// Self::kernel after doing some light bookkeeping.
-fn launch_kernel<A>(this: &LaunchArgs<A>)
+fn launch_kernel<A>(this: &KLaunchArgs<A>)
   where A: Kernel + Sized,
 {
   let params = VectorParams::new_internal(&this.grid, &A::WORKGROUP);
@@ -65,7 +65,7 @@ fn launch_kernel<A>(this: &LaunchArgs<A>)
   }
 }
 
-type InvocArgs<'a, A> = (A, LaunchArgs<'a, A>, &'a LaunchArgs<'a, A>, );
+type InvocArgs<'a, A> = (KLaunchArgs<A>, &'a KLaunchArgs<A>, );
 
 pub struct FuncModule<A>
   where A: Kernel,
@@ -334,7 +334,7 @@ impl<A, P, FM> Invoc<A, P, FM>
 {
   /// The associated completion signal should already have the correct value set, eg set to `1`.
   pub unsafe fn unchecked_call_async(&mut self, grid: &A::Grid, args: A)
-    -> Result<InvocCompletion<P, A, A::CompletionSignal>, Error>
+    -> Result<LaunchCompletion<P, A, A::CompletionSignal, A::Grid>, Error>
     where A::Queue: RingQueue,
   {
     self.try_unchecked_call_async(grid, args)
@@ -343,7 +343,7 @@ impl<A, P, FM> Invoc<A, P, FM>
   /// Kernarg allocation can fail, so this function allows you re-call without having
   /// to also recreate the arguments (since we move them into a pinned box internally).
   pub unsafe fn try_unchecked_call_async(&mut self, grid: &A::Grid, args: A)
-    -> Result<InvocCompletion<P, A, A::CompletionSignal>, (Error, A)>
+    -> Result<LaunchCompletion<P, A, A::CompletionSignal, A::Grid>, (Error, A)>
     where A::Queue: RingQueue,
   {
     let mut args = Some(args);
@@ -353,7 +353,7 @@ impl<A, P, FM> Invoc<A, P, FM>
     }
   }
   unsafe fn _try_unchecked_call_async(&mut self, grid: &A::Grid, args: &mut Option<A>)
-    -> Result<InvocCompletion<P, A, A::CompletionSignal>, Error>
+    -> Result<LaunchCompletion<P, A, A::CompletionSignal, A::Grid>, Error>
     where A::Queue: RingQueue,
   {
     use num_traits::ops::checked::*;
@@ -413,10 +413,10 @@ impl<A, P, FM> Invoc<A, P, FM>
         .compile_internal()?;
 
       let kargs_size = kernel.desc.kernarg_segment_size as usize;
-      assert!(kargs_size == size_of::<(&LaunchArgs<A>, )>(),
+      assert!(kargs_size == size_of::<(&KLaunchArgs<A>, )>(),
               "internal error: unexpected codegen argument size: \
               {} actual vs {} expected", kargs_size,
-              size_of::<(&LaunchArgs<A>, )>());
+              size_of::<(&KLaunchArgs<A>, )>());
 
       kernel
         .kernel_object
@@ -427,9 +427,8 @@ impl<A, P, FM> Invoc<A, P, FM>
 
     let mut kernargs = self.pool.alloc::<InvocArgs<A>>()
       .ok_or(Error::KernelArgsPoolOom)?;
-    let kargs = kernargs.cast();
-    let launch_args = (&mut kernargs.as_mut().1) as *mut LaunchArgs<A>;
-    let launch_args_ref = (&mut kernargs.as_mut().2) as *mut &LaunchArgs<A>;
+    let launch_args = (&mut kernargs.as_mut().0) as *mut _;
+    let launch_args_ref = (&mut kernargs.as_mut().1) as *mut _;
 
     // enqueue the dep barriers. this is done after kernarg allocation
     // so that this step isn't repeated if we're called again as a result
@@ -439,7 +438,6 @@ impl<A, P, FM> Invoc<A, P, FM>
       let mut signals: SmallVec<[SignalRef; 5]> = SmallVec::new();
       {
         let mut f = |sig: &dyn DeviceConsumable| -> Result<(), Error> {
-          sig.mark_consumed();
           let sig = ::std::mem::transmute_copy(sig.signal_ref());
           signals.push(sig);
           if signals.len() == 5 {
@@ -463,12 +461,11 @@ impl<A, P, FM> Invoc<A, P, FM>
       }
     }
 
-    ptr::write(kargs.as_ptr(), args.take().unwrap());
-    ptr::write(launch_args, LaunchArgs {
-      args: kargs.as_ref(),
+    ptr::write(launch_args, KLaunchArgs {
+      args: args.take().unwrap(),
       grid: grid.clone(),
     });
-    ptr::write(launch_args_ref, launch_args.as_ref().unwrap());
+    ptr::write(launch_args_ref, &*launch_args);
 
     let dispatch = DispatchPacket {
       workgroup_size: (wg_size.x, wg_size.y, wg_size.z, ),
@@ -480,7 +477,7 @@ impl<A, P, FM> Invoc<A, P, FM>
       ordered: false,
       kernel_object,
       kernel_args: &*launch_args_ref,
-      completion_signal: Some(kargs.as_ref()
+      completion_signal: Some((&*launch_args).args
         .completion()
         .signal_ref()),
     };
@@ -488,20 +485,23 @@ impl<A, P, FM> Invoc<A, P, FM>
     // Ensure the writes to the kernel args are all the way to memory:
     atomic::fence(Ordering::SeqCst);
 
-    match kargs.as_ref().queue().try_enqueue_kernel_dispatch(dispatch) {
+    match (&*launch_args).args.queue().try_enqueue_kernel_dispatch(dispatch) {
       Ok(()) => { },
       Err(err) => {
         // return args:
-        *args = Some(ptr::read(kargs.as_ptr()));
+        let KLaunchArgs {
+          args: launch_args,
+          ..
+        } = ptr::read(launch_args);
+        *args = Some(launch_args);
         return Err(err.into());
       }
     }
 
-    let kargs = Box::from_raw_in(kargs.as_ptr(),
+    let kargs = Box::from_raw_in(launch_args,
                                  ArgsPoolAlloc(self.pool.clone()));
 
     Ok(InvocCompletion {
-      waited: AtomicBool::new(false),
       args: Box::into_pin(kargs),
     })
   }
@@ -515,29 +515,31 @@ pub struct InvocCompletion<P, A, S>
         S: SignalHandle + ?Sized,
         A: Completion<CompletionSignal = S> + ?Sized,
 {
-  /// a flag which we will set when we get used as a dep in
-  /// another invoc. Only used when our completion signal
-  /// is a device signal.
-  waited: AtomicBool,
-  /// Keep this last so we can be unsized
   args: Pin<Box<A, args_pool::ArgsPoolAlloc<P>>>,
+}
+pub type LaunchCompletion<P, A, S, G> = InvocCompletion<P, LaunchArgs<A, G>, S>;
+
+impl<P, A, S> InvocCompletion<P, KLaunchArgs<A>, S>
+  where P: Deref<Target = ArgsPool> + Clone,
+        S: SignalHandle + ?Sized,
+        A: Kernel<CompletionSignal = S>,
+{
+  pub unsafe fn wait_ref<F, R>(&self, f: F) -> SignaledDeref<R, &S>
+    where F: FnOnce(&A) -> R,
+          S: HostConsumable,
+  {
+    let args = self.args.as_ref().get_ref();
+    let signal = args.args.completion();
+    let r = f(&args.args);
+
+    SignaledDeref::new(r, signal)
+  }
 }
 impl<P, A, S> InvocCompletion<P, A, S>
   where P: Deref<Target = ArgsPool> + Clone,
         S: SignalHandle + ?Sized,
         A: Completion<CompletionSignal = S> + ?Sized,
 {
-  pub unsafe fn wait_ref<F, R>(&self, f: F) -> SignaledDeref<R, &S>
-    where F: FnOnce(Pin<&A>) -> R,
-          S: HostConsumable,
-  {
-    let args = self.args.as_ref();
-    let signal = self.args.completion();
-    let r = f(args);
-
-    SignaledDeref::new(r, signal)
-  }
-
   pub fn ret<R>(self, ret: R) -> InvocCompletionReturn<P, A, S, R>
     where A: Sized,
   {
@@ -547,11 +549,6 @@ impl<P, A, S> InvocCompletion<P, A, S>
     }
   }
 }
-impl<P, A, S> InvocCompletion<P, A, S>
-  where P: Deref<Target = ArgsPool> + Clone,
-        S: HostConsumable,
-        A: Completion<CompletionSignal = S> + ?Sized,
-{ }
 unsafe impl<P, A> deps::Deps for InvocCompletion<P, A, dyn DeviceConsumable>
   where P: Deref<Target = ArgsPool> + Clone,
         A: Completion<CompletionSignal = dyn DeviceConsumable> + ?Sized,
@@ -562,14 +559,14 @@ unsafe impl<P, A> deps::Deps for InvocCompletion<P, A, dyn DeviceConsumable>
     f(self.args.completion())
   }
 }
-impl<P, A, S> Deref for InvocCompletion<P, A, S>
+impl<P, A, S, G> Deref for InvocCompletion<P, LaunchArgs<A, G>, S>
   where P: Deref<Target = ArgsPool> + Clone,
         S: SignalHandle,
         A: Completion<CompletionSignal = S> + ?Sized,
 {
   type Target = A;
   fn deref(&self) -> &Self::Target {
-    &self.args
+    &self.args.args
   }
 }
 // impl the signal traits so that invoc completions can be reused for multiple
@@ -583,11 +580,6 @@ impl<P, A, S> SignalHandle for InvocCompletion<P, A, S>
     self.args
       .completion()
       .signal_ref()
-  }
-
-  unsafe fn mark_consumed(&self) {
-    self.waited
-      .store(true, Ordering::Release)
   }
 
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
@@ -616,14 +608,12 @@ impl<P, A, S> HostConsumable for InvocCompletion<P, A, S>
     self.args
       .completion()
       .wait_for_zero_relaxed(spin)?;
-    self.mark_consumed();
     Ok(())
   }
   fn wait_for_zero(&self, spin: bool) -> Result<(), Value> {
     self.args
       .completion()
       .wait_for_zero(spin)?;
-    unsafe { self.mark_consumed() };
     Ok(())
   }
 }
@@ -633,7 +623,7 @@ impl<P, A, S> Drop for InvocCompletion<P, A, S>
         A: Completion<CompletionSignal = S> + ?Sized,
 {
   fn drop(&mut self) {
-    let mut waited = self.waited.load(Ordering::Acquire);
+    let mut waited = false;
     if !waited {
       if let Some(host) = self.args.completion().as_host_consumable() {
         if let Err(code) = host.wait_for_zero(false) {
@@ -641,6 +631,12 @@ impl<P, A, S> Drop for InvocCompletion<P, A, S>
         }
 
         waited = true;
+      } else {
+        let v = self.args
+          .completion()
+          .signal_ref()
+          .load_scacquire();
+        waited = v == 0;
       }
     }
 
@@ -682,11 +678,6 @@ impl<P, A, S, R> SignalHandle for InvocCompletionReturn<P, A, S, R>
   fn signal_ref(&self) -> &SignalRef {
     self.invoc.signal_ref()
   }
-
-  unsafe fn mark_consumed(&self) {
-    self.invoc.mark_consumed()
-  }
-
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
     self.invoc.as_host_consumable()
   }

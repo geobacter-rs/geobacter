@@ -154,11 +154,6 @@ impl<S, H, D, R> SignalHandle for H2DMemoryTransfer<S, H, D, R>
         R: Deps,
 {
   fn signal_ref(&self) -> &SignalRef { self.transfer.signal_ref() }
-  #[doc(hidden)]
-  #[inline(always)]
-  unsafe fn mark_consumed(&self) {
-    self.transfer.mark_consumed()
-  }
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
     self.transfer.as_host_consumable()
   }
@@ -336,7 +331,7 @@ impl<T> H2DMemcpyObject for LapVec<T>
 }
 
 pub trait H2DMemcpyGroup<S, D>
-  where S: SignalHandle + ResettableSignal + Clone,
+  where S: SignalFactory + Clone,
         D: Deps,
 {
   type Transfer;

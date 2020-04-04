@@ -18,12 +18,11 @@ use grt_core::AcceleratorId;
 
 pub use hsa_rt::signal::Value;
 
+pub mod completion;
+pub mod deps;
+
 pub trait SignalHandle {
   fn signal_ref(&self) -> &SignalRef;
-
-  /// Do not call this on your own.
-  #[doc = "hidden"]
-  unsafe fn mark_consumed(&self);
 
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable>;
 }
@@ -31,7 +30,6 @@ impl<'a, T> SignalHandle for &'a T
   where T: SignalHandle + ?Sized,
 {
   fn signal_ref(&self) -> &SignalRef { (**self).signal_ref() }
-  unsafe fn mark_consumed(&self) { (**self).mark_consumed() }
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
     (**self).as_host_consumable()
   }
@@ -40,7 +38,6 @@ impl<'a, T> SignalHandle for &'a mut T
   where T: SignalHandle + ?Sized,
 {
   fn signal_ref(&self) -> &SignalRef { (**self).signal_ref() }
-  unsafe fn mark_consumed(&self) { (**self).mark_consumed() }
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
     (**self).as_host_consumable()
   }
@@ -49,7 +46,6 @@ impl<T> SignalHandle for Rc<T>
   where T: SignalHandle + ?Sized,
 {
   fn signal_ref(&self) -> &SignalRef { (**self).signal_ref() }
-  unsafe fn mark_consumed(&self) { (**self).mark_consumed() }
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
     (**self).as_host_consumable()
   }
@@ -58,7 +54,6 @@ impl<T> SignalHandle for Arc<T>
   where T: SignalHandle + ?Sized,
 {
   fn signal_ref(&self) -> &SignalRef { (**self).signal_ref() }
-  unsafe fn mark_consumed(&self) { (**self).mark_consumed() }
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
     (**self).as_host_consumable()
   }
@@ -72,46 +67,38 @@ impl Deref for dyn SignalHandle {
 /// thus taking a mutable reference to a immutable reference would allow
 /// one to reset the signal, possibly while in use, breaking signal dependency
 /// chains.
+/// You probably shouldn't implement this yourself.
 pub trait ResettableSignal {
-  fn reset(&mut self, device: &Arc<HsaAmdGpuAccel>, initial: Value)
-    -> Result<(), HsaError>;
+  /// Must only return Some(..) when self is internally unique.
+  fn resettable_get_mut(&mut self, f: impl FnOnce(&SignalRef)) -> bool;
 }
-impl<'a, T> ResettableSignal for &'a mut T
-  where T: ResettableSignal,
+impl<T> ResettableSignal for T
+  where T: SignalHandle,
 {
-  fn reset(&mut self, device: &Arc<HsaAmdGpuAccel>,
-           initial: Value)
-    -> Result<(), HsaError>
-  {
-    (&mut **self).reset(device, initial)
+  #[inline(always)]
+  default fn resettable_get_mut(&mut self, f: impl FnOnce(&SignalRef)) -> bool {
+    f(self.signal_ref());
+    true
   }
 }
 impl<T> ResettableSignal for Rc<T>
-  where T: ResettableSignal + SignalFactory,
+  where T: SignalHandle,
 {
-  fn reset(&mut self, device: &Arc<HsaAmdGpuAccel>, initial: Value)
-    -> Result<(), HsaError>
-  {
-    if let Some(sig) = Rc::get_mut(self) {
-      sig.reset(device, initial)?;
-    } else {
-      *self = Rc::new(T::new(device, initial)?)
-    }
-    Ok(())
+  #[inline(always)]
+  fn resettable_get_mut(&mut self, f: impl FnOnce(&SignalRef)) -> bool {
+    Rc::get_mut(self)
+      .map(|this| f(this.signal_ref()) )
+      .is_some()
   }
 }
 impl<T> ResettableSignal for Arc<T>
-  where T: ResettableSignal + SignalFactory,
+  where T: SignalHandle,
 {
-  fn reset(&mut self, device: &Arc<HsaAmdGpuAccel>, initial: Value)
-    -> Result<(), HsaError>
-  {
-    if let Some(sig) = Arc::get_mut(self) {
-      sig.reset(device, initial)?;
-    } else {
-      *self = Arc::new(T::new(device, initial)?)
-    }
-    Ok(())
+  #[inline(always)]
+  fn resettable_get_mut(&mut self, f: impl FnOnce(&SignalRef)) -> bool {
+    Arc::get_mut(self)
+      .map(|this| f(this.signal_ref()) )
+      .is_some()
   }
 }
 
@@ -125,17 +112,8 @@ impl Deref for HostSignal {
 }
 impl SignalHandle for HostSignal {
   fn signal_ref(&self) -> &SignalRef { &**self }
-  unsafe fn mark_consumed(&self) { }
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
     Some(self)
-  }
-}
-impl ResettableSignal for HostSignal {
-  fn reset(&mut self, _: &Arc<HsaAmdGpuAccel>, initial: Value)
-    -> Result<(), HsaError>
-  {
-    (&**self).silent_store_relaxed(initial);
-    Ok(())
   }
 }
 
@@ -149,16 +127,7 @@ impl Deref for DeviceSignal {
 }
 impl SignalHandle for DeviceSignal {
   fn signal_ref(&self) -> &SignalRef { &**self }
-  unsafe fn mark_consumed(&self) { }
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> { None }
-}
-impl ResettableSignal for DeviceSignal {
-  fn reset(&mut self, _: &Arc<HsaAmdGpuAccel>, initial: Value)
-    -> Result<(), HsaError>
-  {
-    (&**self).silent_store_relaxed(initial);
-    Ok(())
-  }
 }
 
 /// A signal handle which any device on this system can consume (wait on).
@@ -179,17 +148,8 @@ impl Deref for GlobalSignal {
 }
 impl SignalHandle for GlobalSignal {
   fn signal_ref(&self) -> &SignalRef { &**self }
-  unsafe fn mark_consumed(&self) { }
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
     Some(self)
-  }
-}
-impl ResettableSignal for GlobalSignal {
-  fn reset(&mut self, _: &Arc<HsaAmdGpuAccel>, initial: Value)
-    -> Result<(), HsaError>
-  {
-    (&**self).silent_store_relaxed(initial);
-    Ok(())
   }
 }
 
@@ -280,9 +240,6 @@ pub trait HostConsumable: SignalHandle {
       }
     }
 
-    // only mark ourselves as consumed *after* we've finished waiting.
-    self.mark_consumed();
-
     r
   }
   /// The signal can be set to negative numbers to indicate
@@ -311,22 +268,93 @@ impl<T> HostConsumable for Arc<T>
   where T: HostConsumable + ?Sized,
 { }
 
-pub trait SignalFactory: Sized {
-  fn new(device: &Arc<HsaAmdGpuAccel>, initial: Value) -> Result<Self, HsaError>;
+#[inline(always)]
+fn reset_impl<T>(this: &mut T, device: &Arc<HsaAmdGpuAccel>, initial: Value)
+  -> Result<(), HsaError>
+  where T: SignalFactory,
+{
+  let r = this.resettable_get_mut(|signal| {
+    signal.silent_store_relaxed(initial);
+  });
+  if r {
+    return Ok(());
+  }
+
+  *this = T::new(device, initial)?;
+  Ok(())
+}
+
+pub trait SignalFactory: ResettableSignal + SignalHandle {
+  fn new(device: &Arc<HsaAmdGpuAccel>, initial: Value) -> Result<Self, HsaError>
+    where Self: Sized;
+
+  fn reset(&mut self, device: &Arc<HsaAmdGpuAccel>, initial: Value)
+    -> Result<(), HsaError>;
 }
 impl SignalFactory for GlobalSignal {
   fn new(_: &Arc<HsaAmdGpuAccel>, initial: Value) -> Result<Self, HsaError> {
     GlobalSignal::new(initial)
+  }
+
+  #[inline(always)]
+  fn reset(&mut self, device: &Arc<HsaAmdGpuAccel>, initial: Value)
+    -> Result<(), HsaError>
+  {
+    reset_impl(self, device, initial)
   }
 }
 impl SignalFactory for DeviceSignal {
   fn new(device: &Arc<HsaAmdGpuAccel>, initial: Value) -> Result<Self, HsaError> {
     device.new_device_signal(initial)
   }
+
+  #[inline(always)]
+  fn reset(&mut self, device: &Arc<HsaAmdGpuAccel>, initial: Value)
+    -> Result<(), HsaError>
+  {
+    reset_impl(self, device, initial)
+  }
 }
 impl SignalFactory for HostSignal {
   fn new(device: &Arc<HsaAmdGpuAccel>, initial: Value) -> Result<Self, HsaError> {
     device.new_host_signal(initial)
+  }
+
+  #[inline(always)]
+  fn reset(&mut self, device: &Arc<HsaAmdGpuAccel>, initial: Value)
+    -> Result<(), HsaError>
+  {
+    reset_impl(self, device, initial)
+  }
+}
+impl<S> SignalFactory for Rc<S>
+  where S: SignalFactory,
+{
+  fn new(device: &Arc<HsaAmdGpuAccel>, initial: Value) -> Result<Self, HsaError> {
+    let s = S::new(device, initial)?;
+    Ok(Rc::new(s))
+  }
+
+  #[inline(always)]
+  fn reset(&mut self, device: &Arc<HsaAmdGpuAccel>, initial: Value)
+    -> Result<(), HsaError>
+  {
+    reset_impl(self, device, initial)
+  }
+}
+impl<S> SignalFactory for Arc<S>
+  where S: SignalFactory,
+{
+  fn new(device: &Arc<HsaAmdGpuAccel>, initial: Value) -> Result<Self, HsaError> {
+    let s = S::new(device, initial)?;
+    Ok(Arc::new(s))
+  }
+
+  #[inline(always)]
+  fn reset(&mut self, device: &Arc<HsaAmdGpuAccel>, initial: Value)
+    -> Result<(), HsaError>
+  {
+    reset_impl(self, device, initial)
   }
 }
 
