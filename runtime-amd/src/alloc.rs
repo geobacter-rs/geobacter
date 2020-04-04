@@ -101,14 +101,26 @@ fn add_access(build_alloc: &mut LapAlloc,
   accessible.push(device.agent().clone());
 
   let pool = &build_alloc.pool;
-  let aa = pool.agent_access(device.agent())?;
+  let aa = match pool.agent_access(device.agent()) {
+    Ok(v) => v,
+    Err(err) => {
+      accessible.pop();
+      return Err(err);
+    },
+  };
   if aa.never_allowed() {
     error!("pool {:?} not sharable with this device ({:?})",
            pool, device.id());
     return Err(HsaError::General);
   } else if aa.default_disallowed() {
     if let Some(pool_ptr) = pool_ptr {
-      pool_ptr.grant_agents_access(&accessible)?;
+      match pool_ptr.grant_agents_access(&accessible) {
+        Ok(()) => { },
+        Err(err) => {
+          accessible.pop();
+          return Err(err);
+        },
+      }
     }
   } else if aa.default_allowed() {
     // nothing to do
