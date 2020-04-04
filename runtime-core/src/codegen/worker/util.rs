@@ -81,17 +81,22 @@ pub fn on_global_thread_pool<F, R>(f: F) -> R
   where F: FnOnce() -> R + Send,
         R: Send,
 {
-  use crate::rustc_data_structures::rayon::{scope, };
+  use crate::rustc_data_structures::rayon::{scope, current_thread_index, };
 
   let gcx_ptr = &Lock::new(0);
 
-  let mut r = None;
+  if current_thread_index().is_some() {
+    // don't spawn; we're already on a thread with a large stack
+    ty::tls::GCX_PTR.set(gcx_ptr, f)
+  } else {
+    let mut r = None;
 
-  scope(|scope| {
-    scope.spawn(|_| {
-      r = Some(ty::tls::GCX_PTR.set(gcx_ptr, f))
-    })
-  });
+    scope(|scope| {
+      scope.spawn(|_| {
+        r = Some(ty::tls::GCX_PTR.set(gcx_ptr, f))
+      })
+    });
 
-  r.unwrap()
+    r.unwrap()
+  }
 }
