@@ -1,7 +1,6 @@
 
 [workspace]
-members = ["hsa-core-gen", "geobacter-core",
-           "runtime-core", "shared-defs",
+members = ["geobacter-core", "runtime-core", "shared-defs",
 
            "rustc-driver-base", "rustc-help",
            "bootstrap-rustc-driver", "rustc-driver",
