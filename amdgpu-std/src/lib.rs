@@ -26,12 +26,7 @@ pub fn dispatch_packet() -> DispatchPacket {
   DispatchPacket(unsafe {
     let ptr = __geobacter_dispatch_ptr();
     let ptr: *const hsa_kernel_dispatch_packet_t = ptr as *const _;
-    match ptr.as_ref() {
-      Some(r) => r,
-      // Don't pull in panic code (which will in turn pull in
-      // format!, fmt::Debug, and virtual dispatch).
-      None => ::std::hint::unreachable_unchecked(),
-    }
+    &*ptr
   })
 }
 
