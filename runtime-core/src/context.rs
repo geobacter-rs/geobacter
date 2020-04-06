@@ -56,7 +56,7 @@ impl AsyncCodegenMetadataLoader {
 }
 
 /// This structure should be used like you'd use a singleton.
-pub struct ContextData {
+struct ContextData {
   #[allow(dead_code)]
   syntax_globals: Arc<syntax::attr::Globals>,
   metadata: AsyncCodegenMetadataLoader,
@@ -66,7 +66,7 @@ pub struct ContextData {
   m: RwLock<ContextDataMut>,
 }
 /// Data that will be wrapped in a rw mutex.
-pub struct ContextDataMut {
+struct ContextDataMut {
   accelerators: IndexVec<AcceleratorId, Option<Arc<dyn Accelerator>>>,
 
   translators: Translators,
