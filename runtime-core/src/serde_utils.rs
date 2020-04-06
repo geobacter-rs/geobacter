@@ -140,6 +140,14 @@ pub struct TargetOptions {
   /// libraries that should be always be linked to, usually go here.
   #[serde(with = "self::link_args")]
   pub late_link_args: ::rustc_target::spec::LinkArgs,
+  /// Linker arguments used in addition to `late_link_args` if at least one
+  /// Rust dependency is dynamically linked.
+  #[serde(with = "self::link_args")]
+  pub late_link_args_dynamic: ::rustc_target::spec::LinkArgs,
+  /// Linker arguments used in addition to `late_link_args` if aall Rust
+  /// dependencies are statically linked.
+  #[serde(with = "self::link_args")]
+  pub late_link_args_static: ::rustc_target::spec::LinkArgs,
   /// Objects to link after all others, always found within the
   /// sysroot folder.
   pub post_link_objects: Vec<String>, // ... unconditionally
@@ -254,11 +262,6 @@ pub struct TargetOptions {
   pub archive_format: String,
   /// Is asm!() allowed? Defaults to true.
   pub allow_asm: bool,
-  /// Whether the target uses a custom unwind resumption routine.
-  /// By default LLVM lowers `resume` instructions into calls to `_Unwind_Resume`
-  /// defined in libgcc.  If this option is enabled, the target must provide
-  /// `eh_unwind_resume` lang item.
-  pub custom_unwind_resume: bool,
   /// Whether the runtime startup code requires the `main` function be passed
   /// `argc` and `argv` values.
   pub main_needs_argc_argv: bool,
@@ -270,11 +273,6 @@ pub struct TargetOptions {
   // If we give emcc .o files that are actually .bc files it
   // will 'just work'.
   pub obj_is_bitcode: bool,
-
-  // LLVM can't produce object files for this target. Instead, we'll make LLVM
-  // emit assembly and then use `gcc` to turn that assembly into an object
-  // file
-  pub no_integrated_as: bool,
 
   /// Don't use this field; instead use the `.min_atomic_width()` method.
   pub min_atomic_width: Option<u64>,
@@ -331,9 +329,6 @@ pub struct TargetOptions {
   /// The default visibility for symbols in this target should be "hidden"
   /// rather than "default"
   pub default_hidden_visibility: bool,
-
-  /// Whether or not bitcode is embedded in object files
-  pub embed_bitcode: bool,
 
   /// Whether a .debug_gdb_scripts section will be added to the output object file
   pub emit_debug_gdb_scripts: bool,

@@ -1,8 +1,9 @@
 
 use std::fmt;
 
-use rustc::mir::*;
-use rustc::ty::{self, TyCtxt, TyKind, layout::VariantIdx, };
+use rustc_middle::mir::*;
+use rustc_middle::ty::{self, TyCtxt, TyKind, };
+use rustc_target::abi::VariantIdx;
 use rustc_span::Symbol;
 
 use super::*;

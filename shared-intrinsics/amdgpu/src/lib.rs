@@ -9,16 +9,15 @@
 // TODO move the workitem id stuff into the common intrinsics crate, as
 // they will be provided in some form by every platform.
 
-extern crate rustc;
+extern crate rustc_ast;
 extern crate rustc_driver;
 extern crate rustc_errors;
 extern crate rustc_metadata;
 extern crate rustc_mir;
-extern crate rustc_codegen_utils;
+extern crate rustc_middle;
 extern crate rustc_data_structures;
 extern crate rustc_span;
 extern crate rustc_target;
-extern crate syntax;
 
 #[macro_use]
 extern crate log;
@@ -31,8 +30,8 @@ use std::fmt;
 
 use geobacter_core::kernel::{OptionalFn, KernelInstance, };
 
-use crate::rustc::mir::{self, CustomIntrinsicMirGen, };
-use crate::rustc::ty::{self, TyCtxt, Instance, };
+use rustc_middle::mir::{self, CustomIntrinsicMirGen, };
+use rustc_middle::ty::{self, TyCtxt, Instance, };
 use crate::rustc_data_structures::sync::{Lrc, };
 
 use crate::grustc_help::GeobacterTyCtxtHelp;

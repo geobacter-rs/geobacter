@@ -8,15 +8,16 @@
 
 #![recursion_limit="256"]
 
-#[macro_use]
-extern crate rustc;
+extern crate rustc_ast;
 extern crate rustc_data_structures;
 extern crate rustc_hir;
 extern crate rustc_index;
+#[macro_use]
+extern crate rustc_middle;
 extern crate rustc_target;
+extern crate rustc_session;
 extern crate rustc_span;
 extern crate serialize as rustc_serialize;
-extern crate syntax;
 #[macro_use]
 extern crate log;
 
@@ -30,18 +31,18 @@ use crate::codec::GeobacterDecoder;
 
 use crate::shared_defs::{kernel::KernelDesc, };
 
-use rustc::middle::lang_items::{self, LangItem, };
-use crate::rustc::mir::{Constant, Operand, Rvalue, Place, };
-use crate::rustc::mir::interpret::{ConstValue, Scalar, Pointer,
+use rustc_middle::mir::{Constant, Operand, Rvalue, Place, };
+use rustc_middle::mir::interpret::{ConstValue, Scalar, Pointer,
                                    ScalarMaybeUndef, AllocId,
                                    Allocation, };
-use crate::rustc::mir::{self, CustomIntrinsicMirGen, };
-use crate::rustc::ty::{self, TyCtxt, layout::Size, Instance, InstanceDef, };
-use crate::rustc::ty::{Const, ParamEnv, Tuple, Array, ConstKind, };
+use rustc_middle::mir::{self, CustomIntrinsicMirGen, };
+use rustc_middle::ty::{self, TyCtxt, Instance, InstanceDef, };
+use rustc_middle::ty::{Const, ParamEnv, Tuple, Array, ConstKind, };
 use rustc_hir::def_id::DefId;
+use rustc_hir::lang_items::{self, LangItem, };
 use rustc_index::vec::Idx;
 use crate::rustc_serialize::Decodable;
-use crate::rustc_target::abi::{FieldPlacement, Align, HasDataLayout, };
+use crate::rustc_target::abi::{FieldsShape, Align, HasDataLayout, Size, };
 use rustc_span::{DUMMY_SP, Span, };
 
 pub mod codec;
@@ -357,7 +358,7 @@ pub fn build_compiler_opt<'tcx, F, T>(tcx: TyCtxt<'tcx>,
           _ => unreachable!(),
         };
 
-        let size = Size::from_bytes(size as _);
+        let size = Size::from_bytes(size);
         let align = Align::from_bytes(1).unwrap();
         let mut alloc = Allocation::undef(size, align);
         let alloc_id = tcx.alloc_map.lock().reserve();
@@ -454,8 +455,8 @@ pub fn static_tuple_alloc<'tcx, I>(tcx: TyCtxt<'tcx>,
     .and(ty);
   let layout = tcx.layout_of(env)
     .expect("layout failure");
-  let size = layout.details.size;
-  let align = layout.details.align.pref;
+  let size = layout.size;
+  let align = layout.align.pref;
 
   let data = vec![0; size.bytes() as usize];
   let mut alloc = Allocation::from_bytes(&data, align);
@@ -486,14 +487,14 @@ pub fn write_static_tuple<'tcx, I>(tcx: TyCtxt<'tcx>,
   let layout = tcx.layout_of(env)
     .expect("layout failure");
 
-  let fields = match layout.details.fields {
-    FieldPlacement::Arbitrary {
+  let fields = match layout.fields {
+    FieldsShape::Arbitrary {
       ref offsets,
       ..
     } => {
       offsets.clone()
     },
-    FieldPlacement::Array {
+    FieldsShape::Array {
       stride, count,
     } => {
       let offsets: Vec<_> = (0..count)
@@ -540,7 +541,7 @@ pub fn write_static_tuple<'tcx, I>(tcx: TyCtxt<'tcx>,
       let ptr = Pointer::new(alloc_id, base + offset);
       let size = match scalar {
         Scalar::Raw { size, .. } => {
-          Size::from_bytes(size as _)
+          Size::from_bytes(size)
         },
         Scalar::Ptr(_) => {
           tcx.data_layout().pointer_size

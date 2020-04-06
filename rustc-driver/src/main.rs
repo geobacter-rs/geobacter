@@ -10,11 +10,11 @@ extern crate geobacter_amdgpu_intrinsics as amdgpu;
 extern crate geobacter_vk_intrinsics as vk;
 extern crate geobacter_rustc_driver_base;
 
-extern crate rustc;
+extern crate rustc_middle;
 extern crate rustc_data_structures;
 
-use self::rustc::mir::{CustomIntrinsicMirGen, };
-use self::rustc::ty::{TyCtxt, };
+use rustc_middle::mir::{CustomIntrinsicMirGen, };
+use rustc_middle::ty::{TyCtxt, };
 use self::rustc_data_structures::sync::{Lrc, };
 
 use common::DriverData;

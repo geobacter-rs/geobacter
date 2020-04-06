@@ -1,8 +1,8 @@
 
 use std::fmt;
 
-use rustc::mir::*;
-use rustc::ty::{self, TyCtxt, };
+use rustc_middle::mir::*;
+use rustc_middle::ty::{self, TyCtxt, };
 use rustc_span::Symbol;
 
 use super::*;

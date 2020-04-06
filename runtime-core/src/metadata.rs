@@ -11,12 +11,12 @@ use rustc_data_structures::fx::{FxHashMap, };
 use rustc_data_structures::sync::{Lock, MetadataRef, AtomicCell, Once, };
 use rustc_data_structures::owning_ref::{OwningRef, };
 use rustc_hir::def_id::{CrateNum, };
-use rustc::middle::cstore::{MetadataLoader, CrateSource as RustcCrateSource, };
+use rustc_middle::middle::cstore::{MetadataLoader, CrateSource as RustcCrateSource, };
+use rustc_middle::mir::interpret::AllocDecodingState;
 use rustc_metadata::creader::CStore;
 use rustc_metadata::rmeta::{METADATA_HEADER, decoder,
                             decoder::MetadataBlob, CrateRoot,
                             decoder::CrateNumMap, };
-use rustc::mir::interpret::AllocDecodingState;
 use rustc_target;
 use rustc_span::symbol::{Symbol};
 use flate2::read::DeflateDecoder;
@@ -180,9 +180,9 @@ impl CrateMetadataLoader {
                 cstore: &mut CStore)
     -> Result<CrateNum, String>
   {
-    use rustc::dep_graph::DepNodeIndex;
-    use rustc::session::search_paths::PathKind;
-    use rustc::middle::cstore::DepKind;
+    use rustc_middle::dep_graph::DepNodeIndex;
+    use rustc_session::search_paths::PathKind;
+    use rustc_middle::middle::cstore::DepKind;
 
     let (src, symbol_name, shared_krate) = {
       let &(ref src, ref symbol_name, ref krate) =

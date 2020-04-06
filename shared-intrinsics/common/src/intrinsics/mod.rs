@@ -3,7 +3,7 @@ use geobacter_core::kernel::KernelInstance;
 
 use crate::driver_data::GetDriverData;
 
-use rustc::mir::CustomIntrinsicMirGen;
+use rustc_middle::mir::CustomIntrinsicMirGen;
 use rustc_data_structures::sync::Lrc;
 
 pub use rustc_help::intrinsics::*;

@@ -8,9 +8,7 @@
 // to get the paths to the dylibs.
 // Note that we don't need to reference rustc_trans.
 
-extern crate rustc;
 extern crate rustc_driver;
-extern crate syntax;
 
 use std::env::{var_os};
 use std::error::Error;

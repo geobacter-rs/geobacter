@@ -1,5 +1,5 @@
 
-use rustc::ty::{self, TyCtxt, };
+use rustc_middle::ty::{self, TyCtxt, };
 use rustc_serialize::Encodable;
 use rustc_data_structures::sync::*;
 

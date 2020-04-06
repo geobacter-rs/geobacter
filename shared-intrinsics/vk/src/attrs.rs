@@ -9,11 +9,11 @@ use std::str::FromStr;
 use crate::vko::descriptor::descriptor::{DescriptorBufferDesc,
                                          DescriptorDescTy, };
 
-use crate::syntax::ast::{NestedMetaItem, MetaItem, MetaItemKind,
-                         LitKind, Lit, };
-use crate::rustc::mir::{self, Location, HasLocalDecls, };
-use crate::rustc::mir::visit::{Visitor, };
-use crate::rustc::ty::{TyCtxt, ParamEnv, Instance, AdtDef, };
+use rustc_ast::ast::{NestedMetaItem, MetaItem, MetaItemKind,
+                     LitKind, Lit, };
+use rustc_middle::mir::{self, Location, HasLocalDecls, };
+use rustc_middle::mir::visit::{Visitor, };
+use rustc_middle::ty::{TyCtxt, ParamEnv, Instance, AdtDef, };
 use rustc_hir::def_id::DefId;
 use rustc_span::{Span, Symbol, };
 
@@ -442,7 +442,7 @@ impl<'tcx> mir::visit::Visitor<'tcx> for LangItemTypeCtorVisitor<'tcx> {
                       term: &mir::Terminator<'tcx>,
                       location: Location)
   {
-    use crate::rustc::mir::*;
+    use rustc_middle::mir::*;
 
     let tcx = self.tcx;
     match term.kind {
@@ -545,7 +545,7 @@ pub fn extract_rust_vk_lang_desc<'tcx>(tcx: TyCtxt<'tcx>,
       marker_instance: None,
     };
 
-    search.visit_body(mir);
+    search.visit_body(&mir);
 
     search.data_instance.clone()
       .and_then(|global| {

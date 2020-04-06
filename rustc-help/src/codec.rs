@@ -10,24 +10,22 @@
 
 use std::mem;
 
-use crate::rustc::hir::map::definitions::DefPathHash;
-use crate::rustc::mir::interpret::{AllocId, specialized_encode_alloc_id,
+use rustc_middle::mir::interpret::{AllocId, specialized_encode_alloc_id,
                                    AllocDecodingState, AllocDecodingSession, };
-use crate::rustc::session::CrateDisambiguator;
-use crate::rustc::ty::{TyCtxt, Ty, };
-use crate::rustc::ty::codec as ty_codec;
-use crate::rustc::ty::codec::{TyEncoder, TyDecoder, };
+use rustc_session::CrateDisambiguator;
+use rustc_middle::ty::{TyCtxt, Ty, };
+use rustc_middle::ty::codec as ty_codec;
+use rustc_middle::ty::codec::{TyEncoder, TyDecoder, };
 use crate::rustc_data_structures::fingerprint::Fingerprint;
 use crate::rustc_data_structures::fx::{FxHashMap, };
-use rustc_hir as hir;
 use rustc_hir::def_id::{CrateNum, DefIndex, DefId, LocalDefId,
                                 LOCAL_CRATE};
+use rustc_hir::definitions::DefPathHash;
 use crate::rustc_index::vec::*;
 
 use crate::rustc_serialize::{Decodable, Decoder, Encodable, Encoder, opaque,
                              SpecializedDecoder, SpecializedEncoder,
                              UseSpecializedDecodable, UseSpecializedEncodable};
-use crate::syntax::ast::NodeId;
 
 const TAG_FILE_FOOTER: u128 = 0xC0FFEE_C0FFEE_C0FFEE_C0FFEE_C0FFEE;
 
@@ -141,52 +139,15 @@ impl<'a, 'tcx> SpecializedDecoder<DefId> for GeobacterDecoder<'a, 'tcx> {
     // Load the DefPathHash which is was we encoded the DefId as.
     let def_path_hash = DefPathHash::decode(self)?;
 
-    let map = self.tcx().def_path_hash_to_def_id.as_ref().unwrap();
-    assert!(map.get(&def_path_hash).is_some(), "{:#?}", map);
-
     // Using the DefPathHash, we can lookup the new DefId
-    Ok(map[&def_path_hash])
+    Ok(self.tcx().def_path_hash_to_def_id.as_ref().unwrap()[&def_path_hash])
 
   }
 }
 impl<'a, 'tcx> SpecializedDecoder<LocalDefId> for GeobacterDecoder<'a, 'tcx> {
   #[inline]
   fn specialized_decode(&mut self) -> Result<LocalDefId, Self::Error> {
-    Ok(LocalDefId::from_def_id(DefId::decode(self)?))
-  }
-}
-impl<'a, 'tcx> SpecializedDecoder<hir::HirId> for GeobacterDecoder<'a, 'tcx> {
-  fn specialized_decode(&mut self) -> Result<hir::HirId, Self::Error> {
-    // Load the `DefPathHash` which is what we encoded the `DefIndex` as.
-    let def_path_hash = DefPathHash::decode(self)?;
-
-    // Use the `DefPathHash` to map to the current `DefId`.
-    let def_id = self.tcx()
-      .def_path_hash_to_def_id
-      .as_ref()
-      .unwrap()[&def_path_hash];
-
-    debug_assert!(def_id.is_local());
-
-    // The `ItemLocalId` needs no remapping.
-    let local_id = hir::ItemLocalId::decode(self)?;
-
-    // Reconstruct the `HirId` and look up the corresponding `NodeId` in the
-    // context of the current session.
-    Ok(hir::HirId {
-      owner: def_id.index,
-      local_id
-    })
-  }
-}
-
-// `NodeId`s are not stable across compilation sessions, so we store them in their
-// `HirId` representation. This allows use to map them to the current `NodeId`.
-impl<'a, 'tcx> SpecializedDecoder<NodeId> for GeobacterDecoder<'a, 'tcx> {
-  #[inline]
-  fn specialized_decode(&mut self) -> Result<NodeId, Self::Error> {
-    let hir_id = hir::HirId::decode(self)?;
-    Ok(self.tcx().hir().hir_to_node_id(hir_id))
+    Ok(DefId::decode(self)?.expect_local())
   }
 }
 

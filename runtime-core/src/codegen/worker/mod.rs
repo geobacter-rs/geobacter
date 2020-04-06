@@ -16,18 +16,18 @@ use std::io::{self, };
 use std::marker::{PhantomData, };
 use std::mem::{self, drop, };
 use std::sync::mpsc::{channel, Sender, Receiver, RecvTimeoutError, };
-use std::sync::{Arc, Weak, };
+use std::sync::{Arc, Weak, Once, };
 use std::time::Duration;
 
-use rustc;
-use rustc::arena::Arena;
-use rustc::middle::cstore::EncodedMetadata;
-use rustc::middle::exported_symbols::{SymbolExportLevel, };
-use rustc::mir::{CustomIntrinsicMirGen, };
-use rustc::ty::query::Providers;
-use crate::rustc::ty::{self, TyCtxt, subst::SubstsRef, };
-use rustc::session::Session;
-use rustc::session::config::OutputFilenames;
+use rustc_middle;
+use rustc_middle::arena::Arena;
+use rustc_middle::middle::cstore::EncodedMetadata;
+use rustc_middle::middle::exported_symbols::{SymbolExportLevel, };
+use rustc_middle::mir::{CustomIntrinsicMirGen, };
+use rustc_middle::ty::query::Providers;
+use rustc_middle::ty::{self, TyCtxt, subst::SubstsRef, };
+use rustc_session::Session;
+use rustc_session::config::OutputFilenames;
 use rustc_data_structures::fx::{FxHashMap};
 use rustc_data_structures::sync::{Lrc, WorkerLocal, };
 use rustc_feature as feature_gate;
@@ -75,6 +75,8 @@ const CRATE_NAME: &'static str = "geobacter-cross-codegen";
 // TODO codegen worker workers (ie codegen multiple functions concurrently)
 // Note: recreate the session/tyctxt on *every* codegen. It is not safe to reuse.
 
+static SETUP_RUSTC_INTERFACE_CALLBACKS: Once = Once::new();
+
 pub struct CodegenDriver<P>(WorkerTranslatorData<P>)
   where P: PlatformCodegen;
 impl<P> CodegenDriver<P>
@@ -85,6 +87,10 @@ impl<P> CodegenDriver<P>
              platform: P)
     -> io::Result<Self>
   {
+    SETUP_RUSTC_INTERFACE_CALLBACKS.call_once(|| {
+      rustc_interface::callbacks::setup_callbacks();
+    });
+
     let inner = WorkerTranslatorData {
       context: context.clone(),
       platform,
@@ -311,10 +317,12 @@ impl<P> WorkerTranslatorData<P>
 
 
       let registry = rustc_driver::diagnostics_registry();
-      let mut sess = rustc::session::build_session(opts, None, registry);
+      let mut sess = rustc_session::build_session(opts, None, registry);
 
       sess.crate_types.set(sess.opts.crate_types.clone());
       sess.recursion_limit.set(512);
+      sess.type_length_limit.set(1048576);
+      sess.const_eval_limit.set(1_000_000);
 
       sess.init_features(feature_gate::Features::default());
 
@@ -333,7 +341,7 @@ impl<P> WorkerTranslatorData<P>
       {
         let mut loader = CrateMetadataLoader::default();
         let CrateMetadata(meta) = loader.build(&metadata, &mut cstore)
-          .expect("metadata error");
+          .map_err(|err| error::Error::LoadMetadata(err.into()) )?;
         for meta in meta.into_iter() {
           let name = CrateNameHash {
             name: meta.root.name(),
@@ -429,7 +437,7 @@ impl<P> WorkerTranslatorData<P>
     let codegen = get_codegen_backend(&sess);
 
     // extern only providers:
-    let mut local_providers = rustc::ty::query::Providers::default();
+    let mut local_providers = rustc_middle::ty::query::Providers::default();
     self::util::default_provide(&mut local_providers);
     codegen.provide(&mut local_providers);
     Self::providers_local(&mut local_providers);
@@ -455,8 +463,8 @@ impl<P> WorkerTranslatorData<P>
     );
 
     let krate = create_empty_hir_crate();
-    let dep_graph = rustc::dep_graph::DepGraph::new(Default::default(),
-                                                    Default::default());
+    let dep_graph = rustc_middle::dep_graph::DepGraph::new(Default::default(),
+                                                           Default::default());
     let arenas = WorkerLocal::new(|_| Arena::default());
 
     let ast_krate = ast::Crate {
@@ -467,6 +475,7 @@ impl<P> WorkerTranslatorData<P>
       },
       attrs: vec![],
       span: DUMMY_SP,
+      proc_macros: Default::default(),
     };
     let resolver_arenas = Resolver::arenas();
     let crate_name = CRATE_NAME;
@@ -476,10 +485,6 @@ impl<P> WorkerTranslatorData<P>
                                               &resolver_arenas, crate_loader);
     let mut resolutions = resolver.into_outputs();
     let definitions = mem::take(&mut resolutions.definitions);
-
-    let map_crate = rustc::hir::map::map_crate(&sess, &*resolutions.cstore,
-                                               &krate, dep_graph.clone(),
-                                               definitions);
 
     let mut intrinsics = IntrinsicsMap::default();
     {
@@ -498,7 +503,7 @@ impl<P> WorkerTranslatorData<P>
         .insert_kernel_intrinsics(&desc, &mut inserter);
     }
 
-    let accels = { self.accels.read().clone() };
+    let accels = self.accels.read().clone();
 
     let driver_data: PlatformDriverData<P> =
       PlatformDriverData::new(context.clone(),
@@ -518,7 +523,9 @@ impl<P> WorkerTranslatorData<P>
       extern_providers,
       &arenas,
       resolutions,
-      map_crate,
+      &krate,
+      &definitions,
+      dep_graph.clone(),
       disk_cache,
       CRATE_NAME,
       &out,
@@ -592,8 +599,8 @@ impl<P> WorkerTranslatorData<P>
     Ok(results)
   }
 }
-pub fn create_rustc_options() -> rustc::session::config::Options {
-  use rustc::session::config::*;
+pub fn create_rustc_options() -> rustc_session::config::Options {
+  use rustc_session::config::*;
   use rustc_target::spec::*;
 
   let mut opts = Options::default();
@@ -636,7 +643,6 @@ pub fn create_rustc_options() -> rustc::session::config::Options {
   opts.incremental = None;
   opts.debugging_opts.verify_llvm_ir = false;
   opts.debugging_opts.no_landing_pads = true;
-  opts.debugging_opts.incremental_queries = false;
   opts.cg.no_prepopulate_passes = false;
   if opts.cg.no_prepopulate_passes {
     opts.cg.passes.push("name-anon-globals".into());
@@ -697,9 +703,11 @@ pub fn create_empty_hir_crate<'hir>() -> rustc_hir::Crate<'hir> {
   let body_ids = Vec::new();
 
   Crate {
-    module: m,
-    attrs,
-    span,
+    item: CrateItem {
+      module: m,
+      attrs,
+      span,
+    },
     exported_macros,
     items,
     trait_items,
@@ -709,6 +717,7 @@ pub fn create_empty_hir_crate<'hir>() -> rustc_hir::Crate<'hir> {
     body_ids,
     modules,
     non_exported_macro_attrs: Default::default(),
+    proc_macros: Default::default(),
   }
 }
 
@@ -743,7 +752,7 @@ impl<P> WorkerTranslatorData<P>
       },
       symbol_name: |tcx, instance| {
         let mut providers = Providers::default();
-        rustc_codegen_utils::symbol_names::provide(&mut providers);
+        rustc_symbol_mangling::provide(&mut providers);
 
         let instance = PlatformDriverData::<P>::with(tcx, |tcx, pd| {
           let dd = pd.dd();
@@ -793,8 +802,8 @@ impl<P> WorkerTranslatorData<P>
         })
       },
       dependency_formats: |tcx, cnum| {
-        use rustc::middle::dependency_format::Linkage;
-        use rustc::session::config::CrateType;
+        use rustc_middle::middle::dependency_format::Linkage;
+        use rustc_session::config::CrateType;
 
         assert_eq!(cnum, LOCAL_CRATE);
         let fake = tcx.all_crate_nums(LOCAL_CRATE)
@@ -810,11 +819,11 @@ impl<P> WorkerTranslatorData<P>
   }
 
   fn providers_remote_and_local(providers: &mut Providers) {
-    use rustc::session::config::EntryFnType;
+    use rustc_session::config::EntryFnType;
 
     *providers = Providers {
       fn_sig: |tcx, def_id| {
-        use rustc::ty::{Binder, FnSig, };
+        use rustc_middle::ty::{Binder, FnSig, };
 
         let mut providers = Providers::default();
         rustc_metadata::provide_extern(&mut providers);

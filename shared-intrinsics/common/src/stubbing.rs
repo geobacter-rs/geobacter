@@ -8,7 +8,7 @@
 /// String -> KernelId. Need a way to translate the absolute path into a
 /// DefId.
 
-use crate::rustc::ty::TyCtxt;
+use rustc_middle::ty::TyCtxt;
 use crate::rustc_data_structures::fx::{FxHashMap};
 
 use geobacter_core::kernel::{KernelInstance, OptionalFn, };

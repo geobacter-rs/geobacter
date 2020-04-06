@@ -5,9 +5,9 @@ use std::mem::transmute;
 use std::sync::{Weak, Arc, };
 use std::path::Path;
 
-use rustc::mir::CustomIntrinsicMirGen;
-use rustc::ty::{self, TyCtxt, };
-use rustc::session::config::OutputFilenames;
+use rustc_middle::mir::CustomIntrinsicMirGen;
+use rustc_middle::ty::{self, TyCtxt, };
+use rustc_session::config::OutputFilenames;
 use rustc_data_structures::fx::{FxHashMap, };
 use rustc_data_structures::sync::{Lrc, RwLock, ReadGuard, MappedReadGuard, };
 use rustc_hir::def_id::{DefId, };
@@ -139,7 +139,7 @@ impl<'tcx, P> PlatformDriverData<'tcx, P>
                              out: &OutputFilenames)
     -> Result<PCodegenResults<P>, PError<P>>
   {
-    use crate::rustc::session::config::*;
+    use rustc_session::config::*;
 
     let mut outputs = BTreeMap::new();
     for &output_type in out.outputs.keys() {

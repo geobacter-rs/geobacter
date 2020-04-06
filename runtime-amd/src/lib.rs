@@ -34,11 +34,12 @@ extern crate log;
 extern crate serde;
 extern crate rmp_serde as rmps;
 
-extern crate syntax;
-extern crate rustc;
+extern crate rustc_ast;
 extern crate rustc_attr;
 extern crate rustc_data_structures;
 extern crate rustc_hir;
+extern crate rustc_middle;
+extern crate rustc_session;
 extern crate rustc_target;
 extern crate serialize as rustc_serialize;
 extern crate rustc_span;
@@ -827,7 +828,6 @@ impl HsaAmdGpuAccel {
                           v256:256-v512:512-v1024:1024-v2048:2048-\
                           n32:64-S32-A5-ni:7".into();
     target.options.codegen_backend = "llvm".into();
-    target.options.custom_unwind_resume = false;
     target.options.panic_strategy = PanicStrategy::Abort;
     target.options.trap_unreachable = true;
     target.options.position_independent_executables = true;

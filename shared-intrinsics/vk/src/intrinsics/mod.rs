@@ -1,12 +1,13 @@
 
 use std::fmt;
 
-use crate::rustc::mir::{Rvalue, Statement, StatementKind, };
-use crate::rustc::mir::interpret::{ConstValue, Scalar, };
-use crate::rustc::mir::{self, };
-use crate::rustc::ty::{self, TyCtxt, layout::Size, };
-use crate::rustc::ty::{Const, };
+use rustc_middle::mir::{Rvalue, Statement, StatementKind, };
+use rustc_middle::mir::interpret::{ConstValue, Scalar, };
+use rustc_middle::mir::{self, };
+use rustc_middle::ty::{self, TyCtxt, };
+use rustc_middle::ty::{Const, };
 use rustc_span::{DUMMY_SP, };
+use rustc_target::abi::Size;
 
 use crate::grustc_help::*;
 

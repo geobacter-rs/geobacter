@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use crate::log::{info, };
 
-use rustc::middle::codegen_fn_attrs::CodegenFnAttrs;
-use crate::rustc::ty::{TyCtxt, Instance, };
+use rustc_middle::middle::codegen_fn_attrs::CodegenFnAttrs;
+use rustc_middle::ty::{TyCtxt, Instance, };
 use rustc_hir::def_id::DefId;
 
 use amd_comgr::{set::DataSet, data::RelocatableData,
@@ -44,7 +44,7 @@ impl PlatformCodegen for Codegenner {
   type Condition = attrs::Condition;
 
   fn modify_rustc_session_options(&self, _target_desc: &Arc<AcceleratorTargetDesc>,
-                                  opts: &mut rustc::session::config::Options)
+                                  opts: &mut rustc_session::config::Options)
   {
     // we sometimes get a SCEV assertion in the SLP vectorizer; since it's not needed here,
     // just disable.
@@ -294,12 +294,12 @@ impl PlatformCodegen for Codegenner {
                             attrs: &mut CodegenFnAttrs)
   {
     use rustc_attr::InlineAttr;
-    use rustc::session::config::*;
-    use rustc::ty::*;
-    use rustc_target::spec::AddrSpaceIdx;
+    use rustc_middle::ty::*;
+    use rustc_session::config::*;
     use rustc_span::symbol::*;
+    use rustc_target::spec::AddrSpaceIdx;
 
-    use syntax::ast::NestedMetaItem;
+    use rustc_ast::ast::NestedMetaItem;
 
     use intrinsics_common::attrs::geobacter_attrs;
 

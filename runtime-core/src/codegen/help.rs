@@ -3,7 +3,7 @@
 use std::env::{var_os, };
 use std::path::{Path, PathBuf, };
 
-use rustc::session::config::host_triple;
+use rustc_session::config::host_triple;
 
 const MESSAGE: &'static str =
   "Please provide `RUST_BUILD_ROOT` or `LLVM_BUILD` so I can use the LLVM \

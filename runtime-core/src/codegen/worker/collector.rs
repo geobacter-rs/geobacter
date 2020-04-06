@@ -8,12 +8,11 @@
 //! We proceed by gathering all possible mono items, then go back over the
 //! items, possibly applying transforms specific to device capabilities.
 
-use rustc::mir::mono::{CodegenUnit, MonoItem, Linkage, Visibility, };
-use rustc::ty::{TyCtxt, };
+use rustc_middle::mir::mono::{CodegenUnit, MonoItem, Linkage, Visibility, };
+use rustc_middle::ty::{TyCtxt, };
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE, DefIdSet, };
 use rustc_mir::monomorphize::{collector::InliningMap,
-                              partitioning::partition,
-                              partitioning::PartitioningStrategy, };
+                              partitioning::partition, };
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 
 use std::sync::{Arc, };
@@ -54,10 +53,10 @@ pub fn collect_and_partition_mono_items<'tcx, P>(tcx: TyCtxt<'tcx>,
   }
   let inlining_map = inlining_map.unwrap();
 
-  let strategy = PartitioningStrategy::FixedUnitCount(1);
   let items = visited;
   let mut units = partition(tcx, items.iter().cloned(),
-                            strategy, &inlining_map);
+                            tcx.sess.codegen_units(),
+                            &inlining_map);
 
   // force the root to have an external linkage:
   for unit in units.iter_mut() {

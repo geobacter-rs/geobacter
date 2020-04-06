@@ -7,10 +7,10 @@ use crate::intrinsics::GeobacterCustomIntrinsicMirGen;
 
 use shared_defs::platform::*;
 
-use rustc::mir::{self, Rvalue, Statement, StatementKind, };
-use rustc::mir::interpret::{ConstValue, Pointer, Allocation, };
-use rustc::ty::{self, TyCtxt, };
-use rustc::ty::{Const, ConstKind, };
+use rustc_middle::mir::{self, Rvalue, Statement, StatementKind, };
+use rustc_middle::mir::interpret::{ConstValue, Pointer, Allocation, };
+use rustc_middle::ty::{self, TyCtxt, };
+use rustc_middle::ty::{Const, ConstKind, };
 use rustc_span::DUMMY_SP;
 use rustc_target::abi::Align;
 

@@ -8,7 +8,7 @@ use std::hash;
 
 use any_key::AnyHash;
 
-use rustc::session::config::{OutputType, };
+use rustc_session::config::{OutputType, };
 
 use super::{PlatformCodegen, CodegenKernelInstance, };
 

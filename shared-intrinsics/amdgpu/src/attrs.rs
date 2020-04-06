@@ -1,7 +1,7 @@
 
-use crate::syntax::ast::{MetaItem, };
+use rustc_ast::ast::{MetaItem, };
 use rustc_span::symbol::Symbol;
-use crate::rustc::ty::{TyCtxt, };
+use rustc_middle::ty::{TyCtxt, };
 
 use crate::common::{attrs::*, };
 

@@ -3,10 +3,10 @@
 
 use std::fmt;
 
-use crate::rustc::mir::{self, mono::MonoItem, Local,
+use rustc_middle::mir::{self, mono::MonoItem, Local,
                         CustomIntrinsicMirGen, };
-use crate::rustc::ty::{self, TyCtxt, Instance, };
-use crate::rustc::ty::{ParamEnv, };
+use rustc_middle::ty::{self, TyCtxt, Instance, };
+use rustc_middle::ty::{ParamEnv, };
 use crate::rustc_index::vec::*;
 use crate::rustc_data_structures::fx::{FxHashSet, };
 use crate::rustc_data_structures::sync::{Lrc, };

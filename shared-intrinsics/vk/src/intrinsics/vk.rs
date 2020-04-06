@@ -11,11 +11,11 @@ use crate::vko::descriptor::descriptor::{DescriptorDesc,
                                          DescriptorBufferDesc, };
 use crate::vko::format::Format;
 
-use crate::rustc::mir::{Statement, StatementKind, };
-use crate::rustc::mir::interpret::{ConstValue, Scalar, Pointer,  };
-use crate::rustc::mir::{self, mono::MonoItem, Local,
+use rustc_middle::mir::{Statement, StatementKind, };
+use rustc_middle::mir::interpret::{ConstValue, Scalar, Pointer,  };
+use rustc_middle::mir::{self, mono::MonoItem, Local,
                         CustomIntrinsicMirGen, };
-use crate::rustc::ty::{self, TyCtxt, Instance, };
+use rustc_middle::ty::{self, TyCtxt, Instance, };
 use crate::rustc_index::vec::*;
 use crate::rustc_data_structures::fx::{FxHashSet, };
 use crate::rustc_data_structures::sync::{Lrc, };

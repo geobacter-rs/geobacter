@@ -17,7 +17,7 @@ use crate::codegen::{PlatformCodegen, CodegenDriver, PKernelDesc};
 use crate::metadata::{context_metadata, LoadedCrateMetadata, };
 use crate::utils::{HashMap, };
 
-pub use rustc::session::config::OutputType;
+pub use rustc_session::config::OutputType;
 
 type Translators = HashMap<
   Arc<AcceleratorTargetDesc>,
@@ -94,7 +94,7 @@ impl Context {
       // give us a huge stack (for codegen's use):
       .stack_size(32 * 1024 * 1024)
       .thread_name(|id| format!("grt-core-worker-{}", id) )
-      .deadlock_handler(|| unsafe { crate::rustc::ty::query::handle_deadlock() })
+      .deadlock_handler(|| unsafe { crate::rustc_middle::ty::query::handle_deadlock() })
       .spawn_handler(move |tb| {
         let mut b = std::thread::Builder::new();
         if let Some(name) = tb.name() {

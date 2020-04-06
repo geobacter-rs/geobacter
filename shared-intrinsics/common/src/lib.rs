@@ -8,20 +8,19 @@
 #![feature(link_llvm_intrinsics)]
 #![feature(intrinsics)]
 
-#[macro_use]
-extern crate rustc;
-extern crate rustc_codegen_utils;
+extern crate rustc_ast;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_errors;
 extern crate rustc_hir;
 extern crate rustc_index;
 extern crate rustc_metadata;
+#[macro_use]
+extern crate rustc_middle;
 extern crate rustc_mir;
 extern crate rustc_target;
 extern crate rustc_span;
 extern crate serialize;
-extern crate syntax;
 
 #[macro_use]
 extern crate log;

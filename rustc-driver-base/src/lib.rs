@@ -12,9 +12,8 @@
 
 #![recursion_limit="256"]
 
-extern crate rustc;
+extern crate rustc_ast;
 extern crate rustc_codegen_ssa;
-extern crate rustc_codegen_utils;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_errors as errors;
@@ -25,6 +24,7 @@ extern crate rustc_index;
 extern crate rustc_interface;
 extern crate rustc_lint;
 extern crate rustc_metadata;
+extern crate rustc_middle;
 extern crate rustc_mir;
 extern crate rustc_passes;
 extern crate rustc_privacy;
@@ -36,7 +36,6 @@ extern crate rustc_target;
 extern crate rustc_traits;
 extern crate rustc_typeck;
 extern crate serialize as rustc_serialize;
-extern crate syntax;
 extern crate tempfile;
 #[macro_use]
 extern crate log;
@@ -51,12 +50,13 @@ use std::fmt;
 use std::mem::{transmute, };
 use std::time::Instant;
 
-use self::rustc::mir::{Constant, Operand, Rvalue, Statement,
-                       StatementKind, Local, };
-use self::rustc::mir::interpret::{ConstValue, Scalar, Allocation,
-                                  PointerArithmetic, Pointer, };
-use self::rustc::mir::{self, CustomIntrinsicMirGen, };
-use rustc::ty::{self, TyCtxt, layout::Align, Const, };
+use rustc_ast::ast;
+use rustc_middle::mir::{Constant, Operand, Rvalue, Statement,
+                        StatementKind, Local, };
+use rustc_middle::mir::interpret::{ConstValue, Scalar, Allocation,
+                                   PointerArithmetic, Pointer, };
+use rustc_middle::mir::{self, CustomIntrinsicMirGen, };
+use rustc_middle::ty::{self, TyCtxt, Const, };
 use self::rustc_data_structures::fx::{FxHashMap, };
 use self::rustc_data_structures::sync::{Lrc, };
 use rustc_data_structures::profiling::print_time_passes_entry;
@@ -69,9 +69,9 @@ use crate::rustc_index::vec::*;
 use crate::rustc_serialize::Encodable;
 use rustc_session::{Session, early_error, };
 use rustc_session::config::{ErrorOutputType, };
-use self::syntax::ast;
 use rustc_span::{DUMMY_SP, };
 use rustc_span::symbol::{Symbol, };
+use rustc_target::abi::{Align, };
 
 use crate::rustc_help::codec::GeobacterEncoder;
 use rustc_help::driver_data::DriverData;

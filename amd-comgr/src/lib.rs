@@ -1,5 +1,5 @@
 
-#![feature(optin_builtin_traits)]
+#![feature(negative_impls)]
 
 extern crate amd_comgr_sys as sys;
 
