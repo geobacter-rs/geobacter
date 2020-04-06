@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 pub use gintrinsics::hash::*;
 
 pub mod env;
+#[cfg(test)]
+pub mod test;
 
 pub trait CreateIfNotExists: AsRef<Path> {
   fn create_if_not_exists(&self) -> io::Result<()> {

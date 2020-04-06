@@ -424,11 +424,22 @@ impl ModuleContextData {
   pub fn drop(&self) {
     let ptr_usize = self.0.load(Ordering::Acquire);
     if ptr_usize == 0 { return; }
-    self.0.store(0, Ordering::Release);
 
-    let ptr = ptr_usize as *const ModuleData;
+    let owner = self.0
+      .compare_exchange(ptr_usize, 0,
+                        Ordering::SeqCst,
+                        Ordering::Relaxed);
+    if let Ok(_) = owner {
+      let ptr = ptr_usize as *const ModuleData;
+      unsafe { Arc::from_raw(ptr) };
+    }
+  }
 
-    unsafe { Arc::from_raw(ptr) };
+  pub fn is_none(&self) -> bool {
+    !self.is_some()
+  }
+  pub fn is_some(&self) -> bool {
+    self.0.load(Ordering::Acquire) != 0
   }
 
   pub fn get_cache_data(&self, context: &Context)
@@ -519,6 +530,7 @@ impl<'a> PartialEq<&'a ModuleContextData> for ModuleContextData {
 #[cfg(test)]
 mod test {
   use super::*;
+  use crate::utils::test::*;
 
   #[derive(Debug)]
   struct MyPlatformModuleData;
@@ -533,5 +545,17 @@ mod test {
     let arc = Arc::new(MyPlatformModuleData) as Arc<dyn PlatformModuleData>;
     assert!(MyPlatformModuleData::downcast_arc(&arc).is_some());
     assert!(MyPlatformModuleData::downcast_ref(&*arc).is_some());
+  }
+
+  #[test]
+  fn function_module_data_drop() {
+    fn f() { }
+    let data = ModuleContextData::get(&f);
+    assert!(data.is_none());
+    data.get_cache_data(context());
+
+    assert!(data.is_some());
+    data.drop();
+    assert!(data.is_none());
   }
 }
