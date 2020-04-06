@@ -44,7 +44,6 @@ extern crate goblin;
 extern crate log;
 extern crate seahash;
 extern crate core;
-extern crate dirs;
 extern crate geobacter_intrinsics_common as gintrinsics;
 extern crate geobacter_shared_defs as shared_defs;
 extern crate owning_ref;

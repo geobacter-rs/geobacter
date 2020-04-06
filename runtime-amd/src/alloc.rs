@@ -1,9 +1,8 @@
 
-use alloc_wg::alloc::*;
-
 use super::*;
 
-#[derive(Clone, Debug)]
+use alloc_wg::alloc::*;
+
 pub struct LapAlloc {
   pub(crate) id: AcceleratorId,
   pub(crate) device_agent: Agent,
@@ -12,7 +11,8 @@ pub struct LapAlloc {
   /// is here to avoid that where possible.
   /// None by default to avoid an allocation if eg a LapVec is constructed but
   /// never pushed to.
-  pub(crate) accessible: Option<Arc<Vec<Agent>>>,
+  /// XXX Fix alloc-wg (again)
+  pub(crate) accessible: UnsafeCell<Option<Arc<SmallVec<[Agent; 32]>>>>,
 }
 impl LapAlloc {
   pub fn alloc_pool(&self) -> &MemoryPoolAlloc {
@@ -21,69 +21,151 @@ impl LapAlloc {
   pub fn pool(&self) -> &MemoryPool {
     &self.pool
   }
+
+  pub fn accessible(&self) -> Option<&[Agent]> {
+    unsafe {
+      (&*self.accessible.get())
+        .as_ref()
+        .map(|agents| &agents[..] )
+    }
+  }
+  fn accessible_mut(&self) -> &mut Arc<SmallVec<[Agent; 32]>> {
+    unsafe {
+      (&mut *self.accessible.get())
+        .as_mut()
+        .unwrap()
+    }
+  }
+
+  unsafe fn update_access_grants(&mut self, ptr: NonNull<u8>,
+                                 layout: Layout) -> Result<(), HsaError> {
+    if let Some(accessible) = self.accessible() {
+      // Handle cases where `LapAllocAccess::add_access` is called before allocation.
+      // We don't need to check accessibility: it was already checked in
+      // LapAllocAccess::add_access.
+      let pool_ptr = MemoryPoolPtr::from_ptr(self.pool().clone(), ptr);
+      let r = pool_ptr.grant_agents_access(&accessible);
+      // if grant access fails, we need to dealloc before returning
+      if let Err(err) = r {
+        self.dealloc(ptr, layout);
+        return Err(err);
+      }
+    }
+
+    Ok(())
+  }
+  unsafe fn expect_update_access_grants(&mut self, ptr: NonNull<u8>, layout: Layout) {
+    if let Err(err) = self.update_access_grants(ptr, layout) {
+      // XXX an error here doesn't result in any sort of allocation rollback;
+      // the pool will have already de-allocated the original allocation, so
+      // returning an error here could result in the use of freed memory!
+      panic!("failed to grant agents access to new grown allocation: {:?}", err);
+    }
+  }
 }
 impl From<Arc<HsaAmdGpuAccel>> for LapAlloc {
   fn from(accel: Arc<HsaAmdGpuAccel>) -> Self {
     accel.fine_lap_node_alloc(0)
   }
 }
-impl AllocRef for LapAlloc {
-  type Error = HsaError;
+impl Clone for LapAlloc {
+  fn clone(&self) -> Self {
+    let accessible = unsafe {
+      (&*self.accessible.get()).clone()
+    };
+    LapAlloc {
+      id: self.id,
+      device_agent: self.device_agent.clone(),
+      pool: self.pool.clone(),
+      accessible: UnsafeCell::new(accessible),
+    }
+  }
+}
+impl fmt::Debug for LapAlloc {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    f.debug_struct("LapAlloc")
+      .field("id", &self.id)
+      .field("device_agent", &self.device_agent)
+      .field("pool", &self.pool)
+      .field("accessible", &self.accessible())
+      .finish()
+  }
+}
+/// Mutable borrow rules prevent concurrent mutable borrows of the accessible array.
+unsafe impl Send for LapAlloc { }
+unsafe impl Sync for LapAlloc { }
 
-  fn alloc(&mut self, layout: NonZeroLayout)
-    -> Result<NonNull<u8>, Self::Error>
+unsafe impl AllocRef for LapAlloc {
+  fn alloc(&mut self, layout: Layout, init: AllocInit)
+    -> Result<MemoryBlock, AllocErr>
   {
-    let out_ptr = self.pool.alloc(layout)?;
-
-    if let Some(ref accessible) = self.accessible {
-      // Handle cases where `LapAllocAccess::add_access` is called before allocation.
-      // We don't need to check accessibility: it was already checked in
-      // LapAllocAccess::add_access.
-      let pool_ptr = unsafe {
-        MemoryPoolPtr::from_ptr(self.pool().clone(), out_ptr)
-      };
-      pool_ptr.grant_agents_access(&accessible)?;
+    let out = self.pool.alloc(layout, init)?;
+    let bytes = layout.size();
+    if bytes == 0 {
+      return Ok(out);
     }
 
-    Ok(out_ptr)
-  }
+    unsafe {
+      self.update_access_grants(out.ptr, layout)
+        .ok().ok_or(AllocErr)?;
+    }
 
-  #[inline]
-  fn usable_size(&self, layout: NonZeroLayout) -> (usize, usize) {
-    self.pool.usable_size(layout)
+    Ok(out)
   }
-}
-impl DeallocRef for LapAlloc {
-  type BuildAlloc = Self;
-  fn get_build_alloc(&mut self) -> Self::BuildAlloc {
-    self.clone()
-  }
-  unsafe fn dealloc(&mut self, ptr: NonNull<u8>,
-                    layout: NonZeroLayout) {
+  unsafe fn dealloc(&mut self, ptr: NonNull<u8>, layout: Layout) {
     self.pool.dealloc(ptr, layout)
   }
-}
-impl BuildAllocRef for LapAlloc {
-  type Ref = Self;
-  unsafe fn build_alloc_ref(&mut self,
-                            _ptr: NonNull<u8>,
-                            _layout: Option<NonZeroLayout>)
-    -> Self::Ref
+
+  unsafe fn grow(&mut self, ptr: NonNull<u8>,
+                 layout: Layout, new_size: usize,
+                 placement: ReallocPlacement,
+                 init: AllocInit)
+    -> Result<MemoryBlock, AllocErr>
   {
-    self.clone()
+    let new_ptr = self.pool.grow(ptr, layout, new_size,
+                                 placement, init)?;
+    if new_ptr.ptr == ptr {
+      // We grew in place; no need to grant access
+      return Ok(new_ptr);
+    }
+
+    self.expect_update_access_grants(new_ptr.ptr, layout);
+
+    Ok(new_ptr)
+  }
+
+  #[inline(always)]
+  unsafe fn shrink(&mut self, ptr: NonNull<u8>,
+                   layout: Layout,
+                   new_size: usize,
+                   placement: ReallocPlacement)
+    -> Result<MemoryBlock, AllocErr>
+  {
+    // We don't need to update the access list here
+    let new = self.pool.shrink(ptr, layout, new_size,
+                               placement)?;
+    if new.ptr == ptr {
+      // in place; no need to grant access
+      return Ok(new);
+    }
+
+    if new_size != 0 {
+      self.expect_update_access_grants(new.ptr, layout);
+    }
+
+    Ok(new)
   }
 }
-impl ReallocRef for LapAlloc { }
-impl Abort for LapAlloc { }
 
-#[doc(hidden)] #[inline(always)]
-fn add_access(build_alloc: &mut LapAlloc,
+/// `build_alloc` *must* be unique
+#[inline(always)]
+fn add_access(build_alloc: &LapAlloc,
               device: &HsaAmdGpuAccel,
               pool_ptr: Option<MemoryPoolPtr<[u8]>>)
   -> Result<(), HsaError>
 {
   let already_accessible = build_alloc
-    .accessible
+    .accessible()
     .iter()
     .flat_map(|i| i.iter() )
     .any(|a| a == device.agent() );
@@ -94,10 +176,12 @@ fn add_access(build_alloc: &mut LapAlloc,
 
   // add this device to the accessible array: We need to do this now for later
   // allocations (in the case of a LapVec).
-  if build_alloc.accessible.is_none() {
-    build_alloc.accessible = Some(Arc::default());
+  if build_alloc.accessible().is_none() {
+    unsafe {
+      *build_alloc.accessible.get() = Some(Arc::default());
+    }
   }
-  let accessible = Arc::make_mut(build_alloc.accessible.as_mut().unwrap());
+  let accessible = Arc::make_mut(build_alloc.accessible_mut());
   accessible.push(device.agent().clone());
 
   let pool = &build_alloc.pool;
@@ -133,13 +217,13 @@ fn add_access(build_alloc: &mut LapAlloc,
 
 /// No device removal.
 pub trait LapAllocAccess: BoxPoolPtr {
-  fn build_alloc_mut(&mut self) -> &mut LapAlloc;
+  fn get_alloc_ref(&mut self) -> &LapAlloc;
 
   /// TODO: it would be nice to allow granting new devices access (which is expensive)
   /// concurrently. This is safe because only removal is concurrent-unsafe.
   fn add_access(&mut self, device: &HsaAmdGpuAccel) -> Result<(), HsaError> {
     let ptr = unsafe { self.pool_ptr() };
-    add_access(self.build_alloc_mut(), device, ptr)
+    add_access(self.get_alloc_ref(), device, ptr)
   }
 }
 
@@ -161,8 +245,8 @@ pub type LapVec<T> = alloc_wg::vec::Vec<T, LapAlloc>;
 pub type LapBox<T> = alloc_wg::boxed::Box<T, LapAlloc>;
 
 impl<T> LapAllocAccess for LapVec<T> {
-  fn build_alloc_mut(&mut self) -> &mut LapAlloc {
-    self.build_alloc_mut()
+  fn get_alloc_ref(&mut self) -> &LapAlloc {
+    self.alloc_ref()
   }
 
   fn add_access(&mut self, device: &HsaAmdGpuAccel) -> Result<(), HsaError> {
@@ -173,14 +257,14 @@ impl<T> LapAllocAccess for LapVec<T> {
     }
 
     let ptr = unsafe { self.pool_ptr() };
-    add_access(self.build_alloc_mut(), device, ptr)
+    add_access(self.alloc_ref(), device, ptr)
   }
 }
 impl<T> LapAllocAccess for LapBox<T>
   where T: ?Sized,
 {
-  fn build_alloc_mut(&mut self) -> &mut LapAlloc {
-    self.build_alloc_mut()
+  fn get_alloc_ref(&mut self) -> &LapAlloc {
+    self.alloc_ref()
   }
 
   fn add_access(&mut self, device: &HsaAmdGpuAccel) -> Result<(), HsaError> {
@@ -191,7 +275,7 @@ impl<T> LapAllocAccess for LapBox<T>
     }
 
     let ptr = unsafe { self.pool_ptr() };
-    add_access(self.build_alloc_mut(), device, ptr)
+    add_access(self.alloc_ref(), device, ptr)
   }
 }
 
@@ -199,6 +283,12 @@ impl<T> LapAllocAccess for LapBox<T>
 mod test {
   use super::*;
   use crate::utils::test::*;
+
+  #[test]
+  fn ensure_send_sync() {
+    fn check<T: Send + Sync>() { }
+    check::<LapAlloc>();
+  }
 
   #[test]
   fn lap_vec_late_alloc() {
@@ -210,9 +300,8 @@ mod test {
     // now alloc:
     m.resize(1, 0u32);
 
-    let accessible = m.build_alloc()
-      .accessible
-      .as_ref()
+    let accessible = m.alloc_ref()
+      .accessible()
       .unwrap()
       .len();
     assert_eq!(accessible, 1);
@@ -225,6 +314,6 @@ mod test {
     let mut m = LapBox::new_in((), dev.fine_lap_node_alloc(0));
     m.add_access(&dev).unwrap();
 
-    assert!(m.build_alloc().accessible.is_none());
+    assert!(m.alloc_ref().accessible().is_none());
   }
 }

@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use std::result::Result; // CLion.
 
-use alloc_wg::alloc::{AllocRef, };
+use alloc_wg::alloc::{AllocRef, AllocInit};
 
 use geobacter_core::ptr::{SlicePtr, Ptr};
 use geobacter_core::slice::{SliceRef, SliceMut};
@@ -29,7 +29,7 @@ use hsa_rt::ext::amd::{lock_memory, unlock_memory, MemoryPool, MemoryPoolAlloc,
 
 use log::{error, };
 
-use crate::{HsaAmdGpuAccel, };
+use crate::{HsaAmdGpuAccel, Error};
 use crate::mem::{BoxPoolPtr, };
 
 #[deprecated]
@@ -220,22 +220,16 @@ impl<T> RawPoolBox<[T]>
   where T: Sized,
 {
   pub unsafe fn new_uninit_slice(mut pool: MemoryPoolAlloc, count: usize)
-    -> Result<Self, HsaError>
+    -> Result<Self, Error>
   {
     let layout = Layout::new::<T>()
       .repeat_packed(count)
       .map_err(|_| HsaError::Overflow )?;
 
-    let ptr = match layout.try_into() {
-      Ok(layout) => {
-        let ptr: StdNonNull<T> = pool.alloc(layout)?.cast();
-        slice_from_raw_parts_mut(ptr.as_ptr(), count)
-      },
-      Err(_) => {
-        // empty slice; not an error!
-        slice_from_raw_parts_mut(0 as *mut T, count)
-      },
-    };
+    let ptr = pool.alloc(layout, AllocInit::Uninitialized)
+      .map_err(|_| Error::Alloc(layout) )?;
+    let ptr = slice_from_raw_parts_mut(ptr.ptr.as_ptr() as *mut _, count);
+
     let ptr = Unique::new_unchecked(ptr);
     Ok(RawPoolBox(ptr, pool.pool()))
   }
@@ -352,7 +346,7 @@ impl<T> LocallyAccessiblePoolBox<[T]>
   }
 
   pub fn from_iter<I>(accel: &HsaAmdGpuAccel, iter: I)
-    -> Result<Self, HsaError>
+    -> Result<Self, Error>
     where I: ExactSizeIterator<Item = T>,
   {
     let count = iter.len();

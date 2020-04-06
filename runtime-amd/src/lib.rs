@@ -19,6 +19,7 @@
 #![feature(coerce_unsized, unsize)]
 #![feature(raw)]
 #![feature(dropck_eyepatch)]
+#![feature(allocator_api)]
 
 // TODO: make the Geobacter attributes "known" to rustc.
 #![feature(register_attr)]
@@ -58,6 +59,7 @@ extern crate geobacter_runtime_amd_macros;
 pub use geobacter_runtime_amd_macros::*;
 
 use std::any::Any;
+use std::cell::UnsafeCell;
 use std::cmp::max;
 use std::collections::{BTreeMap, };
 use std::convert::*;
@@ -354,7 +356,7 @@ impl HsaAmdGpuAccel {
       id: self.id(),
       device_agent: self.agent().clone(),
       pool: self.host_nodes()[node as usize].coarse.clone(),
-      accessible: None,
+      accessible: UnsafeCell::new(None),
     }
   }
   /// Returns an allocator interface for allocating in the provided NUMA node
@@ -369,7 +371,7 @@ impl HsaAmdGpuAccel {
         .as_ref()
         .unwrap()
         .clone(),
-      accessible: None,
+      accessible: UnsafeCell::new(None),
     }
   }
 
@@ -559,7 +561,7 @@ impl HsaAmdGpuAccel {
   /// If this returns `Ok(..)`, the pointer will not be null. The returned device
   /// memory will be uninitialized. The pointer will be aligned to the page size.
   pub unsafe fn alloc_device_local_slice<T>(&self, count: usize)
-    -> Result<RawPoolBox<[T]>, HsaError>
+    -> Result<RawPoolBox<[T]>, Error>
     where T: Sized,
   {
     RawPoolBox::new_uninit_slice(self.device.coarse.clone(), count)

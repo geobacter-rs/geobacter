@@ -8,7 +8,7 @@ description = "Geobacter driver/runtime internal shared code. Do not use."
 repository = "https://github.com/geobacter-rs/geobacter/tree/master/shared-intrinsics/vk"
 
 [dependencies]
-num-traits = "0.2.6"
+num-traits = "0.2.11"
 vulkano = "0.16.0"
 geobacter-core = "1.0.0"
 geobacter-vk-core = "1.0.0"

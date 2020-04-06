@@ -3,14 +3,13 @@ use std::error::Error as StdError;
 use std::fmt;
 use std::io::Error as IoError;
 
-use alloc_wg::alloc::NonZeroLayout;
+use alloc_wg::alloc::Layout;
 
 use gcore::kernel::KernelInstance;
 
 use hsa_rt::queue::QueueError;
 
 use crate::HsaError;
-use crate::alloc::LapAlloc;
 
 #[derive(Debug)]
 #[non_exhaustive]
@@ -48,10 +47,7 @@ pub enum Error {
   ZeroGridLaunchAxis,
   KernelArgsPoolOom,
   HsaQueue(QueueError),
-  AllocError {
-    layout: NonZeroLayout,
-    error: HsaError,
-  },
+  Alloc(Layout),
   KernelWorkgroupDimTooLargeForDevice,
   KernelWorkgroupLenTooLargeForDevice,
   LaunchGridDimTooLargeForDevice,
@@ -69,10 +65,6 @@ impl StdError for Error {
       Error::CodegenInitRoot(inner) |
       Error::CodegenPostCodegen(inner) |
       Error::CodegenPreCodegen(inner) => Some(inner),
-      Error::AllocError {
-        error,
-        ..
-      } => Some(error),
       _ => None,
     }
   }
@@ -116,18 +108,14 @@ impl From<QueueError> for Error {
     Error::HsaQueue(v)
   }
 }
-impl From<alloc_wg::collections::CollectionAllocErr<LapAlloc>> for Error {
+impl From<alloc_wg::collections::TryReserveError> for Error {
   #[inline(always)]
-  fn from(v: alloc_wg::collections::CollectionAllocErr<LapAlloc>) -> Error {
+  fn from(v: alloc_wg::collections::TryReserveError) -> Error {
     match v {
-      alloc_wg::collections::CollectionAllocErr::CapacityOverflow => Error::Overflow,
-      alloc_wg::collections::CollectionAllocErr::AllocError {
-        layout,
-        inner,
-      } => Error::AllocError {
-        layout,
-        error: inner,
-      },
+      alloc_wg::collections::TryReserveError::CapacityOverflow => Error::Overflow,
+      alloc_wg::collections::TryReserveError::AllocError {
+        layout, ..
+      } => Error::Alloc(layout),
     }
   }
 }

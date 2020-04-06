@@ -1,5 +1,4 @@
 
-use std::error::Error;
 use std::mem;
 use std::ptr::{NonNull, slice_from_raw_parts_mut, };
 use std::rc::Rc;
@@ -8,7 +7,7 @@ use std::sync::Arc;
 use hsa_rt::ext::amd::{MemoryPoolPtr, };
 use hsa_rt::signal::SignalRef;
 
-use crate::{HsaAmdGpuAccel, HsaError, AcceleratorId, };
+use crate::{HsaAmdGpuAccel, AcceleratorId, Error, };
 use crate::alloc::*;
 use crate::boxed::RawPoolBox;
 use crate::module::{Deps, CallError, };
@@ -48,7 +47,7 @@ impl<T> BoxPoolPtr for LapVec<T> {
 
     let ptr = slice_from_raw_parts_mut(self.as_ptr() as *mut T, self.capacity());
     let ptr = NonNull::new(ptr)?;
-    let pool = *self.build_alloc().pool();
+    let pool = *self.alloc_ref().pool();
 
     Some(MemoryPoolPtr::from_ptr(pool, ptr).into_bytes())
   }
@@ -177,14 +176,14 @@ pub trait H2DMemcpyObject {
   type RemoteBox;
 
   unsafe fn alloc_for_dev(&self, device: &Arc<HsaAmdGpuAccel>)
-    -> Result<Self::RemoteBox, HsaError>;
+    -> Result<Self::RemoteBox, Error>;
 
   /// This assumes the signal is already setup properly.
   unsafe fn unchecked_memcopy_with_signal<S, D>(self,
                                                 device: &Arc<HsaAmdGpuAccel>,
                                                 deps: D,
                                                 signal: S)
-    -> Result<H2DMemoryTransfer<S, Self, Self::RemoteBox, D>, Box<dyn Error>>
+    -> Result<H2DMemoryTransfer<S, Self, Self::RemoteBox, D>, Error>
     where Self: Sized,
           S: SignalHandle,
           D: Deps;
@@ -197,7 +196,7 @@ impl<'a, T> H2DMemcpyObject for &'a T
 
   #[inline(always)]
   unsafe fn alloc_for_dev(&self, device: &Arc<HsaAmdGpuAccel>)
-    -> Result<Self::RemoteBox, HsaError>
+    -> Result<Self::RemoteBox, Error>
   {
     (&**self).alloc_for_dev(device)
   }
@@ -205,7 +204,7 @@ impl<'a, T> H2DMemcpyObject for &'a T
                                                 device: &Arc<HsaAmdGpuAccel>,
                                                 deps: D,
                                                 signal: S)
-    -> Result<H2DMemoryTransfer<S, Self, Self::RemoteBox, D>, Box<dyn Error>>
+    -> Result<H2DMemoryTransfer<S, Self, Self::RemoteBox, D>, Error>
     where Self: Sized,
           S: SignalHandle,
           D: Deps,
@@ -230,7 +229,7 @@ impl<T> H2DMemcpyObject for LapBox<T>
 
   #[inline(always)]
   unsafe fn alloc_for_dev(&self, device: &Arc<HsaAmdGpuAccel>)
-    -> Result<Self::RemoteBox, HsaError>
+    -> Result<Self::RemoteBox, Error>
   {
     let pool = *device.device_pool();
     let b = RawPoolBox::new_uninit(pool)?;
@@ -240,7 +239,7 @@ impl<T> H2DMemcpyObject for LapBox<T>
                                                 device: &Arc<HsaAmdGpuAccel>,
                                                 deps: D,
                                                 signal: S)
-    -> Result<H2DMemoryTransfer<S, Self, Self::RemoteBox, D>, Box<dyn Error>>
+    -> Result<H2DMemoryTransfer<S, Self, Self::RemoteBox, D>, Error>
     where Self: Sized,
           S: SignalHandle,
           D: Deps,
@@ -264,7 +263,7 @@ impl<T> H2DMemcpyObject for LapBox<[T]>
 
   #[inline(always)]
   unsafe fn alloc_for_dev(&self, device: &Arc<HsaAmdGpuAccel>)
-    -> Result<Self::RemoteBox, HsaError>
+    -> Result<Self::RemoteBox, Error>
   {
     let pool = device.device_pool()
       .allocator()?;
@@ -275,7 +274,7 @@ impl<T> H2DMemcpyObject for LapBox<[T]>
                                                 device: &Arc<HsaAmdGpuAccel>,
                                                 deps: D,
                                                 signal: S)
-    -> Result<H2DMemoryTransfer<S, Self, Self::RemoteBox, D>, Box<dyn Error>>
+    -> Result<H2DMemoryTransfer<S, Self, Self::RemoteBox, D>, Error>
     where Self: Sized,
           S: SignalHandle,
           D: Deps,
@@ -300,7 +299,7 @@ impl<T> H2DMemcpyObject for LapVec<T>
 
   #[inline(always)]
   unsafe fn alloc_for_dev(&self, device: &Arc<HsaAmdGpuAccel>)
-    -> Result<Self::RemoteBox, HsaError>
+    -> Result<Self::RemoteBox, Error>
   {
     let pool = device.device_pool()
         .allocator()?;
@@ -311,7 +310,7 @@ impl<T> H2DMemcpyObject for LapVec<T>
                                                 device: &Arc<HsaAmdGpuAccel>,
                                                 deps: D,
                                                 signal: S)
-    -> Result<H2DMemoryTransfer<S, Self, Self::RemoteBox, D>, Box<dyn Error>>
+    -> Result<H2DMemoryTransfer<S, Self, Self::RemoteBox, D>, Error>
     where Self: Sized,
           S: SignalHandle,
           D: Deps,
@@ -340,10 +339,10 @@ pub trait H2DMemcpyGroup<S, D>
 
   unsafe fn unchecked_memcopy(self, device: &Arc<HsaAmdGpuAccel>,
                               deps: D, signal: S)
-    -> Result<Self::Transfer, Box<dyn Error>>;
+    -> Result<Self::Transfer, Error>;
 
   fn memcopy(self, device: &Arc<HsaAmdGpuAccel>, deps: D, signal: &mut S)
-    -> Result<Self::Transfer, Box<dyn Error>>
+    -> Result<Self::Transfer, Error>
     where Self: Sized,
   {
     signal.reset(device, self.signal_len())?;
@@ -366,7 +365,7 @@ impl<T, S, D> H2DMemcpyGroup<Arc<S>, D> for T
 
   unsafe fn unchecked_memcopy(self, device: &Arc<HsaAmdGpuAccel>,
                               deps: D, signal: Arc<S>)
-    -> Result<Self::Transfer, Box<dyn Error>>
+    -> Result<Self::Transfer, Error>
   {
     self.unchecked_memcopy_with_signal(device, deps, signal)
   }
@@ -384,7 +383,7 @@ impl<T, S, D> H2DMemcpyGroup<Rc<S>, D> for T
 
   unsafe fn unchecked_memcopy(self, device: &Arc<HsaAmdGpuAccel>,
                               deps: D, signal: Rc<S>)
-    -> Result<Self::Transfer, Box<dyn Error>>
+    -> Result<Self::Transfer, Error>
   {
     self.unchecked_memcopy_with_signal(device, deps, signal)
   }
@@ -403,7 +402,7 @@ impl<L, R, S, D> H2DMemcpyGroup<Arc<S>, D> for (L, R)
 
   unsafe fn unchecked_memcopy(self, device: &Arc<HsaAmdGpuAccel>,
                               deps: D, signal: Arc<S>)
-    -> Result<Self::Transfer, Box<dyn Error>>
+    -> Result<Self::Transfer, Error>
   {
     Ok((self.0.unchecked_memcopy(device, deps.clone(),
                                  signal.clone())?,
@@ -425,7 +424,7 @@ impl<L, R, S, D> H2DMemcpyGroup<Rc<S>, D> for (L, R)
 
   unsafe fn unchecked_memcopy(self, device: &Arc<HsaAmdGpuAccel>,
                               deps: D, signal: Rc<S>)
-    -> Result<Self::Transfer, Box<dyn Error>>
+    -> Result<Self::Transfer, Error>
   {
     Ok((self.0.unchecked_memcopy(device, deps.clone(),
                                  signal.clone())?,

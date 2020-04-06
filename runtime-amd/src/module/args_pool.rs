@@ -1,12 +1,10 @@
 
-use std::num::NonZeroUsize;
 use std::ptr::NonNull;
 
-use alloc_wg::alloc::{NonZeroLayout, DeallocRef, BuildAllocRef};
+use alloc_wg::alloc::*;
 use alloc_wg::vec::Vec;
 
 use hsa_rt::mem::region::RegionAlloc;
-use crate::HsaError;
 
 use super::*;
 
@@ -23,30 +21,28 @@ pub struct ArgsPool {
 }
 impl ArgsPool {
   /// Create storage for `n` function calls for use on the provided accelerator.
-  pub fn new<A>(accel: &Arc<HsaAmdGpuAccel>, count: usize) -> Result<Self, HsaError>
+  pub fn new<A>(accel: &Arc<HsaAmdGpuAccel>, count: usize) -> Result<Self, Error>
     where A: Kernel + Sized,
   {
     use std::cmp::max;
 
     let kernargs_region = accel.kernargs_region().clone();
 
-    let layout = NonZeroLayout::new::<super::InvocArgs<A>>()
-      .unwrap(); // the reference means ^ is never zero sized.
+    let layout = Layout::new::<super::InvocArgs<A>>();
     let pool_alignment = kernargs_region.alloc_alignment();
-    if pool_alignment < layout.align().get() {
-      return Err(HsaError::InvalidAllocation);
+    if pool_alignment < layout.align() {
+      return Err(Error::Alloc(layout));
     }
-    let (layout, _) = layout.repeat({
-      NonZeroUsize::new(count)
-        .ok_or(HsaError::InvalidAllocation)?
-    })?;
+    let (layout, _) = layout.repeat(count)
+      .ok()
+      .ok_or(Error::Overflow)?;
     let bytes = layout.size();
     let pool_min_alloc = kernargs_region.alloc_granule();
     // bump the size to the minimum allocation size:
-    let bytes = max(pool_min_alloc, bytes.get());
+    let bytes = max(pool_min_alloc, bytes);
 
     let mut arena: Vec<u8, RegionAlloc> =
-      Vec::try_with_capacity_in(bytes, kernargs_region.clone())?;
+      Vec::try_with_capacity_in(bytes, kernargs_region)?;
     unsafe {
       arena.set_len(bytes);
     }
@@ -59,7 +55,7 @@ impl ArgsPool {
   }
 
   pub fn new_arena(accel: &Arc<HsaAmdGpuAccel>, bytes: usize)
-    -> Result<Self, HsaError>
+    -> Result<Self, Error>
   {
     use std::cmp::max;
 
@@ -69,7 +65,7 @@ impl ArgsPool {
     let bytes = max(pool_min_alloc, bytes);
 
     let mut arena: Vec<u8, RegionAlloc> =
-      Vec::try_with_capacity_in(bytes, kernargs_region.clone())?;
+      Vec::try_with_capacity_in(bytes, kernargs_region)?;
     unsafe {
       arena.set_len(bytes);
     }
@@ -162,29 +158,36 @@ impl Clone for ArgsPool {
 #[derive(Clone)]
 pub struct ArgsPoolAlloc<P>(pub(super) P)
   where P: Deref<Target = ArgsPool>;
-impl<P> DeallocRef for ArgsPoolAlloc<P>
-  where P: Deref<Target = ArgsPool> + Clone,
+unsafe impl<P> AllocRef for ArgsPoolAlloc<P>
+  where P: Deref<Target = ArgsPool>,
 {
-  type BuildAlloc = Self;
-
-  fn get_build_alloc(&mut self) -> Self::BuildAlloc {
-    self.clone()
+  fn alloc(&mut self, _layout: Layout, _init: AllocInit)
+    -> Result<MemoryBlock, AllocErr>
+  {
+    Err(AllocErr)
   }
-
-  #[inline(always)]
-  unsafe fn dealloc(&mut self, _ptr: NonNull<u8>, _layout: NonZeroLayout) {
+  unsafe fn dealloc(&mut self, _ptr: NonNull<u8>, _layout: Layout) {
     // no-op
   }
-}
-impl<P> BuildAllocRef for ArgsPoolAlloc<P>
-  where P: Deref<Target = ArgsPool> + Clone,
-{
-  type Ref = Self;
 
-  unsafe fn build_alloc_ref(&mut self, _ptr: NonNull<u8>,
-                            _layout: Option<NonZeroLayout>)
-    -> Self::Ref
+  unsafe fn grow(&mut self, _ptr: NonNull<u8>,
+                 _layout: Layout, _new_size: usize,
+                 _placement: ReallocPlacement,
+                 _init: AllocInit)
+    -> Result<MemoryBlock, AllocErr>
   {
-    self.clone()
+    Err(AllocErr)
+  }
+
+  unsafe fn shrink(&mut self, ptr: NonNull<u8>,
+                   _layout: Layout,
+                   new_size: usize,
+                   _placement: ReallocPlacement)
+    -> Result<MemoryBlock, AllocErr>
+  {
+    Ok(MemoryBlock {
+      ptr,
+      size: new_size,
+    })
   }
 }

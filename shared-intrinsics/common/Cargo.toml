@@ -10,6 +10,6 @@ repository = "https://github.com/geobacter-rs/geobacter/tree/master/shared-intri
 [dependencies]
 num-traits = "0.2.6"
 log = "0.4.7"
-seahash = "3.0.6"
+seahash = "4.0.0"
 geobacter-core = "1.0.0"
 geobacter-rustc-help = "1.0.0"
