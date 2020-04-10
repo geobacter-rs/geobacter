@@ -1,11 +1,12 @@
 
+#![feature(geobacter)]
+
 // TODO: make the Geobacter attributes "known" to rustc.
 #![feature(register_attr)]
 #![register_attr(geobacter_attr)]
 
 extern crate grt_amd as geobacter_runtime_amd;
 
-use gstd_amd::*;
 use grt_amd::prelude::*;
 
 use num_traits::AsPrimitive;
@@ -14,6 +15,8 @@ use rand::distributions::Uniform;
 use rand::prelude::*;
 
 use std::fmt;
+use std::geobacter::platform::*;
+use std::geobacter::spec_param as param;
 use std::marker::PhantomData;
 use std::mem::{size_of, drop, };
 use std::num::NonZeroUsize;
@@ -128,14 +131,14 @@ unsafe impl<'a, 'b, E> Sync for GemmArgs<'a, 'b, E>
 /// Get the dimension specialization parameter. This should only be called on
 /// the device.
 fn dim_spec_param() -> NonZeroUsize {
-  assert!(!platform::is_host());
-  param::get_spec_param(&dim_spec_param)
+  assert!(!platform().is_host());
+  param::get(&dim_spec_param)
     .cloned()
     .unwrap()
 }
 /// Do we need to do bounds checks, because BLOCK_K doesn't divide the grid evenly?
 fn mod_block_k() -> bool {
-  param::get_spec_param(&mod_block_k)
+  param::get(&mod_block_k)
     .cloned()
     .unwrap_or_default()
 }

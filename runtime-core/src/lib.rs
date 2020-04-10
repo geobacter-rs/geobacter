@@ -1,21 +1,22 @@
+//! TODO move this all the way into the Rust toolchain.
+
 #![feature(rustc_private)]
 #![feature(unboxed_closures)]
 #![feature(core_intrinsics)]
 #![feature(std_internals)]
 #![feature(arbitrary_self_types)]
 #![feature(raw)]
-
-#![crate_type = "dylib"]
+#![feature(geobacter, geobacter_intrinsics)]
 
 #![recursion_limit="256"]
 
-extern crate geobacter_core;
-extern crate rustc_ast as syntax;
+extern crate rustc_ast;
 extern crate rustc_metadata;
 extern crate rustc_data_structures;
 extern crate rustc_codegen_ssa;
 extern crate rustc_driver;
 extern crate rustc_feature;
+extern crate rustc_geobacter;
 extern crate rustc_hir;
 extern crate rustc_incremental;
 extern crate rustc_index;
@@ -43,23 +44,19 @@ extern crate goblin;
 #[macro_use]
 extern crate log;
 extern crate seahash;
-extern crate core;
-extern crate geobacter_intrinsics_common as gintrinsics;
-extern crate geobacter_shared_defs as shared_defs;
 extern crate owning_ref;
 extern crate any_key;
 
 use std::any::Any;
 use std::error::Error;
 use std::fmt::Debug;
+use std::geobacter::platform::Platform;
 use std::hash::{Hash, Hasher, };
 use std::sync::{Arc, };
 
 use crate::any_key::AnyHash;
 
 use crate::serde::{Serialize, };
-
-use crate::shared_defs::platform::Platform;
 
 use rustc_session::config::host_triple;
 use crate::rustc_target::spec::{Target, TargetTriple, abi::Abi, };

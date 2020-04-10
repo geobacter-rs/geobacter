@@ -2,6 +2,7 @@
 #![allow(deprecated)]
 
 use std::cell::Cell;
+use std::geobacter::platform::platform;
 use std::marker::{PhantomData, PhantomPinned, };
 use std::num::{NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroI128, NonZeroIsize,
                NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64, NonZeroU128, NonZeroUsize,
@@ -13,9 +14,6 @@ use std::sync::{Arc, atomic::*, };
 
 use hsa_rt::signal::SignalRef;
 use hsa_rt::queue::RingQueue;
-
-use gcore::ptr::*;
-use gcore::platform::is_host;
 
 use smallvec::SmallVec;
 
@@ -77,7 +75,6 @@ pub unsafe trait Deps {
             let mut deps = signals.iter();
             queue.try_enqueue_barrier_and(&mut deps,
                                           Some(completion.signal_ref()))?;
-            gamd_std::host_debug_assert_eq!(deps.len(), 0);
           }
           signals.clear();
         }
@@ -90,7 +87,6 @@ pub unsafe trait Deps {
       let mut deps = signals.iter();
       queue.try_enqueue_barrier_and(&mut deps,
                                     Some(completion.signal_ref()))?;
-      gamd_std::host_debug_assert_eq!(deps.len(), 0);
     }
 
     Ok(())
@@ -285,16 +281,6 @@ unsafe impl<T> Deps for *mut T
 }
 unsafe impl<T> Deps for NonNull<T>
   where T: ?Sized,
-{
-  fn iter_deps<'a>(&'a self, _: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
-    -> Result<(), CallError>
-  {
-    Ok(())
-  }
-}
-
-unsafe impl<T> Deps for AccelPtr<T>
-  where T: PtrTy,
 {
   fn iter_deps<'a>(&'a self, _: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
     -> Result<(), CallError>
@@ -499,7 +485,7 @@ impl<T> CompletionDep<T>
   }
 
   fn host_wait(&self) {
-    if is_host() && !self.1.get() {
+    if platform().is_host() && !self.1.get() {
       if let Some(host) = self.0.completion().as_host_consumable() {
         if let Err(code) = host.wait_for_zero(false) {
           panic!("got negative signal from signal: {}", code);

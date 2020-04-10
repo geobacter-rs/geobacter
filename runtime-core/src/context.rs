@@ -58,7 +58,7 @@ impl AsyncCodegenMetadataLoader {
 /// This structure should be used like you'd use a singleton.
 struct ContextData {
   #[allow(dead_code)]
-  syntax_globals: Arc<syntax::attr::Globals>,
+  syntax_globals: Arc<rustc_ast::attr::Globals>,
   metadata: AsyncCodegenMetadataLoader,
 
   next_accel_id: AtomicUsize,
@@ -86,7 +86,7 @@ impl Context {
 
     crate::rustc_driver::init_rustc_env_logger();
 
-    let syntax_globals = syntax::attr::Globals::new(Edition::Edition2018);
+    let syntax_globals = rustc_ast::attr::Globals::new(Edition::Edition2018);
     let syntax_globals = Arc::new(syntax_globals);
     let pool_globals = syntax_globals.clone();
 
@@ -507,12 +507,14 @@ impl ModuleContextData {
     cached.unwrap()
   }
 
-  pub fn get<F, Args, Ret>(f: &F) -> Self
+  pub fn get<F, Args, Ret>(_: &F) -> Self
     where F: Fn<Args, Output = Ret>,
   {
-    use geobacter_core::kernel::kernel_context_data_id;
-    let data_ref = kernel_context_data_id(f);
-    ModuleContextData(data_ref)
+    use std::geobacter::intrinsics::geobacter_kernel_codegen_stash;
+    ModuleContextData(unsafe {
+      let data_ref = geobacter_kernel_codegen_stash::<F, _, _>();
+      std::mem::transmute(data_ref)
+    })
   }
 }
 impl Eq for ModuleContextData { }

@@ -17,12 +17,6 @@ dependencies = [
 
 [[package]]
 name = "alloc-wg"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "484f71e69fc01231c3d44f939440e2fbcc0935146bad4c44cec187337952e522"
-
-[[package]]
-name = "alloc-wg"
 version = "0.8.0"
 source = "git+https://github.com/TimDiekmann/alloc-wg.git#75c657273303773fd7383a1fc3fb21a331d3fad6"
 
@@ -135,13 +129,6 @@ name = "bitflags"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf1de2fe8c75bc145a2f577add951f8134889b4795d47466a54a5c846d691693"
-
-[[package]]
-name = "bootstrap-rustc-driver"
-version = "0.1.0"
-dependencies = [
- "geobacter-rustc-driver-base",
-]
 
 [[package]]
 name = "byteorder"
@@ -352,7 +339,6 @@ dependencies = [
 name = "examples-amdgpu-trivial"
 version = "0.1.0"
 dependencies = [
- "alloc-wg 0.7.0",
  "env_logger 0.6.2",
  "geobacter-runtime-amd",
  "geobacter-runtime-core",
@@ -392,7 +378,6 @@ name = "fractal"
 version = "0.1.0"
 dependencies = [
  "env_logger 0.6.2",
- "geobacter-core",
  "geobacter-runtime-core",
  "geobacter-vk-std",
  "log",
@@ -413,9 +398,7 @@ version = "0.1.0"
 dependencies = [
  "approx",
  "env_logger 0.6.2",
- "geobacter-amd-std",
  "geobacter-runtime-amd",
- "geobacter-runtime-core",
  "hsa-rt",
  "ndarray",
  "nix",
@@ -424,32 +407,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "generic-substs"
-version = "0.1.0"
-dependencies = [
- "geobacter-core",
-]
-
-[[package]]
-name = "geobacter-amd-std"
-version = "1.0.0"
-dependencies = [
- "geobacter-core",
- "hsa-rt",
-]
-
-[[package]]
-name = "geobacter-amdgpu-intrinsics"
-version = "1.0.0"
-dependencies = [
- "geobacter-core",
- "geobacter-intrinsics-common",
- "geobacter-rustc-help",
-]
-
-[[package]]
 name = "geobacter-core"
 version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1205b835205fcd97f5216d4d1385ef852fc363c4e1a64a1eb4765c56578be00"
 dependencies = [
  "geobacter-shared-defs",
 ]
@@ -457,29 +418,26 @@ dependencies = [
 [[package]]
 name = "geobacter-intrinsics-common"
 version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2bb70bf727cd4acbe196d0e5e898481349f55191829d13ae29f9a3c0882d8f2"
 dependencies = [
  "geobacter-core",
  "geobacter-rustc-help",
  "log",
  "num-traits",
- "seahash",
+ "seahash 3.0.7",
 ]
 
 [[package]]
 name = "geobacter-runtime-amd"
 version = "1.0.0"
 dependencies = [
- "alloc-wg 0.8.0",
+ "alloc-wg",
  "amd-comgr",
  "any_key",
  "env_logger 0.7.1",
- "geobacter-amd-std",
- "geobacter-amdgpu-intrinsics",
- "geobacter-core",
- "geobacter-intrinsics-common",
  "geobacter-runtime-amd-macros",
  "geobacter-runtime-core",
- "geobacter-shared-defs",
  "goblin",
  "hsa-rt",
  "lazy_static",
@@ -509,17 +467,15 @@ dependencies = [
  "env_logger 0.7.1",
  "erased-serde",
  "flate2",
- "geobacter-core",
- "geobacter-intrinsics-common",
- "geobacter-shared-defs",
  "goblin",
  "indexed_vec",
  "lazy_static",
  "log",
  "memmap",
+ "num-traits",
  "owning_ref",
  "parking_lot",
- "seahash",
+ "seahash 4.0.0",
  "serde",
  "tempfile",
 ]
@@ -541,26 +497,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "geobacter-rustc-driver"
-version = "0.1.0"
-dependencies = [
- "geobacter-amdgpu-intrinsics",
- "geobacter-intrinsics-common",
- "geobacter-rustc-driver-base",
- "geobacter-vk-intrinsics",
-]
-
-[[package]]
-name = "geobacter-rustc-driver-base"
-version = "0.1.0"
-dependencies = [
- "geobacter-rustc-help",
- "geobacter-shared-defs",
-]
-
-[[package]]
 name = "geobacter-rustc-help"
 version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d79830c3222acc6445738ef4237a5130fc7bf5bcbb9cdb050f8bbd01ba5e3db5"
 dependencies = [
  "geobacter-shared-defs",
  "log",
@@ -569,6 +509,8 @@ dependencies = [
 [[package]]
 name = "geobacter-shared-defs"
 version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a248e92272d8268babd5264a7765926743231ead32f135b45856f75a0ddef91"
 dependencies = [
  "serde",
 ]
@@ -586,9 +528,6 @@ dependencies = [
 name = "geobacter-vk-intrinsics"
 version = "1.0.0"
 dependencies = [
- "geobacter-core",
- "geobacter-intrinsics-common",
- "geobacter-rustc-help",
  "geobacter-vk-core",
  "num-traits",
  "vulkano",
@@ -598,7 +537,6 @@ dependencies = [
 name = "geobacter-vk-std"
 version = "0.1.0"
 dependencies = [
- "geobacter-core",
  "geobacter-vk-core",
  "log",
  "vulkano",
@@ -673,7 +611,7 @@ dependencies = [
 name = "hsa-rt"
 version = "0.1.0"
 dependencies = [
- "alloc-wg 0.8.0",
+ "alloc-wg",
  "hsa-rt-sys",
  "log",
  "serde",
@@ -1314,6 +1252,12 @@ dependencies = [
 
 [[package]]
 name = "seahash"
+version = "3.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "58f57ca1d128a43733fd71d583e837b1f22239a37ebea09cde11d8d9a9080f47"
+
+[[package]]
+name = "seahash"
 version = "4.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b427e64850f2efd9de2f99148a3e523ff1aaef7d407add544864d923ac15045e"
@@ -1448,7 +1392,6 @@ name = "trivial"
 version = "0.1.0"
 dependencies = [
  "env_logger 0.6.2",
- "geobacter-core",
  "geobacter-runtime-core",
  "geobacter-vk-std",
  "log",

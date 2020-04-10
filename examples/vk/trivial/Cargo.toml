@@ -5,7 +5,6 @@ name = "trivial"
 version = "0.1.0"
 
 [dependencies]
-geobacter-core = { path = "../../../geobacter-core" }
 geobacter-runtime-core = { path = "../../../runtime-core" }
 geobacter-vk-std = { path = "../../../vk-std" }
 vulkano = "0.16.0"

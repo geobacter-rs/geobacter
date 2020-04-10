@@ -19,11 +19,9 @@ owning_ref = "0.4.0"
 crossbeam-utils = "0.7.0"
 any_key = "0.1.1"
 erased-serde = "0.3.9"
-geobacter-core = "1.0.0"
-geobacter-intrinsics-common = "1.0.0"
-geobacter-shared-defs = "1.0.0"
 parking_lot = "0.10.0"
 memmap = "0.7.0"
+num-traits = "0.2.11"
 
 [dev-dependencies]
 lazy_static = "1.4.0"

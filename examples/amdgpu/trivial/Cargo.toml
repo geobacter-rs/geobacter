@@ -10,4 +10,3 @@ nd = { version = "0.13.0", package = "ndarray", features = ["rayon"] }
 rand = { version = "0.7.0", features = ["small_rng", ] }
 grt-core = { version = "1.0.0", package = "geobacter-runtime-core" }
 grt-amd  = { version = "1.0.0", package = "geobacter-runtime-amd" }
-alloc-wg = "0.7.0"

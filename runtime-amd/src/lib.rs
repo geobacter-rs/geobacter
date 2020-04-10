@@ -20,6 +20,7 @@
 #![feature(raw)]
 #![feature(dropck_eyepatch)]
 #![feature(allocator_api)]
+#![feature(geobacter)]
 
 // TODO: make the Geobacter attributes "known" to rustc.
 #![feature(register_attr)]
@@ -38,6 +39,7 @@ extern crate rmp_serde as rmps;
 extern crate rustc_ast;
 extern crate rustc_attr;
 extern crate rustc_data_structures;
+extern crate rustc_geobacter;
 extern crate rustc_hir;
 extern crate rustc_middle;
 extern crate rustc_session;
@@ -45,12 +47,8 @@ extern crate rustc_target;
 extern crate serialize as rustc_serialize;
 extern crate rustc_span;
 
-extern crate geobacter_core as gcore;
 extern crate hsa_rt;
 extern crate geobacter_runtime_core as grt_core;
-extern crate geobacter_shared_defs as shared_defs;
-extern crate geobacter_intrinsics_common as intrinsics_common;
-extern crate geobacter_amdgpu_intrinsics as intrinsics;
 
 #[allow(unused_imports)]
 #[macro_use]
@@ -65,6 +63,8 @@ use std::collections::{BTreeMap, };
 use std::convert::*;
 use std::error::{Error as StdError};
 use std::fmt;
+use std::geobacter::platform::{Platform, hsa, };
+use std::geobacter::platform::hsa::AmdGcn;
 use std::ptr::{NonNull, };
 use std::str::FromStr;
 use std::sync::{Arc, };
@@ -91,8 +91,6 @@ use grt_core::{Accelerator, AcceleratorTargetDesc,
                PlatformTargetDesc, Device, };
 use grt_core::codegen::CodegenDriver;
 use grt_core::codegen::products::PCodegenResults;
-use shared_defs::platform::{Platform, host_platform, hsa, };
-use shared_defs::platform::hsa::AmdGpu;
 
 use codegen::Codegenner;
 
@@ -266,7 +264,7 @@ impl HsaAmdGpuAccel {
       ctx: ctx.clone(),
 
       // reinitialized later:
-      platform: host_platform(),
+      platform: Platform::default(),
 
       target_desc: Arc::new(AcceleratorTargetDesc::new(target_desc)),
 
@@ -284,9 +282,9 @@ impl HsaAmdGpuAccel {
     out.init_target_desc()?;
 
     let gpu = &out.target_desc.target.options.cpu;
-    let gpu = AmdGpu::from_str(gpu)
+    let gpu = AmdGcn::from_str(gpu)
       .map_err(|()| Error::UnknownAmdGpuArch(gpu.to_string()) )?;
-    out.platform = Platform::Hsa(hsa::Device::AmdGcn(gpu));
+    out.platform = Platform::Hsa(hsa::AmdGpu::AmdGcn(gpu));
 
     let mut out = Arc::new(out);
 

@@ -1,4 +1,4 @@
-
+use std::geobacter::kernel::{KernelInstanceRef, OptionalKernelFn, };
 use std::marker::{PhantomData, Unsize, };
 use std::mem::{transmute, size_of, };
 use std::num::NonZeroU64;
@@ -11,9 +11,6 @@ use std::sync::atomic::{AtomicUsize, Ordering, };
 use alloc_wg::boxed::Box;
 
 use log::{error, };
-
-use geobacter_core::kernel::{KernelInstance, OptionalFn, };
-use gcore::ref_::*;
 
 use hsa_rt::agent::Agent;
 use hsa_rt::executable::FrozenExecutable;
@@ -81,7 +78,7 @@ pub struct FuncModule<A>
   begin_fence: FenceScope,
   end_fence: FenceScope,
 
-  instance: KernelInstance,
+  instance: KernelInstanceRef<'static>,
   desc: KernelDesc,
   spec_params: core_codegen::SpecParamsDesc,
 
@@ -102,7 +99,7 @@ impl<A> FuncModule<A>
       begin_fence: FenceScope::System,
       end_fence: FenceScope::System,
 
-      instance: f.kernel_instance().unwrap(),
+      instance: f.kernel_instance(),
       context_data: ModuleContextData::get(&f)
         .get_cache_data(accel.ctx()),
       desc: KernelDesc { },
@@ -712,18 +709,6 @@ unsafe impl<P, A, R> deps::Deps for InvocCompletionReturn<P, A, dyn DeviceConsum
   {
     self.ret.iter_deps(f)?;
     self.invoc.iter_deps(f)
-  }
-}
-/// We are only *safely* deref-able on the device, where the command process will ensure
-/// this invocation is complete.
-impl<P, A, S, R> Deref for InvocCompletionReturn<P, A, S, R>
-  where P: Deref<Target = ArgsPool> + Clone,
-        S: DeviceConsumable + ?Sized,
-        A: Completion<CompletionSignal = S> + ?Sized,
-{
-  type Target = AccelRefRaw<R>;
-  fn deref(&self) -> &Self::Target {
-    unsafe { transmute(&self.ret) }
   }
 }
 impl<P, A1, A2, S, R>

@@ -1,8 +1,0 @@
-[package]
-authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
-edition = "2018"
-name = "bootstrap-rustc-driver"
-version = "0.1.0"
-
-[dependencies]
-geobacter-rustc-driver-base = { path = "../rustc-driver-base" }

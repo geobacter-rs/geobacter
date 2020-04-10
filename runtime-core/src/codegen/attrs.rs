@@ -2,14 +2,14 @@
 use std::fmt::Debug;
 use std::str::FromStr;
 
-use crate::num_traits::cast::{cast, NumCast, };
+use num_traits::cast::{cast, NumCast};
 
-use rustc_ast::attr::{mk_attr_outer, };
-use rustc_ast::ast::{self, NestedMetaItem, MetaItem, MetaItemKind, };
-use crate::rustc_span::{Span, sym, Symbol, };
-use rustc_middle::ty::{TyCtxt, };
-use crate::rustc_data_structures::sync::{Lrc, };
-use rustc_hir::{def_id::DefId, };
+use rustc_ast::attr::mk_attr_outer;
+use rustc_ast::ast::{self, NestedMetaItem, MetaItem, MetaItemKind};
+use rustc_data_structures::sync::Lrc;
+use rustc_span::{Span, sym, Symbol};
+use rustc_middle::ty::TyCtxt;
+use rustc_hir::def_id::DefId;
 
 /// Implementers need to implement one of `parse_name_value` or `parse_word`.
 pub trait ConditionItem: Debug + PartialEq<Self> + Sized {

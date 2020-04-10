@@ -3,6 +3,7 @@ use std::any::Any;
 use std::cmp::{Eq, PartialEq, };
 use std::collections::BTreeMap;
 use std::fmt::{self, Debug, };
+use std::geobacter::kernel::{KernelInstanceRef, OptionalKernelFn};
 use std::hash;
 use std::mem::size_of;
 use std::ops::Deref;
@@ -10,17 +11,12 @@ use std::path::{Path, };
 use std::slice::from_raw_parts;
 use std::sync::Arc;
 
+use rustc_ast::ast;
+use rustc_data_structures::sync::Lrc;
 use rustc_hir::def_id::DefId;
 use rustc_middle::middle::codegen_fn_attrs::CodegenFnAttrs;
+use rustc_middle::mir::CustomIntrinsicMirGen;
 use rustc_middle::ty::*;
-use crate::rustc_data_structures::sync::{Lrc, };
-use crate::syntax::ast;
-
-use crate::gintrinsics::{GeobacterCustomIntrinsicMirGen, attrs::ConditionItem,
-                         attrs::geobacter_cfg_attrs, };
-
-use geobacter_core::kernel::{KernelInstance, OptionalFn, KernelInstanceRef,
-                             KernelDesc as DynKernelDesc, };
 
 use crate::{Accelerator, AcceleratorTargetDesc, };
 use self::products::{PlatformCodegenDesc, };
@@ -32,15 +28,19 @@ pub use self::worker::{CodegenDriver, };
 
 use crate::any_key::AnyHash;
 
+pub mod attrs;
 pub mod help;
 pub mod worker;
 pub mod products;
+pub mod stubbing;
+
+use crate::codegen::{attrs::ConditionItem, attrs::geobacter_cfg_attrs, };
 
 #[derive(Clone, Debug)]
 pub struct KernelDesc<P>
   where P: PlatformKernelDesc,
 {
-  pub instance: KernelInstance,
+  pub instance: KernelInstanceRef<'static>,
   pub spec_params: SpecParamsDesc,
   pub platform_desc: P,
 }
@@ -48,7 +48,7 @@ pub struct KernelDesc<P>
 impl<P> KernelDesc<P>
   where P: PlatformKernelDesc,
 {
-  pub fn new(instance: KernelInstance, platform: P) -> Self {
+  pub fn new(instance: KernelInstanceRef<'static>, platform: P) -> Self {
     KernelDesc {
       instance,
       spec_params: Default::default(),
@@ -83,9 +83,16 @@ impl<P> hash::Hash for KernelDesc<P>
 }
 
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-pub struct SpecParamsDesc(Option<Arc<BTreeMap<KernelInstance, Vec<u8>>>>);
+pub struct SpecParamsDesc(Option<Arc<BTreeMap<KernelInstanceRef<'static>, Vec<u8>>>>);
 impl SpecParamsDesc {
-  fn get_mut(&mut self) -> &mut BTreeMap<KernelInstance, Vec<u8>> {
+  fn iter(&self) -> impl Iterator<Item = (&KernelInstanceRef<'static>, &Vec<u8>)> {
+    self.0
+      .iter()
+      .flat_map(|inner| {
+        inner.iter()
+      })
+  }
+  fn get_mut(&mut self) -> &mut BTreeMap<KernelInstanceRef<'static>, Vec<u8>> {
     let m = self.0.get_or_insert_with(Default::default);
     Arc::make_mut(m)
   }
@@ -110,7 +117,7 @@ impl SpecParamsDesc {
     where F: Fn() -> R,
   {
     if self.0.is_none() { return; }
-    let key = f.kernel_instance().unwrap();
+    let key = f.kernel_instance();
     self.get_mut().remove(&key);
   }
   pub fn define<F, R>(&mut self, f: F, value: &R)
@@ -122,7 +129,7 @@ impl SpecParamsDesc {
   pub unsafe fn define_raw<F, R>(&mut self, f: F, value: &R)
     where F: Fn() -> R,
   {
-    let key = f.kernel_instance().unwrap();
+    let key = f.kernel_instance();
 
     let mut bytes = Vec::with_capacity(size_of::<R>());
     bytes.set_len(size_of::<R>());
@@ -133,22 +140,49 @@ impl SpecParamsDesc {
 
     self.get_mut().insert(key, bytes);
   }
-  fn get<'a, 'b>(&'a self, key: KernelInstanceRef<'b>) -> Option<&'a [u8]> {
-    Some(&**self.0.as_ref()?.get(&key)?)
-  }
 }
 
-#[derive(Clone, Eq, PartialEq, Debug, Hash)]
+#[derive(Clone)]
 pub struct CodegenKernelInstance {
   pub name: String,
   pub instance: Vec<u8>,
 }
-impl From<KernelInstance> for CodegenKernelInstance {
-  fn from(v: KernelInstance) -> Self {
+impl<'a> From<KernelInstanceRef<'a>> for CodegenKernelInstance {
+  fn from(v: KernelInstanceRef<'a>) -> Self {
     CodegenKernelInstance {
-      name: v.name().unwrap_or_default().to_owned(),
+      name: v.name.to_owned(),
       instance: v.instance.to_owned(),
     }
+  }
+}
+impl fmt::Debug for CodegenKernelInstance {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    f.debug_tuple("CodegenKernelInstance")
+      .field(&self.name)
+      .finish()
+  }
+}
+impl Eq for CodegenKernelInstance { }
+impl Ord for CodegenKernelInstance {
+  fn cmp(&self, rhs: &Self) -> std::cmp::Ordering {
+    self.instance.cmp(&rhs.instance)
+  }
+}
+impl PartialEq for CodegenKernelInstance {
+  fn eq(&self, rhs: &Self) -> bool {
+    std::cmp::PartialEq::eq(&self.instance, &rhs.instance)
+  }
+}
+impl PartialOrd for CodegenKernelInstance {
+  fn partial_cmp(&self, rhs: &Self) -> Option<std::cmp::Ordering> {
+    self.instance.partial_cmp(&rhs.instance)
+  }
+}
+impl hash::Hash for CodegenKernelInstance {
+  fn hash<H>(&self, hasher: &mut H)
+    where H: hash::Hasher,
+  {
+    hash::Hash::hash(&self.instance, hasher)
   }
 }
 
@@ -182,18 +216,6 @@ pub trait PlatformKernelDesc: AnyHash + Any + Debug + Eq + Send + Sync + 'static
 pub type PKernelDesc<P> = KernelDesc<<P as PlatformCodegen>::KernelDesc>;
 pub type PCodegenDesc<'tcx, P> = CodegenDesc<'tcx, <P as PlatformCodegen>::CodegenDesc>;
 
-/// Helper trait for geobacter specific custom mirgen impls.
-pub trait PlatformIntrinsicInsert {
-  fn insert<T>(&mut self, intrinsic: T)
-    where T: GeobacterCustomIntrinsicMirGen + fmt::Display
-  {
-    let name = format!("{}", intrinsic);
-    self.insert_name(&name, intrinsic)
-  }
-  fn insert_name<T>(&mut self, name: &str, intrinsic: T)
-    where T: GeobacterCustomIntrinsicMirGen;
-}
-
 /// Codegen details specific to a platform. Some platform are particular
 /// about many codegen details (like Vulkan); this trait provides a place
 /// for the runtime trait to customize codegen to suit its needs.
@@ -226,12 +248,11 @@ pub trait PlatformCodegen: Sized + Clone + Debug + Send + Sync + 'static {
                                   _opts: &mut rustc_session::config::Options)
   { }
 
-  /// Add intrinsics which don't depend on the kernel. This is done once at
-  /// startup.
-  fn insert_intrinsics<T>(&self,
+  /// Add intrinsics which don't depend on the kernel.
+  fn insert_intrinsics<F>(&self,
                           target_desc: &Arc<AcceleratorTargetDesc>,
-                          into: &mut T)
-    where T: PlatformIntrinsicInsert;
+                          into: &mut F)
+    where F: for<'a> FnMut(&'a str, Lrc<dyn CustomIntrinsicMirGen>);
 
   /// Insert intrinsics which depend on the kernel. For example, the Vulkan
   /// runtime can run many types of graphics "kernels" in addition to the
@@ -239,10 +260,10 @@ pub trait PlatformCodegen: Sized + Clone + Debug + Send + Sync + 'static {
   /// depends on which special vulkan intrinsic is called to get the "kernel"
   /// instance.
   /// This functions serves to allow adding those intrinsics to the driver.
-  fn insert_kernel_intrinsics<T>(&self,
+  fn insert_kernel_intrinsics<F>(&self,
                                  _kernel: &PKernelDesc<Self>,
-                                 _into: &mut T)
-    where T: PlatformIntrinsicInsert
+                                 _into: &mut F)
+    where F: for<'a> FnMut(&'a str, Lrc<dyn CustomIntrinsicMirGen>)
   { }
 
   /// Get the platform specific codegen root. This type will at the very least

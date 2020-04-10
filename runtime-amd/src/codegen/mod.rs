@@ -2,6 +2,7 @@
 use std::collections::HashMap;
 use std::env::var_os;
 use std::fs::{File, };
+use std::geobacter::platform::{*, hsa::AmdGcn, };
 use std::io::{Write, Read, stderr, };
 use std::path::Path;
 use std::process::Command;
@@ -10,15 +11,17 @@ use std::sync::Arc;
 
 use crate::log::{info, };
 
-use rustc_middle::middle::codegen_fn_attrs::CodegenFnAttrs;
-use rustc_middle::ty::{TyCtxt, Instance, };
 use rustc_hir::def_id::DefId;
+use rustc_data_structures::sync::Lrc;
+use rustc_geobacter::intrinsics::IntrinsicName;
+use rustc_geobacter::intrinsics::platform::PlatformIntrinsic;
+use rustc_geobacter::intrinsics::arch::amdgpu::AmdGpuSuicide;
+use rustc_middle::middle::codegen_fn_attrs::CodegenFnAttrs;
+use rustc_middle::mir::CustomIntrinsicMirGen;
+use rustc_middle::ty::{TyCtxt, Instance, };
 
 use amd_comgr::{set::DataSet, data::RelocatableData,
                 data::Data, action::*, };
-
-use geobacter_core::platform::hsa::AmdGpu;
-use geobacter_core::platform::{hsa, Platform};
 
 use crate::grt_core::{AcceleratorTargetDesc, };
 use crate::grt_core::codegen as core_codegen;
@@ -26,13 +29,12 @@ use crate::grt_core::codegen::*;
 use crate::grt_core::codegen::help::LlvmBuildRoot;
 use crate::grt_core::codegen::products::*;
 
-use crate::intrinsics::*;
-use crate::intrinsics_common::CurrentPlatform;
-
 use crate::serde::{Serialize, Deserialize, };
 use crate::rmps::decode::{from_slice as rmps_from_slice, };
 
 use crate::{HsaAmdGpuAccel, HsaAmdTargetDescHelper, Error};
+
+pub mod attrs;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Codegenner;
@@ -41,7 +43,7 @@ impl PlatformCodegen for Codegenner {
   type Device = HsaAmdGpuAccel;
   type KernelDesc = KernelDesc;
   type CodegenDesc = CodegenDesc;
-  type Condition = attrs::Condition;
+  type Condition = self::attrs::Condition;
 
   fn modify_rustc_session_options(&self, _target_desc: &Arc<AcceleratorTargetDesc>,
                                   opts: &mut rustc_session::config::Options)
@@ -51,27 +53,19 @@ impl PlatformCodegen for Codegenner {
     opts.cg.no_vectorize_slp = true;
   }
 
-  fn insert_intrinsics<T>(&self,
+  fn insert_intrinsics<F>(&self,
                           target_desc: &Arc<AcceleratorTargetDesc>,
-                          into: &mut T)
-    where T: PlatformIntrinsicInsert,
+                          into: &mut F)
+    where F: for<'a> FnMut(&'a str, Lrc<dyn CustomIntrinsicMirGen>),
   {
     let gpu = &target_desc.target.options.cpu;
     // can't fail; the device ctor also checks this
-    let gpu = AmdGpu::from_str(gpu).unwrap();
-    let platform = Platform::Hsa(hsa::Device::AmdGcn(gpu));
-    into.insert(CurrentPlatform(platform));
-
-    for intr in AxisId::permutations() {
-      into.insert(intr);
-    }
-    into.insert(DispatchPtr);
-    into.insert(Barrier);
-    into.insert(WaveBarrier);
-    let i: intrinsics_common::WorkItemKill<intrinsics::AmdGcnKillDetail> = Default::default();
-    into.insert(i);
-    into.insert(UpdateDpp);
-    into.insert(UpdateDppWorkaround);
+    let gpu = AmdGcn::from_str(gpu).unwrap();
+    let platform = Platform::Hsa(hsa::AmdGpu::AmdGcn(gpu));
+    let platform = PlatformIntrinsic(platform);
+    into(PlatformIntrinsic::NAME, Lrc::new(platform));
+    let suicide = AmdGpuSuicide::default();
+    into(AmdGpuSuicide::NAME, Lrc::new(suicide));
   }
 
   fn root<'tcx>(&self, desc: PKernelDesc<Self>,
@@ -301,7 +295,7 @@ impl PlatformCodegen for Codegenner {
 
     use rustc_ast::ast::NestedMetaItem;
 
-    use intrinsics_common::attrs::geobacter_attrs;
+    use grt_core::codegen::attrs::geobacter_attrs;
 
     if dd.is_root(id) { return; }
     if tcx.sess.opts.optimize != OptLevel::Aggressive { return; }

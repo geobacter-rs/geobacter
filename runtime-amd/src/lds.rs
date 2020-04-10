@@ -321,7 +321,8 @@ unsafe impl<A> Sync for Lds<A>
 { }
 
 fn enforce_amdgpu() {
-  if !gamd_std::platform::is_amdgcn() {
+  use std::geobacter::platform::platform;
+  if !platform().is_amdgcn() {
     panic!("Use LDSArray only on AMDGPU");
   }
 }
@@ -342,7 +343,7 @@ impl<A> LdsBorrow<A> {
     if self.1 {
       // ensure that any subsequent new borrow will not conflict with any to-be-completed
       // drops in other workitems.
-      gamd_std::sync::barrier();
+      std::geobacter::amdgpu::sync::workgroup_barrier();
     }
     self.1 = true;
   }
@@ -403,7 +404,7 @@ impl<'a, A> Singleton<'a, A> {
     enforce_amdgpu();
 
     // Ensure all workitems have dropped any previous LDS reference:
-    gamd_std::sync::barrier();
+    std::geobacter::amdgpu::sync::workgroup_barrier();
 
     unsafe {
       self.unchecked_init_with(vp, f)
@@ -556,7 +557,7 @@ impl<'a, A, E, G> Slice<'a, A, E, G>
     // thus we don't need acqrel fences.
     if !self.initial_barrier.get() {
       self.initial_barrier.set(true);
-      gamd_std::sync::barrier();
+      std::geobacter::amdgpu::sync::workgroup_barrier();
     }
   }
   pub fn owned(&self) -> &E {
@@ -628,7 +629,7 @@ unsafe impl<'a, #[may_dangle] A, #[may_dangle] E, G> Drop for Slice<'a, A, E, G>
     // workitems have finished possibly using our LDS slot. Either we run the barrier now, or we
     // wait until right before the next loop iteration when our LDS slot is (re-)initialized (but
     // only for types with no drop code). Since `&mut`+`&` is UB anyway, we do it now.
-    gamd_std::sync::barrier();
+    std::geobacter::amdgpu::sync::workgroup_barrier();
 
     unsafe { drop_in_place(self.owned.as_mut()) }
 
@@ -686,9 +687,9 @@ unsafe impl<'a, #[may_dangle] A> Drop for Ref<'a, A> {
     // workitems have finished possibly using our LDS slot. Either we run the barrier now, or we
     // wait until right before the next loop iteration when our LDS slot is (re-)initialized (but
     // only for types with no drop code). Since `&mut`+`&` is UB anyway, we do it now.
-    if !cfg!(test) || gamd_std::platform::is_amdgcn() {
+    if !cfg!(test) || std::geobacter::platform::platform().is_amdgcn() {
       // skip if on the host AND we're testing.
-      gamd_std::sync::barrier();
+      std::geobacter::amdgpu::sync::workgroup_barrier();
     }
 
     if self.2 {
@@ -772,7 +773,7 @@ mod test {
 
       fn kernel(&self, vp: KVectorParams<Self>) {
         use std::ptr;
-        use gamd_std::{dispatch_packet, sync::atomic::*, };
+        use std::geobacter::amdgpu::{dispatch_packet, sync::atomic::*, };
 
         lds! {
           let mut lds: Lds<[u32; 16]> = Lds::new();
@@ -852,7 +853,7 @@ mod test {
 
       fn kernel(&self, vp: KVectorParams<Self>) {
         use std::ptr;
-        use gamd_std::{dispatch_packet, sync::atomic::*, };
+        use std::geobacter::amdgpu::{dispatch_packet, sync::atomic::*, };
 
         lds! {
           let mut lds: Lds<[[[u32; 8]; 8]; 8]> = Lds::new();
@@ -934,7 +935,7 @@ mod test {
 
       fn kernel(&self, vp: KVectorParams<Self>) {
         use std::ptr;
-        use gamd_std::{dispatch_packet, sync::atomic::*, };
+        use std::geobacter::amdgpu::{dispatch_packet, sync::atomic::*, };
 
         lds! {
           let mut lds: Lds<[[[FlagOnDrop; 8]; 8]; 8]> = Lds::new();
@@ -1023,7 +1024,7 @@ mod test {
       fn queue(&self) -> &DeviceMultiQueue { &self.queue }
 
       fn kernel(&self, vp: KVectorParams<Self>) {
-        use gamd_std::{sync::atomic::*, };
+        use std::geobacter::amdgpu::{sync::atomic::*, };
 
         lds! {
           let mut lds: Lds<Dim2D<u16>> = Lds::new();

@@ -8,44 +8,33 @@
 /// String -> KernelId. Need a way to translate the absolute path into a
 /// DefId.
 
-use rustc_middle::ty::TyCtxt;
-use crate::rustc_data_structures::fx::{FxHashMap};
+use std::geobacter::kernel::*;
 
-use geobacter_core::kernel::{KernelInstance, OptionalFn, };
-use crate::rustc_help::*;
+use rustc_data_structures::fx::{FxHashMap};
+use rustc_geobacter::TyCtxtKernelInstance;
 use rustc_hir::def_id::DefId;
-
-use self::stubs::*;
-use crate::{DriverData, };
-
-pub use rustc_help::stubbing::Stubber as DynStubber;
+use rustc_middle::ty::TyCtxt;
 
 pub struct Stubber {
   /// Are we stubbing the "builtin" stubs? See `self::stubs`.
   builtins: bool,
-  stubs: FxHashMap<String, KernelInstance>,
+  stubs: FxHashMap<String, KernelInstanceRef<'static>>,
 }
 
-impl DynStubber for Stubber {
-  fn stub_def_id<'tcx>(&self,
-                       tcx: TyCtxt<'tcx>,
-                       _dd: &dyn DriverData,
-                       did: DefId)
-    -> DefId
-  {
+impl Stubber {
+  pub fn stub_def_id<'tcx>(&self, tcx: TyCtxt<'tcx>, did: DefId) -> DefId {
+    use self::stubs::*;
+
     let path = tcx.def_path_str(did);
 
-    if path.starts_with("geobacter_intrinsics_common::stubbing") {
+    if path.starts_with("geobacter_runtime_core::codegen::stubbing") {
       // this is one of our stubs.
       return did;
     }
 
-    let convert_ki = |ki: KernelInstance| {
-      let stub_instance = tcx.convert_kernel_instance(ki)
-        .unwrap_or_else(|| bug!("failed to convert {:?}", ki) );
-
+    let convert_ki = |ki: KernelInstanceRef<'_>| {
+      let stub_instance = tcx.expect_instance(ki);
       trace!("{:?} => {:?}", did, stub_instance.def_id());
-
       stub_instance.def_id()
     };
 
@@ -63,14 +52,14 @@ impl DynStubber for Stubber {
     macro_rules! check {
       ($path:expr, $kid_did:expr, $abs_path:expr, $stub:expr) => {
         if $path == $abs_path {
-          let ki = $stub.kernel_instance().unwrap();
+          let ki = $stub.kernel_instance();
           return convert_ki(ki);
         } else {
           if $abs_path.starts_with("core::") && $path.starts_with("rustc_std_workspace_core::") {
             let suffix = &$abs_path["core::".len()..];
             let path_suffix = &$path["rustc_std_workspace_core::".len()..];
             if suffix == path_suffix {
-              let ki = $stub.kernel_instance().unwrap();
+              let ki = $stub.kernel_instance();
               return convert_ki(ki);
             }
           }
@@ -95,19 +84,20 @@ impl DynStubber for Stubber {
       )*};
     }
 
+    // Before check_alloc! and no warnings are emitted; but after and it fails
+    // every time??
+    check!(path, kid_did, "alloc::alloc::__rust_alloc_zeroed",
+           __rust_alloc_zeroed);
     check_alloc!(path, kid_did,
                  __rust_alloc,
                  __rust_oom,
                  __rust_dealloc,
                  __rust_usable_size,
                  __rust_realloc,
-                 __rust_alloc_zeroed,
                  __rust_alloc_excess,
                  __rust_realloc_excess,
-                 __rust_grow_in_place);
-    check!(path, kid_did, "std::alloc::handle_alloc_error",
-           handle_alloc_error);
-
+                 __rust_grow_in_place,
+                 handle_alloc_error);
 
     check!(path, kid_did, "std::panicking::rust_panic_with_hook",
            rust_panic_with_hook);
@@ -133,7 +123,7 @@ impl DynStubber for Stubber {
     check!(path, kid_did, "core::str::slice_error_fail",
            slice_error_fail);
 
-    check!(path, kid_did, "panic_unwind::imp::rust_eh_personality",
+    check!(path, kid_did, "panic_unwind::real_imp::rust_eh_personality",
            rust_eh_personality);
 
     did
@@ -168,11 +158,8 @@ mod stubs {
   use core::panic::{Location, PanicInfo, BoxMeUp, };
 
   unsafe fn abort() -> ! {
-    extern "rust-intrinsic" {
-      fn __geobacter_kill() -> !;
-    }
-
-    __geobacter_kill();
+    use std::geobacter::intrinsics::geobacter_suicide;
+    geobacter_suicide("stubbed function called");
   }
 
   // ALLOC

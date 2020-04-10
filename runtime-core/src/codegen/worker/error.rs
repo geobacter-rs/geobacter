@@ -1,16 +1,15 @@
 
-use std::error::Error as StdError;
 use std::{fmt, io, };
-
-use geobacter_core::kernel::KernelInstance;
+use std::error::Error as StdError;
+use std::geobacter::kernel::KernelInstanceRef;
 
 use crate::codegen::PlatformCodegen;
 
 #[derive(Debug)]
 pub enum Error<E> {
-  Io(Option<KernelInstance>, io::Error),
+  Io(Option<KernelInstanceRef<'static>>, io::Error),
   LoadMetadata(Box<dyn StdError + Send + Sync + 'static>),
-  ConvertKernelInstance(KernelInstance),
+  ConvertKernelInstance(KernelInstanceRef<'static>),
   Codegen,
   Linking,
   InitRoot(E),
@@ -52,11 +51,11 @@ impl<E> From<io::Error> for Error<E> {
 
 pub trait IntoErrorWithKernelInstance<E> {
   type Output;
-  fn with_kernel_instance(self, id: KernelInstance) -> Self::Output;
+  fn with_kernel_instance(self, id: KernelInstanceRef<'static>) -> Self::Output;
 }
 impl<E, T> IntoErrorWithKernelInstance<E> for Result<T, io::Error> {
   type Output = Result<T, Error<E>>;
-  fn with_kernel_instance(self, id: KernelInstance) -> Self::Output {
+  fn with_kernel_instance(self, id: KernelInstanceRef<'static>) -> Self::Output {
     self.map_err(move |e| Error::Io(Some(id), e) )
   }
 }

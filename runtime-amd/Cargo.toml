@@ -15,19 +15,14 @@ log = "0.4.7"
 any_key = "0.1.1"
 
 amd-comgr = "1.0.0"
-geobacter-core = "1.0.0"
 hsa-rt = { version = "0.1.0", features = ["serde", "alloc-wg"] }
 geobacter-runtime-core = "1.0.0"
-geobacter-shared-defs = "1.0.0"
-geobacter-intrinsics-common = "1.0.0"
-geobacter-amdgpu-intrinsics = "1.0.0"
 geobacter-runtime-amd-macros = "1.0.0"
 # the version on crates.io is *8 months* old.
 packed_simd = { git = "https://github.com/rust-lang-nursery/packed_simd.git", optional = true }
 num-traits = "0.2.11"
 alloc-wg = { version = "0.8.0" }
 smallvec = "1.2.0"
-gamd-std = { version = "1.0.0", package = "geobacter-amd-std" }
 
 [dependencies.goblin]
 version = "0.2.1"

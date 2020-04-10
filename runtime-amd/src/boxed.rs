@@ -3,9 +3,7 @@
 
 use std::alloc::Layout;
 use std::cmp::{Ordering, };
-use std::convert::*;
 use std::fmt;
-use std::intrinsics::type_name;
 use std::iter::*;
 use std::mem::{size_of_val, forget, transmute_copy, };
 use std::marker::Unsize;
@@ -13,149 +11,14 @@ use std::ops::*;
 use std::ptr::{NonNull as StdNonNull, Unique,
                slice_from_raw_parts_mut, drop_in_place,
                write, };
-use std::slice::SliceIndex;
-use std::sync::Arc;
-
-use std::result::Result; // CLion.
 
 use alloc_wg::alloc::{AllocRef, AllocInit};
 
-use geobacter_core::ptr::{SlicePtr, Ptr};
-use geobacter_core::slice::{SliceRef, SliceMut};
-
 use hsa_rt::error::Error as HsaError;
-use hsa_rt::ext::amd::{lock_memory, unlock_memory, MemoryPool, MemoryPoolAlloc,
-                       MemoryPoolPtr, };
-
-use log::{error, };
+use hsa_rt::ext::amd::{MemoryPool, MemoryPoolAlloc, MemoryPoolPtr};
 
 use crate::{HsaAmdGpuAccel, Error};
 use crate::mem::{BoxPoolPtr, };
-
-#[deprecated]
-pub struct BoxSlice<T>
-  where T: Sized,
-{
-  ptr: SlicePtr<T>,
-}
-impl<T> BoxSlice<T>
-  where T: Sized,
-{
-  pub fn lock_to_accels(b: Box<[T]>, accels: &[&Arc<HsaAmdGpuAccel>])
-    -> Result<Self, hsa_rt::error::Error>
-  {
-    let count = b.len();
-    let host = Box::into_raw(b) as *mut T;
-    let host = unsafe { StdNonNull::new_unchecked(host) };
-
-    let mut agents = Vec::new();
-    if accels.len() != 0 {
-      let accels = accels.iter()
-        .map(|a| a.agent().clone() );
-      agents.extend(accels)
-    }
-
-    let accel = lock_memory(host, count, &agents)?;
-    let ptr = Ptr::from_mut(host.as_ptr(),
-                            accel.as_ptr());
-    let ptr = SlicePtr::from_parts(ptr, count);
-    Ok(BoxSlice { ptr, })
-  }
-  pub fn slice<I>(&self, index: I) -> SliceRef<T>
-    where I: SliceIndex<[T], Output = [T]>,
-  {
-    self.as_slice().slice(index)
-  }
-  pub fn slice_mut<I>(&mut self, index: I) -> SliceMut<T>
-    where I: SliceIndex<[T], Output = [T]>,
-  {
-    self.as_mut_slice().into_slice_mut(index)
-  }
-  pub fn as_slice(&self) -> SliceRef<T> {
-    unsafe { self.ptr.as_slice() }
-  }
-  pub fn as_mut_slice(&mut self) -> SliceMut<T> {
-    unsafe { self.ptr.as_mut_slice() }
-  }
-
-  pub fn len(&self) -> usize { self.ptr.len() }
-
-  /// Clone the host box and then lock it.
-  pub fn try_clone(&self, accels: &[&Arc<HsaAmdGpuAccel>])
-    -> Result<Self, hsa_rt::error::Error>
-    where T: Clone,
-  {
-    let b: Box<[T]> = unsafe {
-      Box::from_raw(self.ptr.as_host_slice() as *mut _)
-    };
-
-    let new_b = b.clone();
-
-    // don't drop our original box:
-    ::std::mem::forget(b);
-
-    Self::lock_to_accels(new_b, accels)
-  }
-  pub fn ptr_eq(&self, rhs: &Self) -> bool {
-    self.ptr.as_local_ptr() == rhs.ptr.as_local_ptr()
-  }
-}
-
-
-/// Locks the memory globally
-impl<T> TryFrom<Box<[T]>> for BoxSlice<T>
-  where T: Sized,
-{
-  type Error = hsa_rt::error::Error;
-  fn try_from(v: Box<[T]>) -> Result<Self, Self::Error> {
-    Self::lock_to_accels(v, &[])
-  }
-}
-
-impl<T> Clone for BoxSlice<T>
-  where T: Clone + Sized,
-{
-  fn clone(&self) -> Self {
-    self.try_clone(&[])
-      .expect("clone failed!")
-  }
-}
-impl<T> fmt::Debug for BoxSlice<T>
-  where T: fmt::Debug + Sized,
-{
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    fmt::Debug::fmt(&self.as_slice(), f)
-  }
-}
-impl<T> fmt::Pointer for BoxSlice<T>
-  where T: Sized,
-{
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "BoxSlice<{}>({:p})", type_name::<T>(),
-           &self.ptr)
-  }
-}
-
-/// XXX no check is done to make sure the GPU is finished with this
-/// box
-impl<T> Drop for BoxSlice<T>
-  where T: Sized,
-{
-  fn drop(&mut self) {
-    // unlock the memory:
-    let ptr = self.ptr.as_host_ptr() as *mut T;
-    let r = unsafe {
-      unlock_memory(StdNonNull::new_unchecked(ptr),
-                    self.len())
-    };
-    if let Err(err) = r {
-      error!("failed to unlock host memory: {:?}", err);
-    }
-
-    // now run the host drop:
-    unsafe { Box::from_raw(self.ptr.as_host_slice() as *mut [T]) };
-  }
-}
 
 /// A box-esk type which represents an allocation in any memory pool.
 ///

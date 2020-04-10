@@ -2,6 +2,7 @@
 //! Note: sometime Soon(TM) this will undergo a large refactor, in order to remove
 //! many foot guns relating to direct use of the associated SignalRefs.
 
+use std::geobacter::platform::platform;
 use std::ops::*;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -13,7 +14,6 @@ use crate::module::{Deps, CallError, };
 use hsa_rt::error::Error as HsaError;
 use hsa_rt::signal::{Signal, SignalRef, ConditionOrdering, WaitState, };
 
-use gcore::platform::is_host;
 use grt_core::AcceleratorId;
 
 pub use hsa_rt::signal::Value;
@@ -385,7 +385,7 @@ impl<T, S> SignaledDeref<T, S>
   pub fn try_unwrap(self, spin: bool) -> Result<(T, S), Value>
     where T: Sized,
   {
-    if is_host() {
+    if platform().is_host() {
       self.0.as_host_consumable()
         .expect("signal is not host consumable")
         .wait_for_zero(spin)?;
@@ -412,7 +412,7 @@ impl<T, S> SignaledDeref<T, S>
     &mut self.1
   }
   pub fn try_get_ref(&self, spin: bool) -> Result<&T, Value> {
-    if is_host() /* TODO && T::DEREF_WAIT */ {
+    if platform().is_host() /* TODO && T::DEREF_WAIT */ {
       self.0.as_host_consumable()
         .expect("signal is not host consumable")
         .wait_for_zero(spin)?;
@@ -421,7 +421,7 @@ impl<T, S> SignaledDeref<T, S>
     Ok(&self.1)
   }
   pub fn try_get_mut(&mut self, spin: bool) -> Result<&mut T, Value> {
-    if is_host() {
+    if platform().is_host() {
       self.0.as_host_consumable()
         .expect("signal is not host consumable")
         .wait_for_zero(spin)?;
@@ -446,7 +446,7 @@ impl<T, S> Deref for SignaledDeref<T, S>
 {
   type Target = T;
   fn deref(&self) -> &Self::Target {
-    if !is_host() {
+    if !platform().is_host() {
       unsafe { self.unchecked_ref() }
     } else {
       self.try_get_ref(false)
@@ -459,7 +459,7 @@ impl<T, S> DerefMut for SignaledDeref<T, S>
         S: SignalHandle,
 {
   fn deref_mut(&mut self) -> &mut Self::Target {
-    if !is_host() {
+    if !platform().is_host() {
       unsafe { self.unchecked_mut() }
     } else {
       self.try_get_mut(false)

@@ -13,12 +13,12 @@
 use std::any::Any;
 use std::collections::{BTreeMap, };
 use std::io::{self, };
-use std::marker::{PhantomData, };
 use std::mem::{self, drop, };
 use std::sync::mpsc::{channel, Sender, Receiver, RecvTimeoutError, };
 use std::sync::{Arc, Weak, Once, };
 use std::time::Duration;
 
+use rustc_ast::ast;
 use rustc_middle;
 use rustc_middle::arena::Arena;
 use rustc_middle::middle::cstore::EncodedMetadata;
@@ -41,10 +41,6 @@ use rustc_span::symbol::{Symbol, };
 
 use crossbeam_utils::sync::WaitGroup;
 
-use gintrinsics::{DriverData as GIDriverData, GetDriverData,
-                  GeobacterCustomIntrinsicMirGen,
-                  GeobacterMirGen, };
-
 use parking_lot::RwLock;
 
 use tempfile::{Builder as TDBuilder, };
@@ -53,7 +49,7 @@ use crate::{AcceleratorTargetDesc, context::Context, };
 use crate::utils::{HashMap, StableHash, };
 
 use self::error::IntoErrorWithKernelInstance;
-pub use self::driver_data::{DriverData, PlatformDriverData, };
+pub use self::driver_data::DriverData;
 
 mod collector;
 pub mod error;
@@ -62,7 +58,6 @@ mod util;
 
 use super::{PlatformCodegen, PKernelDesc, };
 use super::products::*;
-use crate::codegen::{PlatformIntrinsicInsert, };
 use crate::codegen::worker::error::PError;
 use crate::metadata::{CrateMetadataLoader, CrateMetadata, CrateNameHash, DummyMetadataLoader};
 use crate::utils::env::{use_llc, print_opt_remarks};
@@ -124,40 +119,7 @@ pub(crate) enum Message<P>
   },
 }
 
-struct DriverDataGetter<P>(PhantomData<P>)
-  where P: PlatformCodegen;
-impl<P> GetDriverData for DriverDataGetter<P>
-  where P: PlatformCodegen,
-{
-  fn with_self<F, R>(tcx: TyCtxt, f: F) -> R
-    where F: FnOnce(&dyn GIDriverData) -> R,
-  {
-    PlatformDriverData::<P>::with(tcx, move |_tcx, pd| {
-      f(pd.dd() as &dyn GIDriverData)
-    })
-  }
-}
-impl<P> Default for DriverDataGetter<P>
-  where P: PlatformCodegen,
-{
-  fn default() -> Self {
-    DriverDataGetter(PhantomData)
-  }
-}
 type IntrinsicsMap = FxHashMap<Symbol, Lrc<dyn CustomIntrinsicMirGen>>;
-pub struct PlatformIntrinsicInserter<'a, P>(&'a mut IntrinsicsMap, PhantomData<P>);
-impl<'a, P> PlatformIntrinsicInsert for PlatformIntrinsicInserter<'a, P>
-  where P: PlatformCodegen,
-{
-  fn insert_name<T>(&mut self, name: &str, intrinsic: T)
-    where T: GeobacterCustomIntrinsicMirGen
-  {
-    let k = Symbol::intern(name);
-    let marker: DriverDataGetter<P> = DriverDataGetter::default();
-    let v = GeobacterMirGen::wrap(intrinsic, &marker);
-    self.0.insert(k, v);
-  }
-}
 
 enum MaybeInProgress<P>
   where P: PlatformCodegen,
@@ -425,7 +387,6 @@ impl<P> WorkerTranslatorData<P>
     -> Result<PCodegenResults<P>, error::PError<P>>
   {
     use self::util::get_codegen_backend;
-    use syntax::ast;
 
     let context = &self.context;
 
@@ -488,15 +449,16 @@ impl<P> WorkerTranslatorData<P>
 
     let mut intrinsics = IntrinsicsMap::default();
     {
-      let marker: DriverDataGetter<P> = DriverDataGetter::default();
-      gintrinsics::intrinsics::insert_all_intrinsics(&marker, |k, v| {
+      rustc_geobacter::intrinsics::insert_generic_intrinsics(|k, v| {
         let k = Symbol::intern(&k);
         assert!(intrinsics.insert(k, v).is_none());
       });
     }
     {
-      let mut inserter = PlatformIntrinsicInserter(&mut intrinsics,
-                                                   PhantomData::<P>);
+      let mut inserter = |k: &str, v: Lrc<dyn CustomIntrinsicMirGen + 'static>| {
+        let k = Symbol::intern(k);
+        assert!(intrinsics.insert(k, v).is_none());
+      };
       self.platform
         .insert_intrinsics(&self.target_desc, &mut inserter);
       self.platform
@@ -505,13 +467,13 @@ impl<P> WorkerTranslatorData<P>
 
     let accels = self.accels.read().clone();
 
-    let driver_data: PlatformDriverData<P> =
-      PlatformDriverData::new(context.clone(),
-                              &accels,
-                              &self.target_desc,
-                              intrinsics,
-                              &self.platform);
-    let driver_data: PlatformDriverData<'static, P> = unsafe {
+    let driver_data: DriverData<P> =
+      DriverData::new(context.clone(),
+                      &accels,
+                      &self.target_desc,
+                      intrinsics,
+                      &self.platform);
+    let driver_data: DriverData<'static, P> = unsafe {
       ::std::mem::transmute(driver_data)
     };
     let driver_data = Box::new(driver_data) as Box<dyn Any + Send + Sync>;
@@ -537,9 +499,23 @@ impl<P> WorkerTranslatorData<P>
       // tcx available.
       tcx.sess.time("dep graph tcx init", || rustc_incremental::dep_graph_tcx_init(tcx));
 
+      DriverData::<P>::with(tcx, |tcx, pd| -> Result<(), PError<P>> {
+        use rustc_geobacter::TyCtxtKernelInstance;
+        unsafe {
+          let spec_data = &mut *pd.spec_data.get();
+
+          for (&k, v) in desc.spec_params.iter() {
+            let instance = tcx.convert_kernel_instance(k)
+              .ok_or_else(|| error::Error::ConvertKernelInstance(k))?;
+            spec_data.insert(instance, v.clone());
+          }
+        }
+        Ok(())
+      })?;
+
       tcx.sess.time("platform root and condition init",
            move || {
-             PlatformDriverData::<P>::with(tcx, |tcx, pd| {
+             DriverData::<P>::with(tcx, |tcx, pd| {
                pd.init_root(desc, tcx)?;
 
                pd.init_conditions(tcx)?;
@@ -571,7 +547,7 @@ impl<P> WorkerTranslatorData<P>
                         })
                     })?;
 
-      let results = PlatformDriverData::<P>::with(tcx, |tcx, pd| {
+      let results = DriverData::<P>::with(tcx, |tcx, pd| {
         pd.post_codegen(tcx, &tmpdir.path(), &out)
       })?;
 
@@ -730,10 +706,8 @@ impl<P> WorkerTranslatorData<P>
         let mut providers = Providers::default();
         rustc_metadata::provide_extern(&mut providers);
 
-        let def_id = PlatformDriverData::<P>::with(tcx, |tcx, pd| {
-          let dd = pd.dd();
-          dd.stubber().unwrap()
-            .stub_def_id(tcx, dd, def_id)
+        let def_id = DriverData::<P>::with(tcx, |tcx, pd| {
+          pd.stubber.stub_def_id(tcx, def_id)
         });
 
         (providers.is_mir_available)(tcx, def_id)
@@ -742,10 +716,8 @@ impl<P> WorkerTranslatorData<P>
         let mut providers = Providers::default();
         rustc_metadata::provide_extern(&mut providers);
 
-        let def_id = PlatformDriverData::<P>::with(tcx, |tcx, pd| {
-          let dd = pd.dd();
-          dd.stubber().unwrap()
-            .stub_def_id(tcx, dd, def_id)
+        let def_id = DriverData::<P>::with(tcx, |tcx, pd| {
+          pd.stubber.stub_def_id(tcx, def_id)
         });
 
         (providers.optimized_mir)(tcx, def_id)
@@ -754,11 +726,7 @@ impl<P> WorkerTranslatorData<P>
         let mut providers = Providers::default();
         rustc_symbol_mangling::provide(&mut providers);
 
-        let instance = PlatformDriverData::<P>::with(tcx, |tcx, pd| {
-          let dd = pd.dd();
-          dd.stubber().unwrap()
-            .map_instance(tcx, dd, instance)
-        });
+        let instance = tcx.stubbed_instance(instance);
 
         (providers.symbol_name)(tcx, instance)
       },
@@ -797,8 +765,8 @@ impl<P> WorkerTranslatorData<P>
         Lrc::new(vec![])
       },
       type_of: |tcx, def_id| {
-        PlatformDriverData::<P>::with(tcx, |_tcx, pd| {
-          pd.dd().expect_type_of(def_id)
+        DriverData::<P>::with(tcx, |_tcx, pd| {
+          pd.expect_type_of(def_id)
         })
       },
       dependency_formats: |tcx, cnum| {
@@ -832,11 +800,11 @@ impl<P> WorkerTranslatorData<P>
 
         let sig = (providers.fn_sig)(tcx, def_id);
 
-        PlatformDriverData::<P>::with(tcx, |_tcx, pd| {
-          if pd.dd().is_root(def_id) {
+        DriverData::<P>::with(tcx, |_tcx, pd| {
+          if pd.is_root(def_id) {
             // modify the abi:
             let sig = FnSig {
-              abi: pd.dd().target_desc.kernel_abi.clone(),
+              abi: pd.target_desc.kernel_abi.clone(),
               ..*sig.skip_binder()
             };
             Binder::bind(sig)
@@ -847,12 +815,10 @@ impl<P> WorkerTranslatorData<P>
       },
       reachable_non_generics,
       custom_intrinsic_mirgen: |tcx, def_id| {
-        PlatformDriverData::<P>::with(tcx, |tcx, pd| {
+        DriverData::<P>::with(tcx, |tcx, pd| {
           let name = tcx.item_name(def_id);
           debug!("custom intrinsic: {}", name);
-          pd.dd()
-            .intrinsics
-            .read()
+          pd.intrinsics
             .get(&name)
             .cloned()
         })
@@ -865,10 +831,8 @@ impl<P> WorkerTranslatorData<P>
 
         let mut attrs = (providers.codegen_fn_attrs)(tcx, def_id);
 
-        PlatformDriverData::<P>::with(tcx, move |tcx, pd| {
-          pd.platform.codegen_fn_attrs(tcx, &pd.driver_data,
-                                       def_id, &mut attrs);
-
+        DriverData::<P>::with(tcx, move |tcx, pd| {
+          pd.platform.codegen_fn_attrs(tcx, pd, def_id, &mut attrs);
 
           if let Some(ref spirv) = attrs.spirv {
             info!("spirv attrs for {:?}: {:#?}", def_id, spirv);
@@ -886,16 +850,14 @@ impl<P> WorkerTranslatorData<P>
 
         let attrs = (providers.item_attrs)(tcx, def_id);
 
-        PlatformDriverData::<P>::with(tcx, move |tcx, pd| {
-          pd.platform.item_attrs(tcx, &pd.driver_data, def_id, attrs)
+        DriverData::<P>::with(tcx, move |tcx, pd| {
+          pd.platform.item_attrs(tcx, pd, def_id, attrs)
         })
       },
       entry_fn,
       collect_and_partition_mono_items: |tcx, cnum| {
-        PlatformDriverData::<P>::with(tcx, move |tcx, pd| {
-          collector::collect_and_partition_mono_items(tcx,
-                                                      pd.dd(),
-                                                      cnum)
+        DriverData::<P>::with(tcx, move |tcx, pd| {
+          collector::collect_and_partition_mono_items(tcx, pd, cnum)
         })
       },
       // we need to override this because otherwise rustc will get confused
@@ -904,6 +866,32 @@ impl<P> WorkerTranslatorData<P>
       // overriding this should be a bit of an optimization anyway in
       // addition to being a bugfix.
       missing_extern_crate_item: |_tcx, _cnum| { true },
+      specialization_data: |tcx, inst| {
+        DriverData::<P>::with(tcx, move |_, pd| {
+          pd.spec_data()
+            .get(&inst)
+            .map(|v| &v[..] )
+        })
+      },
+      stubbed_instance: |tcx, inst| {
+        let did = match inst.def {
+          ty::InstanceDef::Item(did) => did,
+          _ => { return inst; },
+        };
+
+        DriverData::<P>::with(tcx, move |tcx, pd| {
+          let did = pd.stubber.stub_def_id(tcx, did);
+
+          // we should be able to just replace `stub_instance.substs`
+          // with `inst.substs`, assuming our stub signatures match the
+          // real functions (which they should).
+
+          ty::Instance {
+            def: ty::InstanceDef::Item(did),
+            substs: inst.substs,
+          }
+        })
+      },
       ..*providers
     };
 

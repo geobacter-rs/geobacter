@@ -360,7 +360,7 @@ mod one_d {
     const FULL_GRID: Dim1D<Range<u32>> = Dim1D { x: 0..16, };
 
     fn trivial_f(dst: *mut [u32], vp: VectorParams<Dim1D<Range<u32>>>) {
-      let glid = gamd_std::dispatch_packet().global_linear_id();
+      let glid = std::geobacter::amdgpu::dispatch_packet().global_linear_id();
       unsafe {
         (&mut *dst)[glid] = vp.gl_id();
       }
@@ -393,7 +393,7 @@ mod one_d {
     const GRID: Dim1D<Range<u32>> = Dim1D { x: 32..48, };
 
     fn trivial_f(dst: *mut [u32], vp: VectorParams<Dim1D<Range<u32>>>) {
-      let glid = gamd_std::dispatch_packet().global_linear_id();
+      let glid = std::geobacter::amdgpu::dispatch_packet().global_linear_id();
       unsafe {
         (&mut *dst)[glid] = vp.gl_id();
       }
@@ -422,7 +422,7 @@ mod one_d {
     const GRID: Dim1D<Range<u32>> = Dim1D { x: 0..32, };
 
     fn trivial_f(dst: *mut [u32], vp: VectorParams<Dim1D<Range<u32>>>) {
-      let glid = gamd_std::dispatch_packet().global_linear_id();
+      let glid = std::geobacter::amdgpu::dispatch_packet().global_linear_id();
       unsafe {
         (&mut *dst)[glid] = vp.wi().x as u32;
       }
@@ -451,7 +451,7 @@ mod one_d {
     const GRID: Dim1D<Range<u32>> = Dim1D { x: 0..32, };
 
     fn trivial_f(dst: *mut [u32], vp: VectorParams<Dim1D<Range<u32>>>) {
-      let glid = gamd_std::dispatch_packet().global_linear_id();
+      let glid = std::geobacter::amdgpu::dispatch_packet().global_linear_id();
       unsafe {
         (&mut *dst)[glid] = vp.wg_id().x;
       }
@@ -481,7 +481,7 @@ mod one_d {
     const GRID: Dim1D<Range<u32>> = Dim1D { x: 0..32, };
 
     fn trivial_f(dst: *mut [u32], vp: VectorParams<Dim1D<Range<u32>>>) {
-      let glid = gamd_std::dispatch_packet().global_linear_id();
+      let glid = std::geobacter::amdgpu::dispatch_packet().global_linear_id();
       unsafe {
         (&mut *dst)[glid] = vp.wg_idx().x;
       }
@@ -556,7 +556,7 @@ mod two_d {
     const FULL_GRID: Dim2D<Range<u32>> = Dim2D { x: 0..16, y: 0..16, };
 
     fn trivial_f(dst: *mut [u32], vp: VectorParams<Dim2D<Range<u32>>>) {
-      let glid = gamd_std::dispatch_packet().global_linear_id();
+      let glid = std::geobacter::amdgpu::dispatch_packet().global_linear_id();
       unsafe {
         (&mut *dst)[glid] = vp.gl_id();
       }
@@ -633,7 +633,7 @@ mod two_d {
     const GRID: Dim2D<Range<u32>> = Dim2D { x: 0..32, y: 0..32, };
 
     fn trivial_f(dst: *mut [Dim2D<u16>], vp: VectorParams<Dim2D<Range<u32>>>) {
-      let glid = gamd_std::dispatch_packet().global_linear_id();
+      let glid = std::geobacter::amdgpu::dispatch_packet().global_linear_id();
       unsafe {
         (&mut *dst)[glid] = vp.wi();
       }
@@ -761,7 +761,7 @@ mod three_d {
     };
 
     fn trivial_f(dst: *mut [(u32, u32, u32)], vp: VectorParams<Dim3D<Range<u32>>>) {
-      let glid = gamd_std::dispatch_packet().global_linear_id();
+      let glid = std::geobacter::amdgpu::dispatch_packet().global_linear_id();
       unsafe {
         (&mut *dst)[glid] = (vp.wi().x as _, vp.wi().y as _, vp.wi().z as _);
       }
@@ -797,7 +797,7 @@ mod three_d {
     };
 
     fn trivial_f(dst: *mut [(u32, u32, u32)], vp: VectorParams<Dim3D<Range<u32>>>) {
-      let glid = gamd_std::dispatch_packet().global_linear_id();
+      let glid = std::geobacter::amdgpu::dispatch_packet().global_linear_id();
       unsafe {
         (&mut *dst)[glid] = (vp.wg_id().x, vp.wg_id().y, vp.wg_id().z);
       }
@@ -839,7 +839,7 @@ mod three_d {
     };
 
     fn trivial_f(dst: *mut [(u32, u32, u32)], vp: VectorParams<Dim3D<Range<u32>>>) {
-      let glid = gamd_std::dispatch_packet().global_linear_id();
+      let glid = std::geobacter::amdgpu::dispatch_packet().global_linear_id();
       unsafe {
         (&mut *dst)[glid] = (vp.wg_idx().x, vp.wg_idx().y, vp.wg_idx().z);
       }

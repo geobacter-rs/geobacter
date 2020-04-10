@@ -1,9 +1,9 @@
 
-use rustc_ast::ast::{MetaItem, };
-use rustc_span::symbol::Symbol;
-use rustc_middle::ty::{TyCtxt, };
+use grt_core::codegen::attrs::*;
 
-use crate::common::{attrs::*, };
+use rustc_ast::ast::MetaItem;
+use rustc_middle::ty::TyCtxt;
+use rustc_span::symbol::Symbol;
 
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub enum Condition {

@@ -1,11 +1,10 @@
 
 use std::error::Error as StdError;
 use std::fmt;
+use std::geobacter::kernel::KernelInstanceRef;
 use std::io::Error as IoError;
 
 use alloc_wg::alloc::Layout;
-
-use gcore::kernel::KernelInstance;
 
 use hsa_rt::queue::QueueError;
 
@@ -22,7 +21,7 @@ pub enum Error {
   Io(IoError),
   KernelInfoElf(goblin::error::Error),
   KernelInfoMessagePack(rmps::decode::Error),
-  ConvertKernelInstance(KernelInstance),
+  ConvertKernelInstance(KernelInstanceRef<'static>),
   ContextDead,
   Codegen,
   Linking,

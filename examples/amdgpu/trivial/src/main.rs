@@ -5,8 +5,6 @@ use std::mem::{size_of, };
 use std::ops::*;
 use std::time::Instant;
 
-use alloc_wg::{vec::Vec, };
-
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng, };
 
@@ -109,8 +107,8 @@ pub fn main() {
            COUNT * size_of::<Elem>() / 1024 / 1024);
 
   let lap_alloc = accels.first().unwrap().fine_lap_node_alloc(0);
-  let mut original_values: Vec<Elem, _> = time("alloc original_values", || {
-    Vec::with_capacity_in(COUNT, lap_alloc.clone())
+  let mut original_values: LapVec<Elem> = time("alloc original_values", || {
+    LapVec::with_capacity_in(COUNT, lap_alloc.clone())
   });
   original_values.resize_with(COUNT, Default::default);
   let mut values: LapVec<Elem> = time("alloc host output slice", || {

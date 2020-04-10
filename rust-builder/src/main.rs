@@ -7,9 +7,9 @@
 //! is done in a separate checkout, which is passed to us via `--repo-url`
 //!
 
-use std::env::{current_dir, var, };
+use std::env::current_dir;
 use std::error::Error;
-use std::fs::{copy, File, read_dir, };
+use std::fs::{File, read_dir, };
 use std::io::*;
 use std::path::{Path, PathBuf, };
 use std::process::Command;
@@ -105,30 +105,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
   matches.run()
 }
 
-const CRATE_ROOT: &'static str = env!("CARGO_MANIFEST_DIR");
-fn get_framework_dir() -> PathBuf {
-  Path::new(CRATE_ROOT).join("../")
-}
-fn get_framework_target() -> PathBuf {
-  get_framework_dir()
-    .join("target")
-}
-fn get_crate_manifest(krate: &str) -> PathBuf {
-  get_framework_dir()
-    .join(krate)
-    .join("Cargo.toml")
-}
-
 const RUST_FLAGS: &str = "-Z always-encode-mir -Z always-emit-metadata";
-fn get_rust_flags() -> String {
-  let mut prev = var("RUSTFLAGS").unwrap_or_default();
-  if prev.len() != 0 {
-    prev.push_str(" ");
-  }
-
-  prev.push_str(RUST_FLAGS);
-  prev
-}
 trait Builder {
   fn repo_url(&self) -> &str;
   fn repo_branch(&self) -> &str;
@@ -177,64 +154,6 @@ trait Builder {
     }
 
     cmd
-  }
-  fn run_cargo_command(&self, cargo_cmd: &str, krate: PathBuf,
-                       wrapper: Option<&Path>)
-  {
-    let mut cmd = Command::new("cargo");
-    cmd.arg(cargo_cmd)
-      .arg("--release")
-      .arg("--manifest-path").arg(krate);
-
-    if let Some(wrapper) = wrapper {
-      cmd.env("RUSTC", wrapper);
-    }
-
-    cmd.env("RUSTFLAGS", get_rust_flags());
-
-    if let Some(j) = self.jobs() {
-      cmd.arg("-j")
-        .arg(j);
-    }
-
-    run_unlogged_cmd("cargo", cmd);
-  }
-  fn framework_output_dir(&self) -> PathBuf {
-    get_framework_target()
-      .join("release")
-  }
-  fn framework_binary(&self, binary: &str,
-                      krate: Option<&str>,
-                      wrapper: Option<&Path>) -> PathBuf
-  {
-    let krate = get_crate_manifest(krate.unwrap_or(binary));
-    self.run_cargo_command("build", krate, wrapper);
-
-    self.framework_output_dir().join(binary)
-  }
-  fn install_driver(&self, driver: &str, binary: &str,
-                    krate: Option<&str>,
-                    wrapper: Option<&Path>) -> PathBuf
-  {
-    let default_wrapper = self.find_stage2_dir()
-      .join("bin/rustc");
-    let wrapper = wrapper.unwrap_or(&default_wrapper);
-    let output = self.framework_binary(binary, krate, Some(wrapper));
-    let dest = self.find_stage2_dir().join("bin").join(driver);
-    copy(output, &dest).unwrap();
-
-    let mut cmd = Command::new("chrpath");
-    cmd.arg("-r")
-      .arg("$ORIGIN/../lib")
-      .arg(&dest);
-    run_unlogged_cmd("chrpath", cmd);
-
-    dest
-  }
-  fn install_bootstrap_driver(&self) -> PathBuf {
-    self.install_driver("bootstrap-rustc",
-                        "bootstrap-rustc-driver",
-                        None, None)
   }
 
   /// Find the stage2 dir we give to `rustup`. This dir is inside a directory
@@ -315,6 +234,7 @@ targets = "X86;ARM;AMDGPU;AArch64;Mips;PowerPC;SystemZ;MSP430;Sparc;NVPTX;Hexago
 compiler-docs = true
 submodules = true
 low-priority = true
+full-bootstrap = true
 
 [rust]
 debuginfo-level = {}
@@ -355,10 +275,9 @@ ar = "ar"
     let cmd = self.x_py_command("build");
     run_unlogged_cmd("build-rust", cmd);
   }
-  fn install_geobacter_drivers(&self) -> PathBuf {
-    let bootstrap = self.install_bootstrap_driver();
-    self.install_driver("rustc", "geobacter-rustc-driver",
-                        Some("rustc-driver"), Some(&bootstrap))
+  fn geobacter_driver(&self) -> PathBuf {
+    self.find_stage2_dir()
+      .join("bin/rustc")
   }
   fn install_toolchain_into_rustup(&self) {
     if let Some(name) = self.rustup() {
@@ -378,13 +297,18 @@ ar = "ar"
     self.write_config_toml();
     self.build_toolchain();
     self.build_docs();
-    let driver = self.install_geobacter_drivers();
     self.install_toolchain_into_rustup();
+
+    let driver = if !self.rustup_enabled() {
+      Some(self.geobacter_driver())
+    } else {
+      None
+    };
 
     // verify the driver works:
     let mut cmd;
-    if !self.rustup_enabled() {
-      cmd = Command::new(&driver);
+    if let Some(ref driver) = driver {
+      cmd = Command::new(driver);
     } else {
       cmd = Command::new("rustup");
       cmd.arg("run")
@@ -395,13 +319,13 @@ ar = "ar"
     run_unlogged_cmd("verify-rustc", cmd);
 
     println!("Complete! :)");
-    if self.rustup_enabled() {
+    if let Some(ref driver) = driver {
+      println!("To use your new toolchain set \"RUSTC={}\"",
+               driver.display());
+    } else {
       println!("To use your new toolchain via rustup:");
       println!("either invoke cargo with `+{}` or `rustup override set {}`",
                self.rustup_toolchain(), self.rustup_toolchain());
-    } else {
-      println!("To use your new toolchain set \"RUSTC={}\"",
-               driver.display());
     }
     Ok(())
   }

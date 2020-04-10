@@ -1,7 +1,7 @@
 use std::fmt;
 use std::ops::*;
 
-use gamd_std::workitem::*;
+use std::geobacter::amdgpu::workitem::*;
 
 use num_traits::{AsPrimitive, ToPrimitive};
 use num_traits::identities::{One, Zero, };
@@ -623,40 +623,40 @@ macro_rules! grid_dims_impl {
 }
 grid_dims_impl! {
   (Dim1D, Range,
-   (x, AxisDimX, ),
+   (x, XAxis, ),
   ),
   (Dim1D, RangeInclusive,
-   (x, AxisDimX, ),
+   (x, XAxis, ),
   ),
   (Dim1D, RangeTo,
-   (x, AxisDimX, ),
+   (x, XAxis, ),
   ),
   (Dim1D, RangeToInclusive,
-   (x, AxisDimX, ),
+   (x, XAxis, ),
   ),
   (Dim2D, Range,
-   (x, AxisDimX, y, AxisDimY, ),
+   (x, XAxis, y, YAxis, ),
   ),
   (Dim2D, RangeInclusive,
-   (x, AxisDimX, y, AxisDimY, ),
+   (x, XAxis, y, YAxis, ),
   ),
   (Dim2D, RangeTo,
-   (x, AxisDimX, y, AxisDimY, ),
+   (x, XAxis, y, YAxis, ),
   ),
   (Dim2D, RangeToInclusive,
-   (x, AxisDimX, y, AxisDimY, ),
+   (x, XAxis, y, YAxis, ),
   ),
   (Dim3D, Range,
-   (x, AxisDimX, y, AxisDimY, z, AxisDimZ, ),
+   (x, XAxis, y, YAxis, z, ZAxis, ),
   ),
   (Dim3D, RangeInclusive,
-   (x, AxisDimX, y, AxisDimY, z, AxisDimZ, ),
+   (x, XAxis, y, YAxis, z, ZAxis, ),
   ),
   (Dim3D, RangeTo,
-   (x, AxisDimX, y, AxisDimY, z, AxisDimZ, ),
+   (x, XAxis, y, YAxis, z, ZAxis, ),
   ),
   (Dim3D, RangeToInclusive,
-   (x, AxisDimX, y, AxisDimY, z, AxisDimZ, ),
+   (x, XAxis, y, YAxis, z, ZAxis, ),
   ),
 }
 unsafe impl<'a, G> GridDims for &'a G
@@ -777,9 +777,9 @@ macro_rules! workgroup_dims_impl {
   )*}
 }
 workgroup_dims_impl! {
-  (Dim1D, RangeTo, u16, (x, AxisDimX, ), ),
-  (Dim2D, RangeTo, u16, (x, AxisDimX, y, AxisDimY, ), ),
-  (Dim3D, RangeTo, u16, (x, AxisDimX, y, AxisDimY, z, AxisDimZ, ), ),
+  (Dim1D, RangeTo, u16, (x, XAxis, ), ),
+  (Dim2D, RangeTo, u16, (x, XAxis, y, YAxis, ), ),
+  (Dim3D, RangeTo, u16, (x, XAxis, y, YAxis, z, ZAxis, ), ),
 }
 impl<'a, G> WorkgroupDims for &'a G
   where G: WorkgroupDims + Clone,
