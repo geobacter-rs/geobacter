@@ -117,6 +117,8 @@ impl<G> VectorParams<G>
     self.wg_idx
   }
   #[inline(always)]
+  pub fn grid(&self) -> &G { &self.grid }
+  #[inline(always)]
   pub fn grid_size(&self) -> G::Idx {
     self.grid_size
   }
