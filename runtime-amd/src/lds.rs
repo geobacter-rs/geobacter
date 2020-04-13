@@ -724,22 +724,22 @@ impl<E, const X: usize, const Y: usize> LdsArray<E> for [[E; X]; Y] {
 
   #[doc(hidden)] #[inline(always)]
   fn workitem_index_mut(&mut self, idx: &<Self::Grid as WorkgroupDims>::Idx) -> &mut E {
-    &mut self[idx.x as usize][idx.y as usize]
+    &mut self[idx.y as usize][idx.x as usize]
   }
   #[doc(hidden)] #[inline(always)]
   fn workitem_index(&self, idx: &<Self::Grid as WorkgroupDims>::Idx) -> &E {
-    &self[idx.x as usize][idx.y as usize]
+    &self[idx.y as usize][idx.x as usize]
   }
 }
 impl<E, const X: usize, const Y: usize, const Z: usize> LdsArray<E> for [[[E; X]; Y]; Z] {
   type Grid = Dim3D<RangeTo<u16>>;
   #[doc(hidden)] #[inline(always)]
   fn workitem_index_mut(&mut self, idx: &<Self::Grid as WorkgroupDims>::Idx) -> &mut E {
-    &mut self[idx.x as usize][idx.y as usize][idx.z as usize]
+    &mut self[idx.z as usize][idx.y as usize][idx.x as usize]
   }
   #[doc(hidden)] #[inline(always)]
   fn workitem_index(&self, idx: &<Self::Grid as WorkgroupDims>::Idx) -> &E {
-    &self[idx.x as usize][idx.y as usize][idx.z as usize]
+    &self[idx.z as usize][idx.y as usize][idx.x as usize]
   }
 }
 
@@ -906,6 +906,80 @@ mod test {
 
     for (i, &v) in m.iter().enumerate() {
       assert_eq!(i, v as usize);
+    }
+  }
+  #[test]
+  fn axis_order() {
+    #[derive(GeobacterDeps)]
+    struct LDSKernel {
+      dst: *mut [u32],
+      queue: DeviceSingleQueue,
+      completion: GlobalSignal,
+    }
+    unsafe impl Send for LDSKernel { }
+    unsafe impl Sync for LDSKernel { }
+    impl Completion for LDSKernel {
+      type CompletionSignal = GlobalSignal;
+      fn completion(&self) -> &GlobalSignal { &self.completion }
+    }
+    impl Kernel for LDSKernel {
+      type Grid = Dim2D<RangeTo<u32>>;
+      const WORKGROUP: Dim2D<RangeTo<u16>> = Dim2D {
+        x: ..1,
+        y: ..2,
+      };
+
+      type Queue = DeviceSingleQueue;
+      fn queue(&self) -> &DeviceSingleQueue { &self.queue }
+
+      fn kernel(&self, vp: KVectorParams<Self>) {
+        use std::geobacter::amdgpu::{dispatch_packet, sync::atomic::*, };
+
+        lds! {
+          let mut lds: Lds<[[u32; 1]; 2]> = Lds::new();
+        }
+
+        let g_lid = dispatch_packet().global_linear_id();
+        lds.with_shared(|mut lds| {
+          let lds = lds.init(&vp, 1);
+
+          work_group_rel_acq_barrier(Scope::WorkGroup);
+
+          unsafe {
+            (&mut *self.dst)[g_lid] = lds[vp.wi()];
+          }
+        });
+      }
+    }
+
+    let dev = device();
+
+    let grid = Dim2D {
+      x: ..3,
+      y: ..3,
+    };
+
+    let mut m = LapVec::new_in(dev.fine_lap_node_alloc(0));
+    m.add_access(&dev).unwrap();
+
+    m.resize(grid.linear_len().unwrap() as _, u32::max_value());
+
+    let module = LDSKernel::module(&dev);
+    let mut invoc = module.into_invoc(args_pool());
+    unsafe {
+      let args = LDSKernel {
+        dst: m.as_mut_slice(),
+        queue: dev.create_single_queue(None).unwrap(),
+        completion: GlobalSignal::new(1).unwrap(),
+      };
+      invoc.unchecked_call_async(&grid, args)
+        .unwrap()
+        .wait_for_zero(true)
+        .unwrap();
+    }
+
+    for &v in m.iter() {
+      assert_eq!(v as usize, 1);
     }
   }
   #[test]
