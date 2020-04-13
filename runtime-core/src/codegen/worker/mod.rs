@@ -630,7 +630,6 @@ pub fn create_rustc_options() -> rustc_session::config::Options {
       opts.cg.passes.push("infer-address-spaces".into());
       opts.cg.passes.push("instcombine".into());
       opts.cg.passes.push("sroa".into());
-      opts.cg.passes.push("mem2reg".into());
     }
     opts.cg.passes.push("simplifycfg".into());
   }
