@@ -18,7 +18,7 @@ use std::fmt;
 use std::geobacter::platform::*;
 use std::geobacter::spec_param as param;
 use std::marker::PhantomData;
-use std::mem::{size_of, drop, };
+use std::mem::size_of;
 use std::num::NonZeroUsize;
 use std::ops::*;
 use std::rc::Rc;
@@ -47,8 +47,8 @@ impl<'a, 'b, E> Completion for GemmArgs<'a, 'b, E>
 impl<'a, 'b> Kernel for GemmArgs<'a, 'b, ETy> {
   type Grid = Dim2D<Range<u32>>;
   const WORKGROUP: <Self::Grid as GridDims>::Workgroup = Dim2D {
-    x: ..BLOCK_K as _,
-    y: ..BLOCK_K as _,
+    x: ..RTS as _,
+    y: ..TILE_S as _,
   };
   type Queue = DeviceSingleQueue;
 
@@ -58,40 +58,6 @@ impl<'a, 'b> Kernel for GemmArgs<'a, 'b, ETy> {
 
   /// This function is run on the GPU.
   fn kernel(&self, vp: KVectorParams<Self>) {
-    struct GpuWorkItem<'a, 'b>(&'b mut LdsShared<'a, LdsArray<ETy>>,
-                               &'b mut LdsShared<'a, LdsArray<ETy>>,
-                               ETy)
-      where 'a: 'b;
-    impl<'b, 'c> AllWorkItems<ETy> for GpuWorkItem<'b, 'c>
-      where 'b: 'c,
-    {
-      #[inline(always)]
-      fn with<F, G>(&mut self,
-                    vp: &VectorParams<Dim2D<Range<u32>>>,
-                    mut init: F, mut with: G)
-        where F: for<'a> FnMut(&'a VectorParams<Dim2D<Range<u32>>>) -> (ETy, ETy),
-              G: for<'a> FnMut(&'a VectorParams<Dim2D<Range<u32>>>,
-                &'a mut ETy, &'a LdsArray<ETy>, &'a LdsArray<ETy>),
-      {
-        let (a, b) = init(vp);
-        let s_a = self.0.init(vp, a);
-        let s_b = self.1.init(vp, b);
-
-        with(vp, &mut self.2, &s_a, unsafe { s_b.unchecked_ref() });
-
-        drop(s_a);
-        unsafe { s_b.unsynced_drop(); } // avoid the second, unneeded, barrier.
-      }
-      #[inline(always)]
-      fn write<F>(&mut self,
-                  vp: &VectorParams<Dim2D<Range<u32>>>,
-                  mut f: F)
-        where F: for<'a> FnMut(&'a VectorParams<Dim2D<Range<u32>>>, &'a ETy),
-      {
-        f(vp, &mut self.2)
-      }
-    }
-
     let dim = dim_spec_param();
 
     // These globals are in LDS (workgroup local) memory.
@@ -103,19 +69,13 @@ impl<'a, 'b> Kernel for GemmArgs<'a, 'b, ETy> {
     }
 
     lds_sa.with_shared(|mut sa| {
-      // TODO: nonnull assumes in LLVM cause lds_sb to not get optimized
-      //       off the stack, slowing our kernel down by 200+Gops.
-      // Fixing SROA to split the @llvm.assume(icmp ne null) actually causes way
-      // more bugs than you'd expect; such a patch is still a WIP.
       lds_sb.with_shared(|mut sb| {
-        let lds = GpuWorkItem(&mut sa, &mut sb, 0 as ETy);
-
         let a = self.a.dst();
         let b = self.b.dst();
 
         unsafe {
           gemm_v1(&vp, a.as_ref(), b.as_ref(),
-                  self.c, dim, lds);
+                  self.c, &mut sa, &mut sb, dim);
         }
       });
     });
@@ -132,58 +92,83 @@ unsafe impl<'a, 'b, E> Sync for GemmArgs<'a, 'b, E>
 /// the device.
 fn dim_spec_param() -> NonZeroUsize {
   assert!(!platform().is_host());
-  param::get(&dim_spec_param)
-    .cloned()
-    .unwrap()
+  *param::get(&dim_spec_param).unwrap()
 }
-/// Do we need to do bounds checks, because BLOCK_K doesn't divide the grid evenly?
+/// Do we need to do bounds checks, because TILE_S doesn't divide the grid evenly?
 fn mod_block_k() -> bool {
-  param::get(&mod_block_k)
-    .cloned()
-    .unwrap_or_default()
+  if let Some(&v) = param::get(&mod_block_k) {
+    v
+  } else {
+    false
+  }
 }
 
-const BLOCK_K: usize = 22;
-// If BLOCK_K was a power of two, this would equal to it + 1.
-// We don't need the extra row now because 22 seems to be a sweet spot on all the
-// cards benched.
-const BLOCK_K_STRIDE: usize = BLOCK_K;
+const WPT: usize = 1;
+const RTS: usize = TILE_S / WPT;
+
+const TILE_S: usize = 32;
 type ETy = f32;
-type LdsArray<E> = [[E; BLOCK_K_STRIDE]; BLOCK_K];
+type LdsArray<E> = [[[E; WPT]; RTS + 1]; TILE_S];
+type LdsTile<E> = [[E; TILE_S + WPT]; TILE_S];
 
-/// This trait abstracts running code over all workitems. Used by the kernels
-/// so that the GEMM can also be ran on a normal CPU.
-trait AllWorkItems<E> {
-  fn with<F, G>(&mut self,
-                vp: &VectorParams<Dim2D<Range<u32>>>,
-                init: F, with: G)
-    where F: for<'a> FnMut(&'a VectorParams<Dim2D<Range<u32>>>) -> (E, E),
-          G: for<'a> FnMut(&'a VectorParams<Dim2D<Range<u32>>>,
-            &'a mut E, &'a LdsArray<E>, &'a LdsArray<E>);
-
-  fn write<F>(&mut self,
-              vp: &VectorParams<Dim2D<Range<u32>>>,
-              f: F)
-    where F: for<'a> FnMut(&'a VectorParams<Dim2D<Range<u32>>>, &'a E);
-}
-
-fn gemm_v1<F, E>(vp: &VectorParams<Dim2D<Range<u32>>>,
-                 a: &[E], b: &[E], c: *mut [E],
-                 stride: NonZeroUsize, mut lds: F)
-  where F: AllWorkItems<E>,
-        E: Copy + AddAssign + Mul<Output = E> + PartialEq + fmt::Debug + 'static,
+fn gemm_v1<E>(vp: &VectorParams<Dim2D<Range<u32>>>,
+              a: &[E], b: &[E], c: *mut [E],
+              sa: &mut LdsShared<LdsArray<E>>,
+              sb: &mut LdsShared<LdsArray<E>>,
+              stride: NonZeroUsize)
+  where E: Copy + AddAssign + Mul<Output = E> + PartialEq + fmt::Debug + Sync + 'static,
         u32: AsPrimitive<E>,
 {
   let stride = stride.get();
   let mod_k = mod_block_k();
 
+  let wpt = WPT as u32;
+
+  let mut acc = [0u32.as_(); WPT];
+
+  let wg_size = Dim2D::from(TILE_S as u32);
+  let wg = vp.wg_id();
+
+  let Dim2D { x: wi_x, y: wi_y, } = (vp.wi() * Dim2D {
+    x: wpt as u16,
+    y: 1,
+  }).as_::<u32>();
+  let Dim2D { x: wg_x, y: wg_y, } = wg * wg_size;
+
   let mut k = 0usize;
   while k < stride {
+    let mut at: [_; WPT] = [0u32.as_(); WPT];
+    let mut bt: [_; WPT] = [0u32.as_(); WPT];
     // init SMEM:
-    lds.with(vp, |vp| {
-      let Dim2D { x: wi_x, y: wi_y, } = vp.wi().as_::<u32>();
-      let Dim2D { x: wg_x, y: wg_y, } = vp.wg_idx();
+    if !mod_k {
+      let mut w = 0u32;
+      while w < wpt {
+        let ao_y = (wg_y + wi_y) as usize;
+        let ao_x = k + (wi_x + w) as usize;
 
+        let bo_y = k + wi_y as usize;
+        let bo_x = (wg_x + wi_x + w) as usize;
+
+        let ao = ao_y * stride + ao_x;
+        let bo = bo_y * stride + bo_x;
+
+        let a = if ao_y < stride && ao_x < stride {
+          a[ao]
+        } else {
+          0u32.as_()
+        };
+        let b = if bo_y < stride && bo_x < stride {
+          b[bo]
+        } else {
+          0u32.as_()
+        };
+
+        at[w as usize] = a;
+        bt[w as usize] = b;
+
+        w += 1;
+      }
+    } else {
       let ao_y = (wg_y + wi_y) as usize;
       let ao_x = k + wi_x as usize;
 
@@ -193,45 +178,63 @@ fn gemm_v1<F, E>(vp: &VectorParams<Dim2D<Range<u32>>>,
       let ao = ao_y * stride + ao_x;
       let bo = bo_y * stride + bo_x;
 
-      let a = if mod_k || (ao_y < stride && ao_x < stride) {
-        a[ao]
-      } else {
-        0u32.as_()
+      at = unsafe {
+        *(a[ao..ao + WPT].as_ptr() as *const [E; WPT])
       };
-      let b = if mod_k || (bo_y < stride && bo_x < stride) {
-        b[bo]
-      } else {
-        0u32.as_()
+      bt = unsafe {
+        *(b[bo..bo + WPT].as_ptr() as *const [E; WPT])
       };
-      (a, b)
-    }, |vp, acc, sa, sb| {
-      let Dim2D { x: wi_x, y: wi_y, } = vp.wi();
-      let mut kci = 0u16;
-      while kci < (BLOCK_K as u16) {
-        {
-          let kci = kci as u32;
-          let va = sa[kci as usize][wi_y as usize];
-          let vb = sb[wi_x as usize][kci as usize];
-          *acc += va * vb;
-        }
-        kci += 1;
+    }
+    k += TILE_S;
+
+    let sa = sa.init(&vp, at);
+    let sb = sb.init(&vp, bt);
+
+    let sa = unsafe { &*(sa.as_ptr() as *const _ as *const LdsTile<E>) };
+    let sb = unsafe { &*(sb.as_ptr() as *const _ as *const LdsTile<E>) };
+
+    let mut kci = 0u16;
+    while kci < (TILE_S as u16) {
+      let va = sa[wi_y as usize][kci as usize];
+
+      let vbs = unsafe {
+        let sb = &sb[kci as usize][wi_x as usize..(wi_x + wpt) as usize];
+        *(sb.as_ptr() as *const [E; WPT])
+      };
+
+      let mut w = 0u32;
+      while w < wpt {
+        acc[w as usize] += va * vbs[w as usize];
+        w += 1;
       }
-    });
-    k += BLOCK_K;
+
+      kci += 1;
+    }
   }
 
   // copy sc back to C:
-  lds.write(vp, |vp, acc| {
-    let Dim2D { x: wi_x, y: wi_y, } = vp.wi().as_::<u32>();
-    let Dim2D { x: wg_x, y: wg_y, } = vp.wg_idx();
+  if !mod_k {
+    let mut w = 0u32;
+    while w < wpt {
+      let i_y = (wg_y + wi_y) as usize;
+      let i_x = (wg_x + wi_x + w) as usize;
+      let idx = i_y * stride + i_x;
+      if mod_k || (i_y < stride && i_x < stride) {
+        unsafe {
+          (&mut *c)[idx] = acc[w as usize];
+        }
+      }
 
+      w += 1;
+    }
+  } else {
     let i_y = (wg_y + wi_y) as usize;
     let i_x = (wg_x + wi_x) as usize;
     let idx = i_y * stride + i_x;
-    if mod_k || (i_y < stride && i_x < stride) {
-      unsafe { (&mut *c)[idx] = *acc; }
+    unsafe {
+      *((&mut *c)[idx..idx + WPT].as_mut_ptr() as *mut [E; WPT]) = acc;
     }
-  });
+  }
 }
 
 pub fn time<F, R>(what: &str, f: F) -> R
@@ -316,16 +319,16 @@ pub fn bench<F, R>(what: &str, hardness: f64, f: F) -> R
 }
 
 pub fn main() {
-  println!("BLOCK_K = {}", BLOCK_K);
+  println!("TILE_S = {}, WPT = {}", TILE_S, WPT);
 
   env_logger::init();
   let ctxt = Context::new().expect("create context");
 
-  let dev = HsaAmdGpuAccel::first_device(&ctxt)
+  let dev = HsaAmdGpuAccel::nth_device(&ctxt, 0)
     .expect("no device");
 
   const AXIS_SIZE_: usize = 4 * 4096 + 1024;
-  const AXIS_SIZE: usize = ((AXIS_SIZE_ - 1) / BLOCK_K + 1) * BLOCK_K;
+  const AXIS_SIZE: usize = ((AXIS_SIZE_ - 1) / TILE_S + 1) * TILE_S;
   const SIZE: usize = AXIS_SIZE * AXIS_SIZE;
   const GRID: usize = AXIS_SIZE;
 
@@ -335,7 +338,7 @@ pub fn main() {
 
   let mut invoc = GemmArgs::module(&dev);
   invoc.define_param(dim_spec_param, &dim);
-  invoc.define_param(mod_block_k, &(GRID % BLOCK_K == 0));
+  invoc.define_param(mod_block_k, &(GRID % TILE_S == 0));
   invoc.compile_async();
 
   let alloc = dev.fine_lap_node_alloc(0);
