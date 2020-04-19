@@ -293,7 +293,7 @@ pub fn main() {
   env_logger::init();
   let ctxt = Context::new().expect("create context");
 
-  let dev = HsaAmdGpuAccel::nth_device(&ctxt, 1)
+  let dev = HsaAmdGpuAccel::nth_device(&ctxt, 0)
     .expect("no device");
 
   // XXX this is the maximum image size along a single side: 14bits, the hw limit as of GFX9.
