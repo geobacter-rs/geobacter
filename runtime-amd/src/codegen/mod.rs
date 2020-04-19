@@ -9,7 +9,7 @@ use std::process::Command;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use crate::log::{info, };
+use crate::log::{info, debug};
 
 use rustc_hir::def_id::DefId;
 use rustc_data_structures::sync::Lrc;
@@ -218,7 +218,7 @@ impl PlatformCodegen for Codegenner {
     let exe = exe.data()?;
 
     {
-      info!("attempting to parse HSA metadata note for {}",
+      debug!("attempting to parse HSA metadata note for {}",
             codegen.root().symbol);
       // parse the code object metadata from a special note section
       let object = match Object::parse(&exe)? {
