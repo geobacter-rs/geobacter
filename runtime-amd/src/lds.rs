@@ -753,7 +753,6 @@ mod test {
     #[derive(GeobacterDeps)]
     struct LDSKernel {
       dst: *mut [u32],
-      queue: DeviceSingleQueue,
       completion: GlobalSignal,
     }
     unsafe impl Send for LDSKernel { }
@@ -768,8 +767,8 @@ mod test {
         x: ..16,
       };
 
-      type Queue = DeviceSingleQueue;
-      fn queue(&self) -> &DeviceSingleQueue { &self.queue }
+      type Queue = DeviceMultiQueue;
+      fn queue(&self) -> &DeviceMultiQueue { queue() }
 
       fn kernel(&self, vp: KVectorParams<Self>) {
         use std::ptr;
@@ -813,7 +812,6 @@ mod test {
     unsafe {
       let args = LDSKernel {
         dst: m.as_mut_slice(),
-        queue: dev.create_single_queue(None).unwrap(),
         completion: GlobalSignal::new(1).unwrap(),
       };
       invoc.unchecked_call_async(&grid, args)
@@ -831,7 +829,6 @@ mod test {
     #[derive(GeobacterDeps)]
     struct LDSKernel {
       dst: *mut [u32],
-      queue: DeviceSingleQueue,
       completion: GlobalSignal,
     }
     unsafe impl Send for LDSKernel { }
@@ -848,8 +845,8 @@ mod test {
         z: ..8,
       };
 
-      type Queue = DeviceSingleQueue;
-      fn queue(&self) -> &DeviceSingleQueue { &self.queue }
+      type Queue = DeviceMultiQueue;
+      fn queue(&self) -> &DeviceMultiQueue { queue() }
 
       fn kernel(&self, vp: KVectorParams<Self>) {
         use std::ptr;
@@ -895,7 +892,6 @@ mod test {
     unsafe {
       let args = LDSKernel {
         dst: m.as_mut_slice(),
-        queue: dev.create_single_queue(None).unwrap(),
         completion: GlobalSignal::new(1).unwrap(),
       };
       invoc.unchecked_call_async(&grid, args)
@@ -913,7 +909,6 @@ mod test {
     #[derive(GeobacterDeps)]
     struct LDSKernel {
       dst: *mut [u32],
-      queue: DeviceSingleQueue,
       completion: GlobalSignal,
     }
     unsafe impl Send for LDSKernel { }
@@ -929,8 +924,8 @@ mod test {
         y: ..2,
       };
 
-      type Queue = DeviceSingleQueue;
-      fn queue(&self) -> &DeviceSingleQueue { &self.queue }
+      type Queue = DeviceMultiQueue;
+      fn queue(&self) -> &DeviceMultiQueue { queue() }
 
       fn kernel(&self, vp: KVectorParams<Self>) {
         use std::geobacter::amdgpu::{dispatch_packet, sync::atomic::*, };
@@ -969,7 +964,6 @@ mod test {
     unsafe {
       let args = LDSKernel {
         dst: m.as_mut_slice(),
-        queue: dev.create_single_queue(None).unwrap(),
         completion: GlobalSignal::new(1).unwrap(),
       };
       invoc.unchecked_call_async(&grid, args)
@@ -987,7 +981,6 @@ mod test {
     #[derive(GeobacterDeps)]
     struct LDSKernel {
       dst: *mut [u8],
-      queue: DeviceSingleQueue,
       completion: GlobalSignal,
     }
     unsafe impl Send for LDSKernel { }
@@ -1004,8 +997,8 @@ mod test {
         z: ..8,
       };
 
-      type Queue = DeviceSingleQueue;
-      fn queue(&self) -> &DeviceSingleQueue { &self.queue }
+      type Queue = DeviceMultiQueue;
+      fn queue(&self) -> &DeviceMultiQueue { queue() }
 
       fn kernel(&self, vp: KVectorParams<Self>) {
         use std::ptr;
@@ -1058,7 +1051,6 @@ mod test {
     unsafe {
       let args = LDSKernel {
         dst: m.as_mut_slice(),
-        queue: dev.create_single_queue(None).unwrap(),
         completion: GlobalSignal::new(1).unwrap(),
       };
       invoc.unchecked_call_async(&grid, args)
@@ -1078,7 +1070,6 @@ mod test {
     #[derive(GeobacterDeps)]
     struct LDSKernel {
       dst: *mut [(Dim2D<u16>, bool)],
-      queue: DeviceMultiQueue,
       completion: GlobalSignal,
     }
     unsafe impl Send for LDSKernel { }
@@ -1095,7 +1086,7 @@ mod test {
       };
 
       type Queue = DeviceMultiQueue;
-      fn queue(&self) -> &DeviceMultiQueue { &self.queue }
+      fn queue(&self) -> &DeviceMultiQueue { queue() }
 
       fn kernel(&self, vp: KVectorParams<Self>) {
         use std::geobacter::amdgpu::{sync::atomic::*, };
@@ -1140,7 +1131,6 @@ mod test {
     unsafe {
       let args = LDSKernel {
         dst: m.as_mut_slice(),
-        queue: dev.create_multi_queue(None).unwrap(),
         completion: GlobalSignal::new(1).unwrap(),
       };
       invoc.unchecked_call_async(&grid, args)

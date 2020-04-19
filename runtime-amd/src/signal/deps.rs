@@ -12,6 +12,7 @@ use std::ptr::NonNull;
 use std::rc::{Rc, };
 use std::sync::{Arc, atomic::*, };
 
+use hsa_rt::ext::image::*;
 use hsa_rt::signal::SignalRef;
 use hsa_rt::queue::RingQueue;
 
@@ -469,6 +470,32 @@ unsafe impl<T> Deps for RangeToInclusive<T>
     -> Result<(), CallError>
   {
     self.end.iter_deps(f)?;
+    Ok(())
+  }
+}
+unsafe impl<A, F, G, L, R> Deps for Image<A, F, G, L, R>
+  where A: access::AccessDetail,
+        G: geometry::GeometryDetail,
+        F: format::FormatDetail,
+        L: layout::LayoutDetail,
+{
+  #[inline(always)]
+  fn iter_deps<'a>(&'a self, _: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+    -> Result<(), CallError>
+  {
+    Ok(())
+  }
+}
+unsafe impl<'b, A, F, G, L> Deps for ImageRef<'b, A, F, G, L>
+  where A: access::AccessDetail,
+        F: format::FormatDetail,
+        G: geometry::GeometryDetail,
+        L: layout::LayoutDetail,
+{
+  #[inline(always)]
+  fn iter_deps<'a>(&'a self, _: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+    -> Result<(), CallError>
+  {
     Ok(())
   }
 }

@@ -16,6 +16,7 @@ use serde::{Serialize, Deserialize, };
 
 use ffi;
 use {ApiContext, agent::Agent, agent::DeviceType, error::Error, };
+use alloc::HsaAlloc;
 use signal::SignalRef;
 use utils::uninit;
 
@@ -257,6 +258,46 @@ impl MemoryPool {
   }
 }
 
+unsafe impl HsaAlloc for MemoryPool {
+  fn native_alloc(&mut self, layout: Layout) -> Result<NonNull<u8>, Error> {
+    let bytes = layout.size();
+    if bytes == 0 {
+      return Ok(layout.dangling());
+    }
+
+    debug_assert!({
+      if let Ok(Some(max_alignment)) = self.alloc_alignment() {
+        let align = layout.align();
+        align <= max_alignment
+      } else {
+        true
+      }
+    }, "unexpected excessive alignment");
+
+    let granule = self.alloc_granule()?.unwrap();
+
+    let len = ((bytes - 1) / granule + 1) * granule;
+
+    let mut dest = 0 as *mut c_void;
+    let dest_ptr = &mut dest as *mut *mut c_void;
+    check_err!(ffi::hsa_amd_memory_pool_allocate(self.0, len, 0, dest_ptr))
+      .ok().ok_or(Error::InvalidAllocation)?;
+
+    let agent_ptr = NonNull::new(dest as *mut u8)
+      .ok_or(Error::InvalidAllocation)?;
+
+    Ok(agent_ptr)
+  }
+
+  fn native_alignment(&self) -> Result<usize, Error> {
+    Ok(self.alloc_alignment()?.unwrap_or(1))
+  }
+
+  unsafe fn native_dealloc(&mut self, ptr: NonNull<u8>, _: Layout) -> Result<(), Error> {
+    self.dealloc_from_pool(ptr)
+  }
+}
+
 #[cfg(feature = "alloc-wg")]
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Debug, Hash)]
 pub struct MemoryPoolAlloc {
@@ -343,8 +384,8 @@ unsafe impl AllocRef for MemoryPoolAlloc {
       return Err(AllocErr);
     }
 
-    let mut new_memory = self.alloc(new_layout,
-                                    AllocInit::Uninitialized)?;
+    let mut new_memory = AllocRef::alloc(self,new_layout,
+                                         AllocInit::Uninitialized)?;
 
     if len != 0 {
       std::ptr::copy_nonoverlapping(memory.ptr.as_ptr(),
@@ -353,7 +394,7 @@ unsafe impl AllocRef for MemoryPoolAlloc {
     }
     new_memory.init_offset(init, len);
 
-    self.dealloc(memory.ptr, layout);
+    AllocRef::dealloc(self, memory.ptr, layout);
 
     Ok(new_memory)
   }
@@ -374,17 +415,52 @@ unsafe impl AllocRef for MemoryPoolAlloc {
     }
 
     let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
-    let new_memory = self.alloc(new_layout,
-                                AllocInit::Uninitialized)?;
+    let new_memory = AllocRef::alloc(self, new_layout,
+                                     AllocInit::Uninitialized)?;
     if new_size != 0 {
       std::ptr::copy_nonoverlapping(ptr.as_ptr(),
                                     new_memory.ptr.as_ptr(),
                                     new_size);
     }
 
-    self.dealloc(ptr, layout);
+    AllocRef::dealloc(self, ptr, layout);
 
     Ok(new_memory)
+  }
+}
+#[cfg(feature = "alloc-wg")]
+unsafe impl HsaAlloc for MemoryPoolAlloc {
+  fn native_alloc(&mut self, layout: Layout) -> Result<NonNull<u8>, Error> {
+    let bytes = layout.size();
+    if bytes == 0 {
+      return Ok(layout.dangling());
+    }
+
+    debug_assert!(layout.align() <= self.alloc_alignment(),
+                  "unexpected excessive alignment");
+
+    let granule = self.alloc_granule();
+
+    let len = ((bytes - 1) / granule + 1) * granule;
+
+    let mut dest = 0 as *mut c_void;
+    let dest_ptr = &mut dest as *mut *mut c_void;
+    check_err!(ffi::hsa_amd_memory_pool_allocate(self.pool.0, len, 0, dest_ptr))
+      .ok().ok_or(Error::InvalidAllocation)?;
+
+    let agent_ptr = NonNull::new(dest as *mut u8)
+      .ok_or(Error::InvalidAllocation)?;
+
+    Ok(agent_ptr)
+  }
+
+  #[inline(always)]
+  fn native_alignment(&self) -> Result<usize, Error> {
+    Ok(self.alloc_alignment())
+  }
+
+  unsafe fn native_dealloc(&mut self, ptr: NonNull<u8>, _: Layout) -> Result<(), Error> {
+    self.pool.dealloc_from_pool(ptr)
   }
 }
 #[cfg(feature = "alloc-wg")]

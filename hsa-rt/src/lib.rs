@@ -5,6 +5,10 @@
 #![feature(allocator_api)]
 #![feature(alloc_layout_extra)]
 
+// For images:
+#![feature(repr_simd)]
+#![feature(geobacter)]
+
 use std::cmp::{self, PartialEq, PartialOrd, Ord, };
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -14,6 +18,7 @@ extern crate serde;
 extern crate log;
 #[cfg(feature = "alloc-wg")]
 extern crate alloc_wg;
+extern crate num_traits;
 
 macro_rules! check_err {
   ($call:expr) => {
@@ -39,6 +44,7 @@ pub mod utils;
 
 pub mod error;
 pub mod agent;
+pub mod alloc;
 pub mod code_object;
 pub mod executable;
 pub mod mem;

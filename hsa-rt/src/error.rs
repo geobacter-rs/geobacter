@@ -39,9 +39,14 @@ pub enum Error {
   NotInitialized,
   OutOfResources,
   Overflow,
+  Underflow,
   ResourceFree,
   VariableAlreadyDefined,
   VariableUndefined,
+  ImageFormatUnsupported,
+  ImageSizeUnsupported,
+  ImagePitchUnsupported,
+  SamplerDescriptorUnsupported,
 }
 
 impl Error {
@@ -82,6 +87,10 @@ impl Error {
       hsa_status_t_HSA_STATUS_ERROR_RESOURCE_FREE => ResourceFree,
       hsa_status_t_HSA_STATUS_ERROR_VARIABLE_ALREADY_DEFINED => VariableAlreadyDefined,
       hsa_status_t_HSA_STATUS_ERROR_VARIABLE_UNDEFINED => VariableUndefined,
+      HSA_EXT_STATUS_ERROR_IMAGE_SIZE_UNSUPPORTED => ImageSizeUnsupported,
+      HSA_EXT_STATUS_ERROR_IMAGE_PITCH_UNSUPPORTED => ImagePitchUnsupported,
+      HSA_EXT_STATUS_ERROR_IMAGE_FORMAT_UNSUPPORTED => ImageFormatUnsupported,
+      HSA_EXT_STATUS_ERROR_SAMPLER_DESCRIPTOR_UNSUPPORTED => SamplerDescriptorUnsupported,
       _ => General,
     };
 
@@ -96,6 +105,11 @@ impl From<::std::string::FromUtf8Error> for Error {
 impl From<::std::str::Utf8Error> for Error {
   fn from(_: ::std::str::Utf8Error) -> Self {
     Error::General
+  }
+}
+impl From<std::num::TryFromIntError> for Error {
+  fn from(_: std::num::TryFromIntError) -> Self {
+    Error::Overflow
   }
 }
 impl ::std::error::Error for Error { }

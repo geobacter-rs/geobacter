@@ -1,15 +1,13 @@
 
-use std::borrow::{BorrowMut, Borrow, };
+use std::alloc::Layout;
 use std::fmt;
-use std::intrinsics;
-use std::marker::Unsize;
 use std::mem::{transmute, size_of, };
-use std::ops::{Deref, DerefMut, CoerceUnsized, };
 use std::os::raw::c_void;
 use std::ptr::NonNull;
 
 use ApiContext;
 use agent::{Agent};
+use alloc::HsaAlloc;
 use crate::error::Error;
 use ffi;
 
@@ -154,6 +152,49 @@ impl Region {
     Ok(())
   }
 }
+unsafe impl HsaAlloc for Region {
+  fn native_alloc(&mut self, layout: Layout) -> Result<NonNull<u8>, Error> {
+    if !self.runtime_alloc_allowed().unwrap_or_default() {
+      return Err(Error::InvalidArgument);
+    }
+
+    let bytes = layout.size();
+    if bytes == 0 {
+      return Ok(layout.dangling());
+    }
+
+    debug_assert!({
+      if let Ok(max_alignment) = self.runtime_alloc_alignment() {
+        let align = layout.align();
+        align <= max_alignment
+      } else {
+        true
+      }
+    }, "unexpected excessive alignment");
+
+    let granule = self.runtime_alloc_granule()?;
+
+    let len = ((bytes - 1) / granule + 1) * granule;
+
+    let mut ptr: *mut u8 = 0 as _;
+    check_err!(ffi::hsa_memory_allocate(self.0, len,
+                                        transmute(&mut ptr)))
+      .ok().ok_or(Error::InvalidAllocation)?;
+
+    let agent_ptr = NonNull::new(ptr)
+      .ok_or(Error::InvalidAllocation)?;
+
+    Ok(agent_ptr)
+  }
+
+  fn native_alignment(&self) -> Result<usize, Error> {
+    self.runtime_alloc_alignment()
+  }
+
+  unsafe fn native_dealloc(&mut self, ptr: NonNull<u8>, _: Layout) -> Result<(), Error> {
+    self.deallocate(ptr.as_ptr())
+  }
+}
 
 impl Agent {
   pub fn all_regions(&self) -> Result<Vec<Region>, Error> {
@@ -171,117 +212,3 @@ impl Agent {
                                                  transmute(&mut out)) => out)?)
   }
 }
-
-pub struct RegionBox<T>
-  where T: ?Sized,
-{
-  b: NonNull<T>,
-}
-
-impl<T> RegionBox<T> {
-  pub fn new(region: &Region, v: T) -> Result<Self, Error> {
-    let ptr = unsafe { region.allocate(1)? };
-    unsafe { intrinsics::move_val_init(ptr.as_ptr(), v); }
-    Ok(RegionBox {
-      b: ptr,
-    })
-  }
-  pub fn new_default(region: &Region) -> Result<Self, Error>
-    where T: Default,
-  {
-    Self::new(region, Default::default())
-  }
-
-  pub fn clone_into(&self, region: &Region) -> Result<Self, Error>
-    where T: Clone,
-  {
-    let v = unsafe { self.b.as_ref().clone() };
-    Self::new(region, v)
-  }
-  pub unsafe fn into_raw(self) -> NonNull<T> {
-    let ptr = self.b;
-    ::std::mem::forget(self);
-    ptr
-  }
-  pub unsafe fn from_raw(ptr: NonNull<T>) -> Self {
-    RegionBox {
-      b: ptr,
-    }
-  }
-  pub fn as_ptr(&self) -> *const T { self.b.as_ptr() as *const T }
-  pub fn as_mut_ptr(&self) -> *mut T { self.b.as_ptr() }
-}
-impl<T> RegionBox<[T]> {
-  pub unsafe fn uninitialized_slice(region: &Region, count: usize)
-    -> Result<Self, Error>
-  {
-    use std::ptr::slice_from_raw_parts_mut;
-
-    let bytes = size_of::<T>().checked_mul(count)
-      .ok_or(Error::Overflow)?;
-    let ptr = region.allocate::<u8>(bytes)?;
-    let slice = slice_from_raw_parts_mut(ptr.as_ptr() as *mut T, count);
-    Ok(RegionBox {
-      b: NonNull::new_unchecked(slice),
-    })
-  }
-}
-impl<T> RegionBox<T>
-  where T: ?Sized,
-{
-  /// Drop our inner contents and deallocate, returning whether the
-  /// deallocation was successful.
-  pub fn checked_drop(self) -> Result<(), Error> {
-    let ptr = self.b.as_ptr();
-    ::std::mem::forget(self); // don't run our normal dtor
-
-    unsafe { ::std::ptr::drop_in_place(ptr); }
-    check_err!(ffi::hsa_memory_free(ptr as *mut _) => ())
-  }
-}
-impl<T> Deref for RegionBox<T>
-  where T: ?Sized,
-{
-  type Target = T;
-  fn deref(&self) -> &T { unsafe { self.b.as_ref() } }
-}
-impl<T> DerefMut for RegionBox<T>
-  where T: ?Sized,
-{
-  fn deref_mut(&mut self) -> &mut T { unsafe { self.b.as_mut() } }
-}
-impl<T> Drop for RegionBox<T>
-  where T: ?Sized,
-{
-  fn drop(&mut self) {
-    unsafe {
-      let ptr = self.b.as_ptr();
-      ::std::ptr::drop_in_place(ptr);
-      ffi::hsa_memory_free(ptr as *mut _); // ignore result code.
-    }
-  }
-}
-impl<T> Borrow<T> for RegionBox<T>
-  where T: ?Sized,
-{
-  fn borrow(&self) -> &T { unsafe { self.b.as_ref() } }
-}
-impl<T> BorrowMut<T> for RegionBox<T>
-  where T: ?Sized,
-{
-  fn borrow_mut(&mut self) -> &mut T { unsafe { self.b.as_mut() } }
-}
-impl<T> AsRef<T> for RegionBox<T>
-  where T: ?Sized,
-{
-  fn as_ref(&self) -> &T { unsafe { self.b.as_ref() } }
-}
-impl<T> AsMut<T> for RegionBox<T>
-  where T: ?Sized,
-{
-  fn as_mut(&mut self) -> &mut T { unsafe { self.b.as_mut() } }
-}
-impl<T, U> CoerceUnsized<RegionBox<U>> for RegionBox<T>
-  where T: ?Sized + Unsize<U>,
-        U: ?Sized
-{ }

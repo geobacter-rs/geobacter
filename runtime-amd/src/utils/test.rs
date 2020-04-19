@@ -28,13 +28,24 @@ lazy_static::lazy_static! {
     Arc::new(p)
   };
 }
+lazy_static::lazy_static! {
+  static ref QUEUE: DeviceMultiQueue = {
+    DEV.create_multi_queue(None)
+      .expect("create device queue")
+  };
+}
 
 pub fn device() -> Arc<HsaAmdGpuAccel> {
   DEV.clone()
 }
 pub fn args_pool() -> Arc<ArgsPool> {
   // ensure we don't deadlock by explicitly initializing DEV before ARGS_POOL
-  &DEV;
+  &*DEV;
 
   ARGS_POOL.clone()
+}
+pub fn queue() -> &'static DeviceMultiQueue {
+  &*DEV;
+
+  &*QUEUE
 }

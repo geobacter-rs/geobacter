@@ -22,6 +22,12 @@
 #![feature(allocator_api)]
 #![feature(geobacter)]
 
+// For textures:
+#![feature(repr_simd)]
+#![feature(link_llvm_intrinsics)]
+#![feature(simd_ffi)]
+#![feature(associated_type_defaults)]
+
 // TODO: make the Geobacter attributes "known" to rustc.
 #![feature(register_attr)]
 #![register_attr(geobacter, geobacter_attr)]
@@ -109,10 +115,11 @@ pub mod alloc;
 pub mod boxed;
 pub mod codegen;
 pub mod error;
+pub mod lds;
 pub mod mem;
 pub mod module;
 pub mod signal;
-pub mod lds;
+pub mod texture;
 
 pub mod prelude {
   pub use std::ops::{Range, RangeInclusive, RangeTo, RangeToInclusive, };
@@ -127,7 +134,8 @@ pub mod prelude {
   pub use crate::error::Error;
   pub use crate::mem::*;
   pub use crate::module::*;
-  pub use crate::signal::*;
+  pub use crate::signal::{*, completion::Completion, };
+  pub use crate::texture::*;
   pub use crate::lds::{
     Lds,
     Shared as LdsShared,

@@ -7,14 +7,6 @@ use std::cmp::Ordering;
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
-impl Default for hsa_signal_s {
-  fn default() -> Self {
-    hsa_signal_s {
-      handle: 0,
-    }
-  }
-}
-
 macro_rules! impl_handle_cmp {
   ($($ty:ty,)*) => {$(
 

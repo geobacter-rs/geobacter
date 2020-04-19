@@ -16,6 +16,7 @@ pub fn main() {
     .derive_copy(true)
     .derive_hash(true)
     .derive_eq(true)
+    .derive_default(true)
     .derive_partialeq(false)
     .impl_partialeq(true)
     .rustfmt_bindings(true)

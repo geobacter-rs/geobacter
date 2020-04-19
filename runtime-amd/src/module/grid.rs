@@ -8,6 +8,7 @@ use num_traits::identities::{One, Zero, };
 use num_traits::ops::{checked::*, saturating::*, };
 
 use crate::Error;
+use crate::texture::geometry::*;
 
 /// None of these functions are intended to be used directly. `VectorParams` will
 /// get you the workgroup/workitem/etc ids.
@@ -331,6 +332,60 @@ impl<T> From<Dim2D<T>> for Dim3D<T>
       x: v.x,
       y: v.y,
       z: One::one(),
+    }
+  }
+}
+impl<T> Into<OneD<T>> for Dim1D<T> {
+  #[inline(always)]
+  fn into(self) -> OneD<T> {
+    OneD {
+      width: self.x,
+    }
+  }
+}
+impl<T> Into<TwoD<T>> for Dim2D<T> {
+  #[inline(always)]
+  fn into(self) -> TwoD<T> {
+    TwoD {
+      width: self.x,
+      height: self.y,
+    }
+  }
+}
+impl<T> Into<ThreeD<T>> for Dim3D<T> {
+  #[inline(always)]
+  fn into(self) -> ThreeD<T> {
+    ThreeD {
+      width: self.x,
+      height: self.y,
+      depth: self.z,
+    }
+  }
+}
+impl<T> From<OneD<T>> for Dim1D<T> {
+  #[inline(always)]
+  fn from(v: OneD<T>) -> Self {
+    Self {
+      x: v.width,
+    }
+  }
+}
+impl<T> From<TwoD<T>> for Dim2D<T> {
+  #[inline(always)]
+  fn from(v: TwoD<T>) -> Self {
+    Self {
+      x: v.width,
+      y: v.height,
+    }
+  }
+}
+impl<T> From<ThreeD<T>> for Dim3D<T> {
+  #[inline(always)]
+  fn from(v: ThreeD<T>) -> Self {
+    Self {
+      x: v.width,
+      y: v.height,
+      z: v.depth,
     }
   }
 }
