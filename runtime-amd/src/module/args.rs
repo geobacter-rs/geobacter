@@ -203,7 +203,7 @@ impl<G> DimTranspose for VectorParams<G>
 
 /// Implement this trait for your kernel's argument structure. In the future, a derive macro
 /// will help you deal with these details.
-pub trait Kernel: Completion + Deps + Sync + Unpin {
+pub trait Kernel: Completion + Deps + Sync {
   type Grid: GridDims;
   const WORKGROUP: <Self::Grid as GridDims>::Workgroup;
 
