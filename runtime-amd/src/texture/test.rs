@@ -313,7 +313,7 @@ fn rgba_load_masked<R, G, B, A>(expected: [u32; 4])
   launch(&dev, tex.as_ref(), &mut dst, &grid,
          |tex, vp| {
            let i = (vp.grid_id().x, vp.grid_id().y);
-           tex.load_masked2::<_, Mask<R, G, B, A>>(i)
+           tex.load_masked::<_, Mask<R, G, B, A>>(i)
          });
 
   for &dst in dst.iter() {
@@ -349,7 +349,7 @@ fn rgba_store_masked<R, G, B, A>(pixel: [u32; 4], expected: [u32; 4])
          move |tex, vp| {
            let i = (vp.grid_id().x, vp.grid_id().y);
 
-           tex.store_masked2::<_, Mask<R, G, B, A>>(i, pixel);
+           tex.store_masked::<_, Mask<R, G, B, A>>(i, pixel);
            [u32::MAX; 4]
          });
   tex.export_all_packed(&mut dst).expect("texture export");

@@ -306,18 +306,10 @@ pub trait ReadDeviceImageOps<A, F, G, L>: ImageHandle<A, F, G, L>
     where F::Type: AccessTypeDetail<T>,
           G: ImageOps<<F::Type as AccessTypeDetail<T>>::RawPixel, F::DefaultMask>,
   {
-    self.load_masked2::<T, F::DefaultMask>(idx)
+    self.load_masked::<T, F::DefaultMask>(idx)
   }
   #[inline(always)]
-  fn load_masked<T, M>(&self, idx: G::Idx, _: M) -> T
-    where F::Type: AccessTypeDetail<T>,
-          G: ImageOps<<F::Type as AccessTypeDetail<T>>::RawPixel, M>,
-          M: MaskDetail,
-  {
-    self.load_masked2::<T, M>(idx)
-  }
-  #[inline(always)]
-  fn load_masked2<T, M>(&self, idx: G::Idx) -> T
+  fn load_masked<T, M>(&self, idx: G::Idx) -> T
     where F::Type: AccessTypeDetail<T>,
           G: ImageOps<<F::Type as AccessTypeDetail<T>>::RawPixel, M>,
           M: MaskDetail,
@@ -340,18 +332,10 @@ pub trait WriteDeviceImageOps<A, F, G, L>: ImageHandle<A, F, G, L>
     where F::Type: AccessTypeDetail<T>,
           G: ImageOps<<F::Type as AccessTypeDetail<T>>::RawPixel, F::DefaultMask>,
   {
-    self.store_masked2::<T, F::DefaultMask>(idx, pixel)
+    self.store_masked::<T, F::DefaultMask>(idx, pixel)
   }
   #[inline(always)]
-  fn store_masked<T, M>(&self, idx: G::Idx, pixel: T, _: M)
-    where F::Type: AccessTypeDetail<T>,
-          G: ImageOps<<F::Type as AccessTypeDetail<T>>::RawPixel, M>,
-          M: MaskDetail,
-  {
-    self.store_masked2::<T, M>(idx, pixel)
-  }
-  #[inline(always)]
-  fn store_masked2<T, M>(&self, idx: G::Idx, pixel: T)
+  fn store_masked<T, M>(&self, idx: G::Idx, pixel: T)
     where F::Type: AccessTypeDetail<T>,
           G: ImageOps<<F::Type as AccessTypeDetail<T>>::RawPixel, M>,
           M: MaskDetail,
