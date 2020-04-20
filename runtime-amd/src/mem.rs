@@ -350,6 +350,14 @@ pub trait H2DMemcpyGroup<S, D>
       self.unchecked_memcopy(device, deps, signal.clone())
     }
   }
+  /// This version always creates a fresh signal.
+  fn memcopy2(self, device: &Arc<HsaAmdGpuAccel>, deps: D)
+    -> Result<Self::Transfer, Error>
+    where Self: Sized,
+  {
+    let mut signal = S::new(device, 0)?;
+    self.memcopy(device, deps, &mut signal)
+  }
 }
 
 impl<T, S, D> H2DMemcpyGroup<Arc<S>, D> for T
