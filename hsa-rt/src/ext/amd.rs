@@ -201,7 +201,7 @@ impl MemoryPool {
 
     let mut dest = 0 as *mut c_void;
     let dest_ptr = &mut dest as *mut *mut c_void;
-    check_err!(ffi::hsa_amd_memory_pool_allocate(self.0, len,
+    check_err!(ffi::hsa_amd_memory_pool_allocate(self.0, len as _,
                                                  0, dest_ptr))?;
 
     let agent_ptr = slice_from_raw_parts_mut(dest as *mut u8, len);
@@ -244,7 +244,7 @@ impl MemoryPool {
     let mut agent_ptr: *mut T = ptr::null_mut();
     {
       check_err!(ffi::hsa_amd_memory_lock_to_pool(host_ptr.as_ptr() as *mut _,
-                                                  bytes, agents_ptr,
+                                                  bytes as _, agents_ptr,
                                                   agents_len as _,
                                                   self.0, 0,
                                                   transmute(&mut agent_ptr)))?;
@@ -280,7 +280,7 @@ unsafe impl HsaAlloc for MemoryPool {
 
     let mut dest = 0 as *mut c_void;
     let dest_ptr = &mut dest as *mut *mut c_void;
-    check_err!(ffi::hsa_amd_memory_pool_allocate(self.0, len, 0, dest_ptr))
+    check_err!(ffi::hsa_amd_memory_pool_allocate(self.0, len as _, 0, dest_ptr))
       .ok().ok_or(Error::InvalidAllocation)?;
 
     let agent_ptr = NonNull::new(dest as *mut u8)
@@ -335,7 +335,7 @@ unsafe impl AllocRef for MemoryPoolAlloc {
 
     let mut dest = 0 as *mut c_void;
     let dest_ptr = &mut dest as *mut *mut c_void;
-    check_err!(ffi::hsa_amd_memory_pool_allocate(self.pool.0, len,
+    check_err!(ffi::hsa_amd_memory_pool_allocate(self.pool.0, len as _,
                                                  0, dest_ptr))
       .ok().ok_or(AllocErr)?;
 
@@ -445,7 +445,7 @@ unsafe impl HsaAlloc for MemoryPoolAlloc {
 
     let mut dest = 0 as *mut c_void;
     let dest_ptr = &mut dest as *mut *mut c_void;
-    check_err!(ffi::hsa_amd_memory_pool_allocate(self.pool.0, len, 0, dest_ptr))
+    check_err!(ffi::hsa_amd_memory_pool_allocate(self.pool.0, len as _, 0, dest_ptr))
       .ok().ok_or(Error::InvalidAllocation)?;
 
     let agent_ptr = NonNull::new(dest as *mut u8)
@@ -640,13 +640,13 @@ impl<T> PtrInfo<T>
 pub trait QueryPtrInfo<T> {
   fn as_alloc_ptr(&self) -> *const c_void;
   fn query_info(&self, ret_accessible: bool) -> Result<PtrInfo<T>, Error> {
-    unsafe extern "C" fn alloc_accessible(count: usize) -> *mut c_void {
+    unsafe extern "C" fn alloc_accessible(count: ffi::size_t) -> *mut c_void {
       use std::mem::{forget, };
 
       assert_eq!(size_of::<Agent>(), size_of::<ffi::hsa_agent_t>(),
                  "Agent wrapper type has extra padding");
 
-      let mut alloc: Vec<Agent> = Vec::with_capacity(count);
+      let mut alloc: Vec<Agent> = Vec::with_capacity(count as _);
 
       let alloc_ptr = alloc.as_mut_ptr() as *mut ffi::hsa_agent_t;
       forget(alloc);
@@ -698,7 +698,7 @@ pub trait QueryPtrInfo<T> {
       ty: PtrType::from_ffi(info.type_),
       agent_base_addr: info.agentBaseAddress as *mut _,
       host_base_addr: info.hostBaseAddress as *mut _,
-      size: info.sizeInBytes,
+      size: info.sizeInBytes as _,
       owner: Agent(info.agentOwner, ApiContext::upref()),
       accessible_by,
     };
@@ -747,7 +747,7 @@ pub unsafe fn async_copy(dst: MemoryPoolPtr<[u8]>,
 
   check_err!(ffi::hsa_amd_memory_async_copy(dst_ptr, dst_agent.0,
                                             src_ptr, src_agent.0,
-                                            bytes,
+                                            bytes as _,
 
                                             deps_len, deps_ptr,
                                             completion.0) => ())?;
@@ -793,7 +793,7 @@ pub fn lock_memory<T>(ptr: NonNull<T>, count: usize,
   let mut agent_ptr: *mut T = ptr::null_mut();
   {
     check_err!(ffi::hsa_amd_memory_lock(ptr.as_ptr() as *mut _,
-                                        bytes, agents_ptr,
+                                        bytes as _, agents_ptr,
                                         agents_len as _,
                                         transmute(&mut agent_ptr)))?;
   }

@@ -44,7 +44,7 @@ pub trait Data: From<DataHandle> {
     let h = self.handle().handle();
 
     let s = unsafe {
-      sys::amd_comgr_set_data(h, data_len, data_ptr as *const _)
+      sys::amd_comgr_set_data(h, data_len as _, data_ptr as *const _)
     };
     Error::check(s)
   }
@@ -63,20 +63,20 @@ pub trait Data: From<DataHandle> {
 
   fn len(&self) -> Result<usize, Error> {
     let h = self.handle().handle();
-    let mut len = 0usize;
+    let mut len = 0;
     let s = unsafe {
-      sys::amd_comgr_get_data(h, &mut len as *mut _,
+      sys::amd_comgr_get_data(h, &mut len,
                               ptr::null_mut())
     };
     Error::check(s)?;
 
-    Ok(len)
+    Ok(len as _)
   }
   fn copy_data_into(&self, into: &mut [u8]) -> Result<(), Error> {
     let h = self.handle().handle();
-    let mut len = into.len();
+    let mut len = into.len() as _;
     let s = unsafe {
-      sys::amd_comgr_get_data(h, &mut len as *mut _,
+      sys::amd_comgr_get_data(h, &mut len,
                               into.as_mut_ptr() as *mut _)
     };
     Error::check(s)?;
@@ -97,9 +97,9 @@ pub trait Data: From<DataHandle> {
   }
   fn cname(&self) -> Result<CString, Box<dyn StdError + Send + Sync + 'static>> {
     let h = self.handle().handle();
-    let mut len = 0usize;
+    let mut len = 0;
     let s = unsafe {
-      sys::amd_comgr_get_data_name(h, &mut len as *mut _,
+      sys::amd_comgr_get_data_name(h, &mut len,
                                    ptr::null_mut())
     };
     Error::check(s)?;
@@ -109,10 +109,10 @@ pub trait Data: From<DataHandle> {
 
     let mut data = Vec::new();
     if len != 0 {
-      data.resize(len, 0u8);
+      data.resize(len as _, 0u8);
 
       let s = unsafe {
-        sys::amd_comgr_get_data_name(h, &mut len as *mut _,
+        sys::amd_comgr_get_data_name(h, &mut len,
                                      data.as_mut_ptr() as *mut _)
       };
       Error::check(s)?;
@@ -208,9 +208,9 @@ macro_rules! isa_name_fn {
 impl $ty {
   pub fn isa_name(&self) -> Result<String, Box<dyn StdError>> {
     let h = self.handle().handle();
-    let mut len = 0usize;
+    let mut len = 0;
     let s = unsafe {
-      sys::amd_comgr_get_data_isa_name(h, &mut len as *mut _,
+      sys::amd_comgr_get_data_isa_name(h, &mut len,
                                        ptr::null_mut())
     };
     Error::check(s)?;
@@ -220,10 +220,10 @@ impl $ty {
 
     let mut data = Vec::new();
     if len != 0 {
-      data.resize(len, 0u8);
+      data.resize(len as _, 0u8);
 
       let s = unsafe {
-        sys::amd_comgr_get_data_isa_name(h, &mut len as *mut _,
+        sys::amd_comgr_get_data_isa_name(h, &mut len,
                                          data.as_mut_ptr() as *mut _)
       };
       Error::check(s)?;

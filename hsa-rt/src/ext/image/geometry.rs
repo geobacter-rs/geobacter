@@ -253,44 +253,44 @@ impl<T> Geometry<T>
       Geometry::OneD { width, } => {
         ffi.geometry = ffi::hsa_ext_image_geometry_t_HSA_EXT_IMAGE_GEOMETRY_1D;
         ffi.width = width.clone().try_into()
-          .ok().ok_or(Error::Overflow)?;
+          .ok().ok_or(Error::Overflow)? as _;
       },
       Geometry::TwoD { width, height, } => {
         ffi.geometry = ffi::hsa_ext_image_geometry_t_HSA_EXT_IMAGE_GEOMETRY_2D;
         ffi.width = width.clone().try_into()
-          .ok().ok_or(Error::Overflow)?;
+          .ok().ok_or(Error::Overflow)? as _;
         ffi.height = height.clone().try_into()
-          .ok().ok_or(Error::Overflow)?;
+          .ok().ok_or(Error::Overflow)? as _;
       },
       Geometry::ThreeD { width, height, depth, } => {
         ffi.geometry = ffi::hsa_ext_image_geometry_t_HSA_EXT_IMAGE_GEOMETRY_3D;
         ffi.width = width.clone().try_into()
-          .ok().ok_or(Error::Overflow)?;
+          .ok().ok_or(Error::Overflow)? as _;
         ffi.height = height.clone().try_into()
-          .ok().ok_or(Error::Overflow)?;
+          .ok().ok_or(Error::Overflow)? as _;
         ffi.depth = depth.clone().try_into()
-          .ok().ok_or(Error::Overflow)?;
+          .ok().ok_or(Error::Overflow)? as _;
       },
       Geometry::OneDArray { width, array_size, } => {
         ffi.geometry = ffi::hsa_ext_image_geometry_t_HSA_EXT_IMAGE_GEOMETRY_1DA;
         ffi.width = width.clone().try_into()
-          .ok().ok_or(Error::Overflow)?;
+          .ok().ok_or(Error::Overflow)? as _;
         ffi.array_size = array_size.clone().try_into()
-          .ok().ok_or(Error::Overflow)?;
+          .ok().ok_or(Error::Overflow)? as _;
       },
       Geometry::TwoDArray { width, height, array_size, } => {
         ffi.geometry = ffi::hsa_ext_image_geometry_t_HSA_EXT_IMAGE_GEOMETRY_2DA;
         ffi.width = width.clone().try_into()
-          .ok().ok_or(Error::Overflow)?;
+          .ok().ok_or(Error::Overflow)? as _;
         ffi.height = height.clone().try_into()
-          .ok().ok_or(Error::Overflow)?;
+          .ok().ok_or(Error::Overflow)? as _;
         ffi.array_size = array_size.clone().try_into()
-          .ok().ok_or(Error::Overflow)?;
+          .ok().ok_or(Error::Overflow)? as _;
       },
       Geometry::OneDB { width, } => {
         ffi.geometry = ffi::hsa_ext_image_geometry_t_HSA_EXT_IMAGE_GEOMETRY_1DB;
         ffi.width = width.clone().try_into()
-          .ok().ok_or(Error::Overflow)?;
+          .ok().ok_or(Error::Overflow)? as _;
       },
     }
 

@@ -214,7 +214,8 @@ impl<G, F> Descriptor<G, F>
         check_err! {
           ffi::hsa_ext_image_data_get_info_with_layout(agent.0, &ffi, access as _,
                                                        ffi::hsa_ext_image_data_layout_t_HSA_EXT_IMAGE_DATA_LAYOUT_LINEAR,
-                                                       row_pitch, slice_pitch, &mut out) => out
+                                                       row_pitch as _, slice_pitch as _,
+                                                       &mut out) => out
         }
       },
       layout::Layout::Opaque => {
@@ -251,7 +252,8 @@ impl<A> ImageData<A>
   where A: HsaAlloc,
 {
   pub fn alloc(info: &ImageDataInfo, mut alloc: A) -> Result<Self, Error> {
-    let layout = AllocLayout::from_size_align(info.size, info.alignment)
+    let layout = AllocLayout::from_size_align(info.size as _,
+                                              info.alignment as _)
       .ok().ok_or(Error::Overflow)?;
     let data = alloc.alloc(layout.clone())?;
     Ok(ImageData {
@@ -650,7 +652,7 @@ impl<A, F, G, L, R> Image<A, F, G, L, R>
 
     check_err!(
       ffi::hsa_ext_image_import(self.agent.0, src_ptr,
-                                row_pitch, slice_pitch,
+                                row_pitch as _, slice_pitch as _,
                                 self.handle, &ffi_region)
     )
   }
@@ -688,7 +690,7 @@ impl<A, F, G, L, R> Image<A, F, G, L, R>
 
     check_err!(
       ffi::hsa_ext_image_export(self.agent.0, self.handle,
-                                dst_ptr, row_pitch, slice_pitch,
+                                dst_ptr, row_pitch as _, slice_pitch as _,
                                 &ffi_region)
     )
   }
@@ -725,7 +727,7 @@ impl<A, F, G, L, R> Image<A, F, G, L, R>
         let slice_pitch = slice_pitch.unwrap_or_default();
         check_err!(
           ffi::hsa_ext_image_create_with_layout(self.agent.0, &ffi, ptr, access,
-                                                layout, row_pitch, slice_pitch,
+                                                layout, row_pitch as _, slice_pitch as _,
                                                 &mut out)
         )?;
       }
@@ -919,7 +921,7 @@ impl Agent {
           ffi::hsa_ext_image_create_with_layout(self.0, &ffi,
                                                 data.data.as_ptr() as *const _,
                                                 access.into() as _,
-                                                layout, row_pitch, slice_pitch,
+                                                layout, row_pitch as _ , slice_pitch as _,
                                                 &mut out)
         )?;
       }

@@ -34,7 +34,7 @@ impl<'a> CodeObjectReaderRef<'a> {
       handle: 0,
     }, ApiContext::upref());
     let sys = check_err!(ffi::hsa_code_object_reader_create_from_memory(from.as_ptr() as _,
-                                                                        from.len(),
+                                                                        from.len() as _,
                                                                         transmute(&mut out.0)) => out)?;
     Ok(CodeObjectReaderRef {
       sys,
@@ -56,7 +56,7 @@ impl CodeObjectReaderOwned {
       handle: 0,
     }, ApiContext::upref());
     let sys = check_err!(ffi::hsa_code_object_reader_create_from_memory(from.as_ptr() as _,
-                                                                        from.len(),
+                                                                        from.len() as _,
                                                                         transmute(&mut out.0)) => out)?;
     Ok(CodeObjectReaderOwned {
       sys,

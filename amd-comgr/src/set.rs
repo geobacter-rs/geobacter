@@ -43,15 +43,15 @@ impl DataSet {
   pub fn len<T>(&self) -> Result<usize, Error>
     where T: Data,
   {
-    let mut len = 0usize;
+    let mut len = 0;
     let s = unsafe {
       sys::amd_comgr_action_data_count(self.handle(),
                                        T::kind().to_sys(),
-                                       &mut len as *mut _)
+                                       &mut len)
     };
     Error::check(s)?;
 
-    Ok(len)
+    Ok(len as _)
   }
   pub fn get<T>(&self, idx: usize) -> Result<T, Error>
     where T: Data,
@@ -63,7 +63,7 @@ impl DataSet {
     let s = unsafe {
       sys::amd_comgr_action_data_get_data(self.handle(),
                                           T::kind().to_sys(),
-                                          idx,
+                                          idx as _,
                                           &mut out as *mut _)
     };
     Error::check(s)?;

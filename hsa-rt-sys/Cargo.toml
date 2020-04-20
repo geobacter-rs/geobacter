@@ -10,7 +10,7 @@ description = "HSA FFI bindings. Part of the Geobacter project."
 [dependencies]
 
 [build-dependencies]
-bindgen = "0.51.1"
+bindgen = "0.53.2"
 
 [lib]
 name = "hsa_rt_sys"

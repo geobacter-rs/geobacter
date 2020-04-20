@@ -42,7 +42,7 @@ unsafe impl AllocRef for RegionAlloc {
 
     let mut dest = 0 as *mut c_void;
     let dest_ptr = &mut dest as *mut *mut c_void;
-    check_err!(ffi::hsa_memory_allocate(self.region.0, len, dest_ptr))
+    check_err!(ffi::hsa_memory_allocate(self.region.0, len as _, dest_ptr))
       .ok().ok_or(AllocErr)?;
 
     let agent_ptr = NonNull::new(dest as *mut u8)

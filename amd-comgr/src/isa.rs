@@ -12,15 +12,15 @@ use crate::error::Error;
 pub struct SupportedIsaIter(Range<usize>);
 impl SupportedIsaIter {
   pub fn new() -> Result<Self, Error> {
-    let mut count = 0usize;
+    let mut count = 0;
     let s = unsafe {
-      sys::amd_comgr_get_isa_count(&mut count as *mut _)
+      sys::amd_comgr_get_isa_count(&mut count)
     };
     Error::check(s)?;
 
     Ok(SupportedIsaIter(Range {
       start: 0,
-      end: count,
+      end: count as _,
     }))
   }
 }
@@ -46,7 +46,7 @@ impl Isa {
   fn get(idx: usize) -> Isa {
     let mut ptr = ptr::null();
     let s = unsafe {
-      sys::amd_comgr_get_isa_name(idx, &mut ptr as *mut _)
+      sys::amd_comgr_get_isa_name(idx as _, &mut ptr as *mut _)
     };
     Error::check(s)
       .expect("amd_comgr_get_isa_name should not fail for us");

@@ -9,4 +9,4 @@ repository = "https://github.com/geobacter-rs/geobacter/tree/master/amd-comgr-sy
 description = "AMD comgr FFI bindings. Part of the Geobacter project."
 
 [build-dependencies]
-bindgen = "0.51.1"
+bindgen = "0.53.2"

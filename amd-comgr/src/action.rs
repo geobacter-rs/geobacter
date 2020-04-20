@@ -79,9 +79,9 @@ impl ActionInfo {
 
   pub fn get_isa_name(&self) -> Result<Option<String>, Error> {
     let h = self.handle();
-    let mut len = 0usize;
+    let mut len = 0;
     let s = unsafe {
-      sys::amd_comgr_action_info_get_isa_name(h, &mut len as *mut _,
+      sys::amd_comgr_action_info_get_isa_name(h, &mut len,
                                               ptr::null_mut())
     };
     Error::check(s)?;
@@ -92,10 +92,10 @@ impl ActionInfo {
     len -= 1;
 
     let mut data = Vec::new();
-    data.resize(len, 0u8);
+    data.resize(len as _, 0u8);
 
     let s = unsafe {
-      sys::amd_comgr_action_info_get_isa_name(h, &mut len as *mut _,
+      sys::amd_comgr_action_info_get_isa_name(h, &mut len,
                                               data.as_mut_ptr() as *mut _)
     };
     Error::check(s)?;
@@ -150,9 +150,9 @@ impl ActionInfo {
 
   pub fn get_options(&self) -> Result<Option<String>, Error> {
     let h = self.handle();
-    let mut len = 0usize;
+    let mut len = 0;
     let s = unsafe {
-      sys::amd_comgr_action_info_get_options(h, &mut len as *mut _,
+      sys::amd_comgr_action_info_get_options(h, &mut len,
                                              ptr::null_mut())
     };
     Error::check(s)?;
@@ -163,10 +163,10 @@ impl ActionInfo {
     len -= 1;
 
     let mut data = Vec::new();
-    data.resize(len, 0u8);
+    data.resize(len as _, 0u8);
 
     let s = unsafe {
-      sys::amd_comgr_action_info_get_options(h, &mut len as *mut _,
+      sys::amd_comgr_action_info_get_options(h, &mut len,
                                              data.as_mut_ptr() as *mut _)
     };
     Error::check(s)?;
@@ -193,9 +193,9 @@ impl ActionInfo {
 
   pub fn get_working_path(&self) -> Result<Option<PathBuf>, Error> {
     let h = self.handle();
-    let mut len = 0usize;
+    let mut len = 0;
     let s = unsafe {
-      sys::amd_comgr_action_info_get_working_directory_path(h, &mut len as *mut _,
+      sys::amd_comgr_action_info_get_working_directory_path(h, &mut len,
                                                             ptr::null_mut())
     };
     Error::check(s)?;
@@ -206,10 +206,10 @@ impl ActionInfo {
     len -= 1;
 
     let mut data = Vec::new();
-    data.resize(len, 0u8);
+    data.resize(len as usize, 0u8);
 
     let s = unsafe {
-      sys::amd_comgr_action_info_get_working_directory_path(h, &mut len as *mut _,
+      sys::amd_comgr_action_info_get_working_directory_path(h, &mut len,
                                                             data.as_mut_ptr() as *mut _)
     };
     Error::check(s)?;

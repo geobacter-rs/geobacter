@@ -140,7 +140,7 @@ impl Region {
   pub unsafe fn allocate<T>(&self, count: usize) -> Result<NonNull<T>, Error> {
     let bytes = size_of::<T>() * count;
     let mut ptr: *mut T = 0 as _;
-    check_err!(ffi::hsa_memory_allocate(self.0, bytes,
+    check_err!(ffi::hsa_memory_allocate(self.0, bytes as _,
                                         transmute(&mut ptr)))?;
 
     Ok(NonNull::new_unchecked(ptr))
@@ -177,7 +177,7 @@ unsafe impl HsaAlloc for Region {
     let len = ((bytes - 1) / granule + 1) * granule;
 
     let mut ptr: *mut u8 = 0 as _;
-    check_err!(ffi::hsa_memory_allocate(self.0, len,
+    check_err!(ffi::hsa_memory_allocate(self.0, len as _,
                                         transmute(&mut ptr)))
       .ok().ok_or(Error::InvalidAllocation)?;
 
