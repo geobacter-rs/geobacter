@@ -26,13 +26,13 @@ use std::time::*;
 type ImageRef<'a, A> = grt_amd::texture::ImageRef<'a,
   A,
   Format<ETy, channel_order::R>,
-  TwoD<usize>,
+  TwoD<u32>,
   layout::Opaque,
 >;
 type LinearImageRef<'a, A> = grt_amd::texture::ImageRef<'a,
   A,
   Format<ETy, channel_order::R>,
-  TwoD<usize>,
+  TwoD<u32>,
   layout::Opaque,
 >;
 
@@ -85,7 +85,7 @@ impl<'b> Kernel for GemmArgs<'b> {
 
     lds_sa.with_shared(|mut sa| {
       lds_sb.with_shared(|mut sb| {
-        gemm_v1(&vp, a, b, c,
+        gemm_v1(vp, a, b, c,
                 &mut sa, &mut sb, dim);
       });
     });
@@ -112,12 +112,12 @@ fn mod_block_k() -> bool {
 const WPT: usize = 1;
 const RTS: usize = TILE_S / WPT;
 
-const TILE_S: usize = 16;
+const TILE_S: usize = 32;
 type ETy = f32;
 type LdsArray<E> = [[[E; WPT]; RTS + 1]; TILE_S];
 type LdsTile<E> = [[E; TILE_S + WPT]; TILE_S];
 
-fn gemm_v1<A1, A2>(vp: &VectorParams<Dim2D<Range<u32>>>,
+fn gemm_v1<A1, A2>(vp: VectorParams<Dim2D<Range<u32>>>,
                    a: ImageRef<A1>, b: ImageRef<A1>,
                    c: LinearImageRef<A2>,
                    sa: &mut LdsShared<LdsArray<ETy>>,
@@ -375,8 +375,8 @@ pub fn main() {
   }
 
   let geometry = geometry::TwoD {
-    width: GRID,
-    height: GRID,
+    width: GRID as u32,
+    height: GRID as u32,
   };
   let mut a_img = dev
     .create_ro_texture(geometry)
