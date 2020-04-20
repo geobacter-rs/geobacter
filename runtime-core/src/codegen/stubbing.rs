@@ -254,7 +254,7 @@ mod stubs {
     unsafe { abort() }
   }
   #[inline(always)]
-  pub fn panic_bounds_check(location: &Location<'_>, index: usize, len: usize) -> ! {
+  pub fn panic_bounds_check(index: usize, len: usize, location: &Location<'_>) -> ! {
     // XXX this should probably be implemented.
     unsafe { abort() }
   }
