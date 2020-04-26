@@ -117,6 +117,16 @@ type ETy = f32;
 type LdsArray<E> = [[[E; WPT]; RTS + 1]; TILE_S];
 type LdsTile<E> = [[E; TILE_S + WPT]; TILE_S];
 
+/// LdsArray and LdsTile *MUST* have the same size. This function will cause a compile
+/// error if they don't match.
+#[allow(dead_code)]
+fn assert_lds_size() -> LdsTile<ETy> {
+  let v: LdsArray<ETy> = [[[0.0f32; WPT]; RTS + 1]; TILE_S];
+  unsafe {
+    ::std::mem::transmute(v)
+  }
+}
+
 fn gemm_v1<A1, A2>(vp: VectorParams<Dim2D<Range<u32>>>,
                    a: ImageRef<A1>, b: ImageRef<A1>,
                    c: LinearImageRef<A2>,
