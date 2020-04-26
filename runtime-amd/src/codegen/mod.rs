@@ -298,12 +298,13 @@ impl PlatformCodegen for Codegenner {
     use grt_core::codegen::attrs::geobacter_attrs;
 
     if dd.is_root(id) { return; }
-    if tcx.sess.opts.optimize != OptLevel::Aggressive { return; }
 
     // we need to force `#[inline(always)]`, because sometimes even the AMDGPU
     // specific pass doesn't inline everything, which will cause us to abort in
     // LLVM
-    attrs.inline = InlineAttr::Always;
+    if tcx.sess.opts.optimize != OptLevel::No {
+      attrs.inline = InlineAttr::Always;
+    }
 
     // Don't overwrite any existing address space attribute:
     if attrs.addr_space.is_some() { return; }
