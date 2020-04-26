@@ -824,11 +824,15 @@ impl HsaAmdGpuAccel {
       desc.target.options.features.push_str(",+16-bit-insts");
     }
 
+    desc.target.target_endian = desc.host_target
+      .target_endian
+      .clone();
+    desc.target.target_pointer_width = desc.host_target
+      .target_pointer_width
+      .clone();
 
     let target = &mut desc.target;
 
-    target.target_endian = "little".into(); // XXX big?
-    target.target_pointer_width = "64".into(); // XXX 32bit?
     target.arch = "amdgpu".into();
     target.data_layout = "e-p:64:64-p1:64:64-p2:32:32-p3:32:32-\
                           p4:64:64-p5:32:32-p6:32:32-i64:64-v16:16-\
