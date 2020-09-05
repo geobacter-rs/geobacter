@@ -74,12 +74,15 @@ impl PlatformCodegen for Codegenner {
                 _dd: &DriverData<'tcx, Self>)
     -> Result<PCodegenDesc<'tcx, Self>, Error>
   {
+    // most of these fields are filled-in post-codegen
+    let mut cg_desc = CodegenDesc::default();
+    cg_desc.max_vgpr_count = desc.platform_desc.max_vgpr_count;
+
     Ok(core_codegen::CodegenDesc {
       instance,
       kernel_instance: desc.instance.into(),
       spec_params: desc.spec_params,
-      // filled post-codegen
-      platform_desc: Default::default(),
+      platform_desc: cg_desc,
     })
   }
 
@@ -288,6 +291,7 @@ impl PlatformCodegen for Codegenner {
                             attrs: &mut CodegenFnAttrs)
   {
     use rustc_attr::InlineAttr;
+    use rustc_middle::middle::codegen_fn_attrs::SpirVAttrs;
     use rustc_middle::ty::*;
     use rustc_session::config::*;
     use rustc_span::symbol::*;
@@ -297,7 +301,12 @@ impl PlatformCodegen for Codegenner {
 
     use grt_core::codegen::attrs::geobacter_attrs;
 
-    if dd.is_root(id) { return; }
+    attrs.amdgpu_uniform_workgroup_size = Some(true);
+
+    if let Some(desc) = dd.root_desc(id) {
+      attrs.amdgpu_num_vgpr = desc.platform_desc.max_vgpr_count;
+      return;
+    }
 
     // we need to force `#[inline(always)]`, because sometimes even the AMDGPU
     // specific pass doesn't inline everything, which will cause us to abort in
@@ -352,7 +361,7 @@ impl PlatformCodegen for Codegenner {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[derive(Hash)]
 pub struct KernelDesc {
-  // TODO
+  pub max_vgpr_count: Option<usize>,
 }
 impl KernelDesc { }
 impl PlatformKernelDesc for KernelDesc { }
@@ -373,6 +382,8 @@ pub struct CodegenDesc {
   pub group_segment_p2align: u8,
   pub kernarg_segment_p2align: u8,
   pub private_segment_p2align: u8,
+
+  pub max_vgpr_count: Option<usize>,
 }
 
 impl PlatformCodegenDesc for CodegenDesc { }

@@ -227,6 +227,12 @@ impl<'tcx, P> DriverData<'tcx, P>
       .iter()
       .any(|root| root.def_id() == def_id )
   }
+  pub fn root_desc(&self, did: DefId) -> Option<MappedReadGuard<PCodegenDesc<P>>> {
+    ReadGuard::try_map(self.roots.read(), |roots| {
+      roots.iter().find(|root| root.def_id() == did )
+    })
+      .ok()
+  }
 
   pub fn expect_type_of(&self, def_id: DefId) -> ty::Ty<'tcx> {
     let r = self.type_of.read();

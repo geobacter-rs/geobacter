@@ -207,6 +207,8 @@ pub trait Kernel: Completion + Deps + Sync {
   type Grid: GridDims;
   const WORKGROUP: <Self::Grid as GridDims>::Workgroup;
 
+  const MAX_VGPR_USAGE: Option<usize> = None;
+
   type Queue: ?Sized;
 
   fn queue(&self) -> &Self::Queue;

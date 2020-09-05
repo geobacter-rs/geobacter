@@ -102,7 +102,9 @@ impl<A> FuncModule<A>
       instance: f.kernel_instance(),
       context_data: ModuleContextData::get(&f)
         .get_cache_data(accel.ctx()),
-      desc: KernelDesc { },
+      desc: KernelDesc {
+        max_vgpr_count: A::MAX_VGPR_USAGE,
+      },
       spec_params: Default::default(),
 
       _arg: PhantomData,
