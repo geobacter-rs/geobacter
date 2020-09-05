@@ -1,6 +1,9 @@
 
+use serde::*;
+
 #[derive(Serialize, Deserialize)]
 #[serde(remote = "::vk::device::Features")]
+#[allow(dead_code)] // TODO
 pub struct VkFeatures {
   pub robust_buffer_access: bool,
   pub full_draw_index_uint32: bool,
@@ -61,4 +64,22 @@ pub struct VkFeatures {
   pub buffer_device_address: bool,
   pub buffer_device_address_capture_replay: bool,
   pub buffer_device_address_multi_device: bool,
+
+  pub variable_pointers_storage_buffer: bool,
+  pub variable_pointers: bool,
+
+  pub shader_buffer_int64_atomics: bool,
+  pub shader_shared_int64_atomics: bool,
+
+  pub storage_buffer_8bit: bool,
+  pub storage_uniform_8bit: bool,
+  pub storage_push_constant_8bit: bool,
+
+  pub storage_buffer_16bit: bool,
+  pub storage_uniform_16bit: bool,
+  pub storage_push_constant_16bit: bool,
+  pub storage_input_output_16bit: bool,
+
+  pub shader_float16: bool,
+  pub shader_int8: bool,
 }

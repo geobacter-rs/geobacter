@@ -84,7 +84,7 @@ pub trait Accelerator: Debug + Any + Send + Sync + 'static {
   /// Get the value `current_platform()` would return if executed
   /// on this accelerator. Since some platforms include device specific
   /// info, this property requires an active device instance.
-  fn platform(&self) -> Platform;
+  fn platform(&self) -> Option<Platform>;
 
   fn accel_target_desc(&self) -> &Arc<AcceleratorTargetDesc>;
   /// Set the reference to the target to the provided object.
@@ -227,7 +227,7 @@ impl AcceleratorTargetDesc {
     self.target.arch == "amdgpu"
   }
   pub fn is_spirv(&self) -> bool {
-    self.target.llvm_target == "spir64-unknown-unknown"
+    self.target.llvm_target.starts_with("spir64-unknown-unknown")
   }
   pub fn is_cuda(&self) -> bool { false }
 }

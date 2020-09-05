@@ -8,6 +8,9 @@ description = "Geobacter Vulkan runtime. Non-functional ATM."
 repository = "https://github.com/geobacter-rs/geobacter/tree/master/runtime-vk"
 
 [dependencies]
-vulkano = "0.16.0"
-geobacter-intrinsics-common = "1.0.0"
-geobacter-runtime-core = "1.0.0"
+grt_core = { version = "1.0.0", package = "geobacter-runtime-core" }
+vk = { version = "0.19.0", package = "vulkano" }
+smallvec = "1.4.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4.8"
+any_key = "0.1.1"

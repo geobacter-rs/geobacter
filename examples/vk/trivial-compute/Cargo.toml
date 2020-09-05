@@ -1,15 +1,18 @@
 [package]
 authors = ["Richard Diamond <wichard@vitalitystudios.com>"]
-edition = "2018"
 license = "MIT / Apache-2.0"
-name = "fractal"
+name = "examples-vk-trivial"
 version = "0.1.0"
+edition = "2018"
+
+[[bin]]
+name = "examples-vk-trivial"
+path = "main.rs"
 
 [dependencies]
-rand = "0.5.5"
-tempdir = "*"
 grt-core = { version = "1.0.0", package = "geobacter-runtime-core" }
 grt-vk   = { version = "0.1.0", package = "geobacter-runtime-vk" }
-vulkano = "0.16.0"
+vk = { version = "0.19.0", package = "vulkano" }
 env_logger = "0.6.0"
 log = "0.4.7"
+any_key = "0.1.1"

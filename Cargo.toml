@@ -3,10 +3,8 @@
 members = ["runtime-core",
            "rust-builder",
 
-           "shared-intrinsics/vk",
-
-           "vk-core", "vk-std", "runtime-vk",
-           "examples/vk/trivial", "examples/vk/fractal",
+           "runtime-vk",
+           "examples/vk/trivial-compute", "examples/vk/fractal",
 
            "amd-comgr-sys", "amd-comgr",
            "hsa-rt-sys", "hsa-rt",
@@ -20,10 +18,8 @@ members = ["runtime-core",
 [profile.release]
 debug = true
 debug-assertions = true
-rpath = true
 
 [profile.dev]
-rpath = true
 [profile.test]
 rpath = true
 [profile.bench]
@@ -34,8 +30,6 @@ amd-comgr-sys = { path = "amd-comgr-sys" }
 amd-comgr = { path = "amd-comgr" }
 hsa-rt-sys = { path = "hsa-rt-sys" }
 hsa-rt = { path = "hsa-rt" }
-geobacter-vk-core = { path = "vk-core" }
-geobacter-vk-intrinsics = { path = "shared-intrinsics/vk" }
 geobacter-runtime-core = { path = "runtime-core" }
 geobacter-runtime-amd-macros = { path = "runtime-amd-macros" }
 geobacter-runtime-amd = { path = "runtime-amd" }

@@ -673,8 +673,8 @@ impl HsaAmdGpuAccel {
 impl Accelerator for HsaAmdGpuAccel {
   fn id(&self) -> AcceleratorId { self.id.clone() }
 
-  fn platform(&self) -> Platform {
-    self.platform.clone()
+  fn platform(&self) -> Option<Platform> {
+    Some(self.platform.clone())
   }
 
   fn accel_target_desc(&self) -> &Arc<AcceleratorTargetDesc> {
