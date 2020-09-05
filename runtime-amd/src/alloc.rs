@@ -22,6 +22,21 @@ impl LapAlloc {
     &self.pool
   }
 
+  pub fn is_accessible_to(&self, dev: &HsaAmdGpuAccel) -> bool {
+    self.accessible()
+      .iter()
+      .flat_map(|i| i.iter() )
+      .any(|a| a == dev.agent() )
+  }
+
+  /// `pool_ptr` *must* be an allocation of `self`.
+  pub unsafe fn add_access(&mut self, dev: &HsaAmdGpuAccel,
+                           pool_ptr: Option<MemoryPoolPtr<[u8]>>)
+    -> Result<(), HsaError>
+  {
+    add_access(self, dev, pool_ptr)
+  }
+
   pub fn accessible(&self) -> Option<&[Agent]> {
     unsafe {
       (&*self.accessible.get())
@@ -177,12 +192,17 @@ fn add_access(build_alloc: &LapAlloc,
   // add this device to the accessible array: We need to do this now for later
   // allocations (in the case of a LapVec).
   if build_alloc.accessible().is_none() {
+    // ensure our owner runtime/device is in the list:
+    let mut list = SmallVec::new();
+    list.push(build_alloc.device_agent.clone());
     unsafe {
-      *build_alloc.accessible.get() = Some(Arc::default());
+      *build_alloc.accessible.get() = Some(Arc::new(list));
     }
   }
   let accessible = Arc::make_mut(build_alloc.accessible_mut());
-  accessible.push(device.agent().clone());
+  if device.agent() != &build_alloc.device_agent {
+    accessible.push(device.agent().clone());
+  }
 
   let pool = &build_alloc.pool;
   let aa = match pool.agent_access(device.agent()) {
@@ -217,14 +237,11 @@ fn add_access(build_alloc: &LapAlloc,
 
 /// No device removal.
 pub trait LapAllocAccess: BoxPoolPtr {
-  fn get_alloc_ref(&mut self) -> &LapAlloc;
+  fn is_accessible_to(&self, dev: &HsaAmdGpuAccel) -> bool;
 
   /// TODO: it would be nice to allow granting new devices access (which is expensive)
   /// concurrently. This is safe because only removal is concurrent-unsafe.
-  fn add_access(&mut self, device: &HsaAmdGpuAccel) -> Result<(), HsaError> {
-    let ptr = unsafe { self.pool_ptr() };
-    add_access(self.get_alloc_ref(), device, ptr)
-  }
+  fn add_access(&mut self, device: &HsaAmdGpuAccel) -> Result<(), HsaError>;
 }
 
 /// A Vec-esk type allocated from a CPU visible memory pool.
@@ -245,8 +262,18 @@ pub type LapVec<T> = alloc_wg::vec::Vec<T, LapAlloc>;
 pub type LapBox<T> = alloc_wg::boxed::Box<T, LapAlloc>;
 
 impl<T> LapAllocAccess for LapVec<T> {
-  fn get_alloc_ref(&mut self) -> &LapAlloc {
+  fn is_accessible_to(&self, dev: &HsaAmdGpuAccel) -> bool {
+    if std::mem::size_of::<T>() == 0 {
+      // These are never actually allocated, so we can just say they're
+      // always accessible.
+      return true;
+    }
+
     self.alloc_ref()
+      .accessible()
+      .iter()
+      .flat_map(|i| i.iter() )
+      .any(|a| a == dev.agent() )
   }
 
   fn add_access(&mut self, device: &HsaAmdGpuAccel) -> Result<(), HsaError> {
@@ -263,8 +290,18 @@ impl<T> LapAllocAccess for LapVec<T> {
 impl<T> LapAllocAccess for LapBox<T>
   where T: ?Sized,
 {
-  fn get_alloc_ref(&mut self) -> &LapAlloc {
+  fn is_accessible_to(&self, dev: &HsaAmdGpuAccel) -> bool {
+    if std::mem::size_of_val(&**self) == 0 {
+      // These are never actually allocated, so we can just say they're
+      // always accessible: no delayed allocations for boxes.
+      return true;
+    }
+
     self.alloc_ref()
+      .accessible()
+      .iter()
+      .flat_map(|i| i.iter() )
+      .any(|a| a == dev.agent() )
   }
 
   fn add_access(&mut self, device: &HsaAmdGpuAccel) -> Result<(), HsaError> {
@@ -315,5 +352,18 @@ mod test {
     m.add_access(&dev).unwrap();
 
     assert!(m.alloc_ref().accessible().is_none());
+  }
+  #[test]
+  fn lap_vec_clone_access() {
+    let dev = device();
+
+    let mut m = LapVec::new_in(dev.fine_lap_node_alloc(0));
+    m.add_access(&dev).unwrap();
+
+    // now alloc:
+    m.resize(1, 0u32);
+
+    let m2 = m.clone();
+    assert!(m2.is_accessible_to(&dev));
   }
 }
