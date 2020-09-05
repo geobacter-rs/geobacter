@@ -393,6 +393,41 @@ impl<T> From<ThreeD<T>> for Dim3D<T> {
 pub mod ops {
   use super::*;
 
+  macro_rules! impl_scalar_math_op {
+    (($t:ident, $tf:ident), $($scalar:ty, )*) => ($(
+      impl $t<$scalar> for Dim1D<$scalar> {
+        type Output = Dim1D<$scalar>;
+        #[inline(always)]
+        fn $tf(self, rhs: $scalar) -> Self::Output {
+          Dim1D {
+            x: $t::$tf(self.x, rhs),
+          }
+        }
+      }
+      impl $t<$scalar> for Dim2D<$scalar> {
+        type Output = Dim2D<$scalar>;
+        #[inline(always)]
+        fn $tf(self, rhs: $scalar) -> Self::Output {
+          Dim2D {
+            x: $t::$tf(self.x, rhs),
+            y: $t::$tf(self.y, rhs),
+          }
+        }
+      }
+      impl $t<$scalar> for Dim3D<$scalar> {
+        type Output = Dim3D<$scalar>;
+        #[inline(always)]
+        fn $tf(self, rhs: $scalar) -> Self::Output {
+          Dim3D {
+            x: $t::$tf(self.x, rhs),
+            y: $t::$tf(self.y, rhs),
+            z: $t::$tf(self.z, rhs),
+          }
+        }
+      }
+    )*);
+  }
+
   macro_rules! impl_math_op {
     ($(($t:ident, $tf:ident), )*) => ($(
       impl<T, U> $t<Dim1D<U>> for Dim1D<T>
@@ -431,6 +466,11 @@ pub mod ops {
           }
         }
       }
+
+      impl_scalar_math_op!(($t, $tf),
+                           i8, u8, i16, u16, i32, u32,
+                           i64, u64, isize, usize,
+                           i128, u128, );
 
       impl<'a, T> $t<Self> for &'a Dim1D<T>
         where &'a T: $t<&'a T, Output = T>,
