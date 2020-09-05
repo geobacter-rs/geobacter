@@ -526,6 +526,11 @@ impl<'a, A> Shared<'a, A> {
       }
     }
   }
+
+  pub unsafe fn unchecked_as_ptr(&self) -> NonNull<A> {
+    let uninit_ptr = &mut *(self.0).0.as_ref().get();
+    NonNull::from(&mut *uninit_ptr.as_mut_ptr())
+  }
 }
 
 pub struct Slice<'a, A, E, G>
