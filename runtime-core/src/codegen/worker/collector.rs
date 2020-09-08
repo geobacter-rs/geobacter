@@ -6,10 +6,10 @@
 //!
 //! This contains code from the relevant parts of `rustc`.
 
-use std::sync::{Arc, };
-
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
+use rustc_errors::ErrorReported;
 use rustc_hir::def_id::{CrateNum, LOCAL_CRATE, DefIdSet};
-use rustc_hir::lang_items::{self, ExchangeMallocFnLangItem};
+use rustc_hir::lang_items::LangItem;
 use rustc_middle::mir::{self, Location, visit::Visitor, AssertMessage, Local};
 use rustc_middle::mir::interpret::{AllocId, ConstValue, GlobalAlloc, Scalar,
                                    ErrorHandled, };
@@ -18,7 +18,6 @@ use rustc_middle::ty::{self, TyCtxt, Instance, ParamEnv, TypeFoldable, InstanceD
 use rustc_middle::ty::adjustment::{CustomCoerceUnsized, PointerCast};
 use rustc_mir::monomorphize::{self, collector::InliningMap,
                               partitioning::partition};
-use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 
 use crate::codegen::PlatformCodegen;
 use super::driver_data::DriverData;
@@ -26,7 +25,7 @@ use super::driver_data::DriverData;
 pub fn collect_and_partition_mono_items<'tcx, P>(tcx: TyCtxt<'tcx>,
                                                  dd: &'tcx DriverData<'tcx, P>,
                                                  cnum: CrateNum)
-  -> (Arc<DefIdSet>, Arc<Vec<Arc<CodegenUnit<'tcx>>>>)
+  -> (&'tcx DefIdSet, &'tcx [CodegenUnit<'tcx>])
   where P: PlatformCodegen,
 {
   assert_eq!(cnum, LOCAL_CRATE);
@@ -49,7 +48,7 @@ pub fn collect_and_partition_mono_items<'tcx, P>(tcx: TyCtxt<'tcx>,
   let inlining_map = inlining_map.unwrap();
 
   let items = visited;
-  let mut units = partition(tcx, items.iter().cloned(),
+  let mut units = partition(tcx, &mut items.iter().cloned(),
                             tcx.sess.codegen_units(),
                             &inlining_map);
 
@@ -65,10 +64,7 @@ pub fn collect_and_partition_mono_items<'tcx, P>(tcx: TyCtxt<'tcx>,
     }
   }
 
-  let units: Vec<Arc<CodegenUnit>> = units
-    .into_iter()
-    .map(Arc::new)
-    .collect();
+  let units: Vec<CodegenUnit> = units;
 
   let mono_items: DefIdSet = items.iter()
     .filter_map(|mono_item| {
@@ -94,7 +90,7 @@ pub fn collect_and_partition_mono_items<'tcx, P>(tcx: TyCtxt<'tcx>,
     let mut item_keys: Vec<_> = items
       .iter()
       .map(|i| {
-        let mut output = i.to_string(tcx, false);
+        let mut output = ty::print::with_no_trimmed_paths(|| i.to_string());
         output.push_str(" @@");
         let mut empty = Vec::new();
         let cgus = item_to_cgus.get_mut(i).unwrap_or(&mut empty);
@@ -133,7 +129,7 @@ pub fn collect_and_partition_mono_items<'tcx, P>(tcx: TyCtxt<'tcx>,
     }
   }
 
-  (Arc::new(mono_items), Arc::new(units))
+  (tcx.arena.alloc(mono_items), tcx.arena.alloc_from_iter(units.into_iter()))
 }
 
 pub fn collect_items_rec<'tcx>(tcx: TyCtxt<'tcx>,
@@ -183,7 +179,7 @@ pub fn collect_items_rec<'tcx>(tcx: TyCtxt<'tcx>,
     match start {
       MonoItem::Static(def_id) => {
         let instance = Instance::mono(tcx, def_id);
-        let ty = instance.monomorphic_ty(tcx);
+        let ty = instance.ty(tcx, ParamEnv::reveal_all());
         visit_drop_use(tcx, ty, true, &mut output);
 
         if let Ok(val) = tcx.const_eval_poly(def_id) {
@@ -246,10 +242,13 @@ fn visit_fn_use<'tcx, F>(tcx: TyCtxt<'tcx>,
                          output: &mut F)
   where F: FnMut(MonoItem<'tcx>),
 {
-  if let ty::FnDef(def_id, substs) = ty.kind {
-    let instance = Instance::resolve(tcx, ParamEnv::reveal_all(),
-                                     def_id, substs)
-      .unwrap();
+  if let ty::FnDef(def_id, substs) = *ty.kind() {
+    let instance = if is_direct_call {
+      ty::Instance::resolve(tcx, ty::ParamEnv::reveal_all(), def_id, substs).unwrap().unwrap()
+    } else {
+      ty::Instance::resolve_for_fn_ptr(tcx, ty::ParamEnv::reveal_all(), def_id, substs)
+        .unwrap()
+    };
     visit_instance_use(tcx, instance, is_direct_call, output);
   }
 }
@@ -261,8 +260,6 @@ fn visit_instance_use<'tcx, F>(tcx: TyCtxt<'tcx>,
   where F: FnMut(MonoItem<'tcx>),
 {
   debug!("visit_item_use({:?}, is_direct_call={:?})", instance, is_direct_call);
-
-  //assert!(is_direct_call, "TODO: generate wrappers for sending calls to the queue");
 
   match instance.def {
     ty::InstanceDef::Intrinsic(def_id) => {
@@ -342,7 +339,7 @@ fn find_vtable_types_for_unsizing<'tcx>(tcx: TyCtxt<'tcx>,
         return false;
       }
       let tail = tcx.struct_tail_erasing_lifetimes(ty, param_env);
-      match tail.kind {
+      match tail.kind() {
         ty::Foreign(..) => false,
         ty::Str | ty::Slice(..) | ty::Dynamic(..) => true,
         _ => bug!("unexpected unsized tail: {:?}", tail),
@@ -355,7 +352,7 @@ fn find_vtable_types_for_unsizing<'tcx>(tcx: TyCtxt<'tcx>,
     }
   };
 
-  match (&source_ty.kind, &target_ty.kind) {
+  match (source_ty.kind(), target_ty.kind()) {
     (&ty::Ref(_, a, _),
       &ty::Ref(_, b, _)) |
     (&ty::Ref(_, a, _),
@@ -415,7 +412,7 @@ fn create_mono_items_for_vtable_methods<'tcx, F>(tcx: TyCtxt<'tcx>,
   assert!(!trait_ty.needs_subst() && !trait_ty.has_escaping_bound_vars() &&
     !impl_ty.needs_subst() && !impl_ty.has_escaping_bound_vars());
 
-  if let ty::Dynamic(ref trait_ty, ..) = trait_ty.kind {
+  if let ty::Dynamic(ref trait_ty, ..) = trait_ty.kind() {
     if let Some(principal) = trait_ty.principal() {
       let poly_trait_ref = principal.with_self_ty(tcx, impl_ty);
       assert!(!poly_trait_ref.has_escaping_bound_vars());
@@ -461,23 +458,23 @@ fn collect_miri<'tcx, F>(tcx: TyCtxt<'tcx>,
                          output: &mut F)
   where F: FnMut(MonoItem<'tcx>),
 {
-  let alloc_type = tcx.alloc_map.lock().get(alloc_id);
-  match alloc_type {
-    Some(GlobalAlloc::Static(did)) => {
+  match tcx.global_alloc(alloc_id) {
+    GlobalAlloc::Static(did) => {
       trace!("collecting static {:?}", did);
       output(MonoItem::Static(did));
     },
-    Some(GlobalAlloc::Memory(alloc)) => {
+    GlobalAlloc::Memory(alloc) => {
       trace!("collecting {:?} with {:#?}", alloc_id, alloc);
       for &((), inner) in alloc.relocations().values() {
-        collect_miri(tcx,inner, output);
+        rustc_data_structures::stack::ensure_sufficient_stack(|| {
+          collect_miri(tcx, inner, output);
+        });
       }
     },
-    Some(GlobalAlloc::Function(fn_instance)) => {
+    GlobalAlloc::Function(fn_instance) => {
       trace!("collecting {:?} with {:#?}", alloc_id, fn_instance);
       output(create_fn_mono_item(fn_instance));
     },
-    None => bug!("alloc id without corresponding allocation: {}", alloc_id),
   }
 }
 
@@ -494,11 +491,13 @@ fn collect_neighbours<'tcx, F, G>(tcx: TyCtxt<'tcx>,
   // Runtime codegen uses stubbed functions for these, but we still need
   // to "collect" these for the host.
   let mir_opt = match instance.def {
-    ty::InstanceDef::Item(did) => {
-      if tcx.is_mir_available(did) {
-        Some(tcx.optimized_mir(did))
+    ty::InstanceDef::Item(def) => {
+      if let Some((did, param_did)) = def.as_const_arg() {
+        Some(tcx.optimized_mir_of_const_arg((did, param_did)))
+      } else if tcx.is_mir_available(def.did) {
+        Some(tcx.optimized_mir(def.did))
       } else {
-        tcx.custom_intrinsic_mir(instance)
+        None
       }
     },
     ty::InstanceDef::Intrinsic(..) => {
@@ -528,7 +527,7 @@ fn collect_neighbours<'tcx, F, G>(tcx: TyCtxt<'tcx>,
         _indirect: indirect,
         output,
       };
-      collector.visit_body(&mir.unwrap_read_only());
+      collector.visit_body(&mir);
     }
   }
 }
@@ -609,7 +608,7 @@ impl<'a, 'tcx, F, G> mir::visit::Visitor<'tcx> for MirNeighborCollector<'a, 'tcx
       ) => {
         let source_ty = operand.ty(self.mir, self.tcx);
         let source_ty = self.monomorphize(source_ty);
-        match source_ty.kind {
+        match *source_ty.kind() {
           ty::Closure(def_id, substs) => {
             let instance = Instance::resolve_closure(self.tcx,
                                                      def_id,
@@ -624,7 +623,7 @@ impl<'a, 'tcx, F, G> mir::visit::Visitor<'tcx> for MirNeighborCollector<'a, 'tcx
         let tcx = self.tcx;
         let exchange_malloc_fn_def_id = tcx
           .lang_items()
-          .require(ExchangeMallocFnLangItem)
+          .require(LangItem::ExchangeMalloc)
           .unwrap_or_else(|e| tcx.sess.fatal(&e));
         let instance = Instance::mono(tcx, exchange_malloc_fn_def_id);
         (self.output)(create_fn_mono_item(instance));
@@ -647,9 +646,10 @@ impl<'a, 'tcx, F, G> mir::visit::Visitor<'tcx> for MirNeighborCollector<'a, 'tcx
       ty::ConstKind::Unevaluated(def_id, substs, promoted) => {
         match self.tcx.const_eval_resolve(param_env, def_id, substs, promoted, None) {
           Ok(val) => collect_const_value(self.tcx, val, self.output),
-          Err(ErrorHandled::Reported) => {}
+          Err(ErrorHandled::Reported(ErrorReported)) |
+          Err(ErrorHandled::Linted) => {}
           Err(ErrorHandled::TooGeneric) => span_bug!(
-                        self.tcx.def_span(def_id),
+                        self.mir.source_info(location).span,
                         "collection encountered polymorphic constant",
                     ),
         }
@@ -660,24 +660,38 @@ impl<'a, 'tcx, F, G> mir::visit::Visitor<'tcx> for MirNeighborCollector<'a, 'tcx
     self.super_const(constant);
   }
 
-  fn visit_terminator_kind(&mut self,
-                           kind: &mir::TerminatorKind<'tcx>,
-                           location: Location) {
-    debug!("visiting terminator {:?} @ {:?}", kind, location);
+  fn visit_terminator(&mut self, terminator: &mir::Terminator<'tcx>, location: Location) {
+    debug!("visiting terminator {:?} @ {:?}", terminator, location);
 
     let tcx = self.tcx;
-    match *kind {
+    match terminator.kind {
       mir::TerminatorKind::Call { ref func, .. } => {
         let callee_ty = func.ty(self.mir, tcx);
         let callee_ty = self.monomorphize(callee_ty);
         visit_fn_use(tcx, callee_ty, true, &mut self.output);
       },
-      mir::TerminatorKind::Drop { ref location, .. } |
-      mir::TerminatorKind::DropAndReplace { ref location, .. } => {
-        let ty = location.ty(self.mir, tcx).ty;
+      mir::TerminatorKind::Drop { ref place, .. } |
+      mir::TerminatorKind::DropAndReplace { ref place, .. } => {
+        let ty = place.ty(self.mir, tcx).ty;
         let ty = self.monomorphize(ty);
         visit_drop_use(tcx, ty, true, self.output);
       },
+      mir::TerminatorKind::InlineAsm { ref operands, .. } => {
+        // Handling this is dubious.
+        for op in operands {
+          match *op {
+            mir::InlineAsmOperand::SymFn { ref value } => {
+              let fn_ty = self.monomorphize(value.literal.ty);
+              visit_fn_use(self.tcx, fn_ty, false, &mut self.output);
+            }
+            mir::InlineAsmOperand::SymStatic { def_id } => {
+              trace!("collecting asm sym static {:?}", def_id);
+              (self.output)(MonoItem::Static(def_id));
+            }
+            _ => {}
+          }
+        }
+      }
       mir::TerminatorKind::Assert { ref msg, .. } => {
         // This differs from the vanilla driver:
         // it doesn't explicitly collect these lang items. This isn't
@@ -688,13 +702,13 @@ impl<'a, 'tcx, F, G> mir::visit::Visitor<'tcx> for MirNeighborCollector<'a, 'tcx
         // the runtime codegen module.
         match msg {
           &AssertMessage::BoundsCheck { .. } => {
-            let li = lang_items::PanicBoundsCheckFnLangItem;
+            let li = LangItem::PanicBoundsCheck;
             let def_id = tcx.require_lang_item(li, None);
             let inst = Instance::mono(tcx, def_id);
             (self.output)(create_fn_mono_item(inst));
           },
           _ => {
-            let li = lang_items::PanicFnLangItem;
+            let li = LangItem::Panic;
             let def_id = tcx.require_lang_item(li, None);
             let inst = Instance::mono(tcx, def_id);
             (self.output)(create_fn_mono_item(inst));
@@ -709,14 +723,14 @@ impl<'a, 'tcx, F, G> mir::visit::Visitor<'tcx> for MirNeighborCollector<'a, 'tcx
       mir::TerminatorKind::Unreachable => {}
       mir::TerminatorKind::GeneratorDrop |
       mir::TerminatorKind::Yield { .. } |
-      mir::TerminatorKind::FalseEdges { .. } |
+      mir::TerminatorKind::FalseEdge { .. } |
       mir::TerminatorKind::FalseUnwind { .. } => bug!(),
     }
 
-    self.super_terminator_kind(kind, location);
+    self.super_terminator(terminator, location);
   }
 
-  fn visit_place_base(
+  fn visit_local(
     &mut self,
     _place_local: &Local,
     _context: mir::visit::PlaceContext,

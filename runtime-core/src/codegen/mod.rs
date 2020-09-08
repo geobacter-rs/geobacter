@@ -314,8 +314,8 @@ pub trait PlatformCodegen: Sized + Clone + Debug + Send + Sync + 'static {
                       tcx: TyCtxt<'tcx>,
                       dd: &DriverData<'tcx, Self>,
                       _def_id: DefId,
-                      attrs: Lrc<[ast::Attribute]>)
-    -> Lrc<[ast::Attribute]>
+                      attrs: &'tcx [ast::Attribute])
+    -> &'tcx [ast::Attribute]
   {
     let conditions = dd.root_conditions();
     geobacter_cfg_attrs(tcx, attrs, &*conditions)

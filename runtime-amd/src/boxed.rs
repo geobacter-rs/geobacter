@@ -1,7 +1,7 @@
 
 #![allow(deprecated)]
 
-use std::alloc::Layout;
+use std::alloc::{AllocRef, Layout};
 use std::cmp::{Ordering, };
 use std::fmt;
 use std::iter::*;
@@ -11,8 +11,6 @@ use std::ops::*;
 use std::ptr::{NonNull as StdNonNull, Unique,
                slice_from_raw_parts_mut, drop_in_place,
                write, };
-
-use alloc_wg::alloc::{AllocRef, AllocInit};
 
 use hsa_rt::error::Error as HsaError;
 use hsa_rt::ext::amd::{MemoryPool, MemoryPoolAlloc, MemoryPoolPtr};
@@ -89,9 +87,9 @@ impl<T> RawPoolBox<[T]>
       .repeat_packed(count)
       .map_err(|_| HsaError::Overflow )?;
 
-    let ptr = pool.alloc(layout, AllocInit::Uninitialized)
+    let ptr = pool.alloc(layout)
       .map_err(|_| Error::Alloc(layout) )?;
-    let ptr = slice_from_raw_parts_mut(ptr.ptr.as_ptr() as *mut _, count);
+    let ptr = slice_from_raw_parts_mut(ptr.as_ptr() as *mut _, count);
 
     let ptr = Unique::new_unchecked(ptr);
     Ok(RawPoolBox(ptr, pool.pool()))

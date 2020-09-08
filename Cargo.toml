@@ -11,7 +11,9 @@ members = ["runtime-core",
            "tools/hsa-agent-info",
            "runtime-amd", "runtime-amd-macros",
            "examples/amdgpu/trivial", "examples/amdgpu/fractal",
-           "examples/amdgpu/gemm",
+           "examples/amdgpu/gemm", "examples/amdgpu/conv",
+
+           "runtime-bpf",
 
            "runtime-nv", ]
 
@@ -20,6 +22,7 @@ debug = true
 debug-assertions = true
 
 [profile.dev]
+rpath = true
 [profile.test]
 rpath = true
 [profile.bench]
@@ -36,3 +39,4 @@ geobacter-runtime-amd = { path = "runtime-amd" }
 geobacter-runtime-nv = { path = "runtime-nv" }
 geobacter-runtime-vk = { path = "runtime-vk" }
 alloc-wg = { git = "https://github.com/TimDiekmann/alloc-wg.git" }
+vulkano = { path = "../vulkano/vulkano" }

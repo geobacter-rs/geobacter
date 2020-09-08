@@ -356,7 +356,6 @@ impl VkAccel {
     }
     println!("{}", target.options.features);
 
-    target.options.codegen_backend = "llvm".into();
     target.options.panic_strategy = PanicStrategy::Abort;
     target.options.trap_unreachable = false;
     target.options.position_independent_executables = true;

@@ -12,7 +12,6 @@ pub type TestInvoc<A> = Invoc<A, Arc<ArgsPool>, FuncModule<A>>;
 
 lazy_static::lazy_static! {
   static ref DEV: Arc<HsaAmdGpuAccel> = {
-    env_logger::init();
     let ctx = grt_core::context::Context::new()
       .expect("create context");
     HsaAmdGpuAccel::first_device(&ctx)

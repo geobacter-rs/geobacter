@@ -1,9 +1,7 @@
 
 #![feature(geobacter)]
 
-extern crate log;
-extern crate env_logger;
-
+use std::geobacter::platform::platform;
 use std::geobacter::spirv::{*, workitem::*};
 use std::iter;
 use std::num::NonZeroU32;
@@ -48,7 +46,6 @@ pub fn main() {
   }
   println!("layers = {:?}", layers);
 
-  env_logger::init();
   let ctxt = Context::new()
     .expect("create context");
 
@@ -156,19 +153,6 @@ pub fn main() {
       buf
     };
     println!("finished initializing data buffer");
-
-    let loop_count_uniform = {
-      let usage = BufferUsage {
-        uniform_buffer: true,
-        .. BufferUsage::none()
-      };
-
-      let buf = CpuAccessibleBuffer::from_data(device.clone(), usage,
-                                               true, 1usize)
-        .expect("LOOP_COUNT uniform");
-
-      buf
-    };
 
     println!("sets = {:#?}", compiled.pipeline_layout());
     let set_0 = compiled.pipeline_layout()

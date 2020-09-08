@@ -9,7 +9,6 @@ name = "examples-amdgpu-fractal"
 path = "main.rs"
 
 [dependencies]
-env_logger = "0.6.0"
 nd = { package = "ndarray", version = "0.13.0" }
 rand = "0.7.3"
 lodepng = "2.0.0"

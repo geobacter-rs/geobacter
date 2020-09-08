@@ -8,20 +8,21 @@ use std::ops::{Deref};
 use std::sync::{Arc, };
 
 use rustc_data_structures::fx::{FxHashMap, };
-use rustc_data_structures::sync::{Lock, MetadataRef, AtomicCell, Once, };
+use rustc_data_structures::sync::MetadataRef;
 use rustc_data_structures::owning_ref::{OwningRef, };
 use rustc_hir::def_id::{CrateNum, };
 use rustc_middle::middle::cstore::{MetadataLoader, CrateSource as RustcCrateSource, };
-use rustc_middle::mir::interpret::AllocDecodingState;
 use rustc_metadata::creader::CStore;
 use rustc_metadata::rmeta::{METADATA_HEADER, decoder,
                             decoder::MetadataBlob, CrateRoot,
                             decoder::CrateNumMap, };
 use rustc_target;
 use rustc_span::symbol::{Symbol};
-use flate2::read::DeflateDecoder;
+
+use snap::read::FrameDecoder;
 
 use crate::utils::{new_hash_set, };
+use std::convert::TryInto;
 
 #[derive(Debug)]
 pub enum MetadataLoadingError {
@@ -29,6 +30,7 @@ pub enum MetadataLoadingError {
   Io(io::Error),
   SectionMissing,
   SymbolUtf(Utf8Error),
+  Header,
   Deflate(PathBuf, String, io::Error),
   Elf(goblin::error::Error),
 }
@@ -42,6 +44,7 @@ impl fmt::Display for MetadataLoadingError {
         f.pad("metadata section missing from file")
       },
       &MetadataLoadingError::SymbolUtf(ref e) => fmt::Display::fmt(e, f),
+      &MetadataLoadingError::Header => f.pad("corrupt/unsupported metadata header"),
       &MetadataLoadingError::Deflate(_, _, ref e) => fmt::Display::fmt(e, f),
       &MetadataLoadingError::Elf(ref e) => fmt::Display::fmt(e, f),
     }
@@ -180,9 +183,8 @@ impl CrateMetadataLoader {
                 cstore: &mut CStore)
     -> Result<CrateNum, String>
   {
-    use rustc_middle::dep_graph::DepNodeIndex;
     use rustc_session::search_paths::PathKind;
-    use rustc_middle::middle::cstore::DepKind;
+    use rustc_middle::middle::cstore::CrateDepKind;
 
     let (src, symbol_name, shared_krate) = {
       let &(ref src, ref symbol_name, ref krate) =
@@ -245,46 +247,18 @@ impl CrateMetadataLoader {
       map
     };
 
-    let dependencies: Vec<CrateNum> = cnum_map.iter().cloned().collect();
-
-    let interpret_alloc_index: Vec<u32> = root
-      .interpret_alloc_index
-      .decode(&*shared_krate)
-      .collect();
-
-    let trait_impls = root
-      .impls
-      .decode(&*shared_krate)
-      .map(|impls| (impls.trait_id, impls.impls) )
-      .collect();
-
-    let def_path_table = root
-      .def_path_table
-      .decode(&*shared_krate);
-
-    let cmeta = decoder::CrateMetadata {
-      extern_crate: Lock::new(None),
-      def_path_table,
-      trait_impls,
-      raw_proc_macros: None,
-      root,
-      blob: shared_krate.clone().unwrap(), // XXX cloned
-      cnum_map,
-      cnum,
-      dependencies: Lock::new(dependencies),
-      source_map_import_info: Once::new(),
-      alloc_decoding_state: AllocDecodingState::new(interpret_alloc_index),
-      dep_kind: Lock::new(DepKind::Explicit),
-      source: RustcCrateSource {
-        // Not sure PathKind::Crate is correct.
-        dylib: Some((src.to_path_buf(), PathKind::Crate)),
-        rlib: None,
-        rmeta: None,
-      },
-      private_dep: false,
-      dep_node_index: AtomicCell::new(DepNodeIndex::INVALID),
-      host_hash: None,
+    let blob = shared_krate.clone().unwrap(); // XXX cloned
+    let dep_kind = CrateDepKind::Explicit;
+    let source = RustcCrateSource {
+      // Not sure PathKind::Crate is correct.
+      dylib: Some((src.to_path_buf(), PathKind::Crate)),
+      rlib: None,
+      rmeta: None,
     };
+
+    let cmeta = decoder::CrateMetadata::new_geobacter(blob, root, None,
+                                                      cnum, cnum_map, dep_kind,
+                                                      source, false, None);
     into.0.push(cmeta);
 
     Ok(cnum)
@@ -420,11 +394,9 @@ impl Metadata {
       .collect();
 
     for (idx, &(ref sym, _)) in syms.iter().enumerate() {
-      let start = sym.st_value;
-      if owner_index.is_some() {
-        assert!(start != 0);
-      } else if start == 0 {
+      if sym.st_value == 0 {
         owner_index = Some(idx);
+        break;
       }
     }
 
@@ -432,13 +404,29 @@ impl Metadata {
       .map(|(sym, name)| {
         let start = sym.st_value as usize;
         let end   = (sym.st_value + sym.st_size) as usize;
-
         let region = &metadata_section[start..end];
-        let compressed = &region[METADATA_HEADER.len()..];
+
+        let md_len = METADATA_HEADER.len();
+        if region.len() < md_len + 8 {
+          return Err(MetadataLoadingError::Header);
+        }
+        let header = &region[..md_len];
+        if header != METADATA_HEADER {
+          return Err(MetadataLoadingError::Header);
+        }
+        let comp_start = md_len+8;
+        let encoded_len = &region[md_len..comp_start];
+        let mut le_len = [0u8; 8];
+        le_len.copy_from_slice(&encoded_len);
+        let comp_len: usize = u64::from_le_bytes(le_len)
+          .try_into()
+          .map_err(|_| MetadataLoadingError::Header )?;
+        let comp_end = comp_start + comp_len;
+        let compressed_bytes = &region[comp_start..comp_end];
 
         let mut inflated = Vec::new();
-        let mut deflate = DeflateDecoder::new(compressed.as_ref());
-        deflate.read_to_end(&mut inflated)
+        FrameDecoder::new(compressed_bytes)
+          .read_to_end(&mut inflated)
           .map_err(|e| {
             MetadataLoadingError::Deflate(src.as_path().into(), name.to_string(),
                                           e)

@@ -4,6 +4,7 @@
 #![feature(coerce_unsized)]
 #![feature(allocator_api)]
 #![feature(alloc_layout_extra)]
+#![feature(slice_ptr_get)]
 
 // For images:
 #![feature(repr_simd)]
@@ -15,7 +16,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub extern crate hsa_rt_sys as ffi;
 #[cfg(feature = "serde")]
 extern crate serde;
-extern crate log;
+extern crate tracing as log;
 #[cfg(feature = "alloc-wg")]
 extern crate alloc_wg;
 extern crate num_traits;

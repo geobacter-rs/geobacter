@@ -18,18 +18,11 @@ use rand::prelude::*;
 use std::geobacter::platform::*;
 use std::geobacter::spec_param as param;
 use std::mem::{size_of, drop};
-use std::num::NonZeroU32;
+use std::num::NonZeroU16;
 use std::ops::*;
-use std::rc::Rc;
 use std::time::*;
 
 type ImageRef<'a, A> = grt_amd::texture::ImageRef<'a,
-  A,
-  Format<ETy, channel_order::R>,
-  TwoD<u32>,
-  layout::Opaque,
->;
-type LinearImageRef<'a, A> = grt_amd::texture::ImageRef<'a,
   A,
   Format<ETy, channel_order::R>,
   TwoD<u32>,
@@ -41,7 +34,7 @@ type LinearImageRef<'a, A> = grt_amd::texture::ImageRef<'a,
 struct GemmArgs<'b> {
   a: ImageRef<'b, ReadOnly>,
   b: ImageRef<'b, ReadOnly>,
-  c: LinearImageRef<'b, WriteOnly>,
+  c: ImageRef<'b, WriteOnly>,
   queue: DeviceSingleQueue,
   completion: GlobalSignal,
 }
@@ -58,9 +51,7 @@ impl<'b> Kernel for GemmArgs<'b> {
   };
   type Queue = DeviceSingleQueue;
 
-  fn queue(&self) -> &Self::Queue {
-    &self.queue
-  }
+  fn queue(&self) -> &Self::Queue { &self.queue }
 
   /// This function is run on the GPU.
   fn kernel(&self, vp: KVectorParams<Self>) {
@@ -77,7 +68,7 @@ impl<'b> Kernel for GemmArgs<'b> {
 
     // These globals are in LDS (workgroup local) memory.
     // XXX this function can't be generic over ETy *only* because Rust prohibits it.
-    // statics aren't allowed to close over generic parameters of the parent function.
+    // Statics aren't allowed to close over generic parameters of the parent function.
     lds! {
       let mut lds_sa: Lds<LdsArray<ETy>> = Lds::new();
       let mut lds_sb: Lds<LdsArray<ETy>> = Lds::new();
@@ -96,8 +87,8 @@ unsafe impl<'b> Sync for GemmArgs<'b> { }
 
 /// Get the dimension specialization parameter. This should only be called on
 /// the device.
-fn dim_spec_param() -> NonZeroU32 {
-  assert!(!platform().is_host());
+fn dim_spec_param() -> NonZeroU16 {
+  debug_assert!(!platform().is_host());
   *param::get(&dim_spec_param).unwrap()
 }
 /// Do we need to do bounds checks, because TILE_S doesn't divide the grid evenly?
@@ -114,6 +105,7 @@ const RTS: usize = TILE_S / WPT;
 
 const TILE_S: usize = 32;
 type ETy = f32;
+// types which allow us to block a whole row at a time during the naive gemm.
 type LdsArray<E> = [[[E; WPT]; RTS + 1]; TILE_S];
 type LdsTile<E> = [[E; TILE_S + WPT]; TILE_S];
 
@@ -129,69 +121,75 @@ fn assert_lds_size() -> LdsTile<ETy> {
 
 fn gemm_v1<A1, A2>(vp: VectorParams<Dim2D<Range<u32>>>,
                    a: ImageRef<A1>, b: ImageRef<A1>,
-                   c: LinearImageRef<A2>,
+                   c: ImageRef<A2>,
                    sa: &mut LdsShared<LdsArray<ETy>>,
                    sb: &mut LdsShared<LdsArray<ETy>>,
-                   stride: NonZeroU32)
+                   stride: NonZeroU16)
   where A1: access::ReadAccess,
         A2: access::WriteAccess,
 {
   let stride = stride.get();
   let mod_k = mod_block_k();
 
-  let wpt = WPT as u32;
+  let wpt = WPT as u16;
 
   let mut acc = [0u32.as_(); WPT];
 
-  let wg_size = Dim2D::from(TILE_S as u32);
-  let wg = vp.wg_id();
+  let wg_size = Dim2D::from(TILE_S as u16);
+  let wg = vp.wg_id().as_::<u16>();
 
-  let Dim2D { x: wi_x, y: wi_y, } = (vp.wi() * Dim2D {
+  let Dim2D { x: wi_x, y: wi_y, } = vp.wi() * Dim2D {
     x: 1,
     y: wpt as u16,
-  }).as_::<u32>();
+  };
   let Dim2D { x: wg_x, y: wg_y, } = wg * wg_size;
 
   let g_x = wg_x + wi_x;
   let g_y = wg_y + wi_y;
 
-  let mut k = 0;
+  let mut k = 0u16;
   while k < stride {
     // init SMEM:
     let mut bt = [0u32.as_(); WPT];
     let mut at = [0u32.as_(); WPT];
 
-    let mut w = 0u32;
+    let mut w = 0u16;
     while w < wpt {
+      // Note: we write A into LDS transposed
       let ao_y = g_y + w;
       let ao_x = k + wi_x;
 
       let bo_y = k + wi_y + w;
       let bo_x = g_x;
 
-      at[w as usize] = a.load((ao_x, ao_y));
-      bt[w as usize] = b.load((bo_x, bo_y));
+      at[w as usize] = a.load((ao_x as _, ao_y as _));
+      bt[w as usize] = b.load((bo_x as _, bo_y as _));
 
       w += 1;
     }
 
-    k += TILE_S as u32;
+    k += TILE_S as u16;
 
     let sa = sa.init(&vp, at);
     let sb = sb.init(&vp, bt);
 
-    unsafe {
-      let sa = &*(sa.as_ptr() as *const _ as *const LdsTile<ETy>);
-      let sb = sb.unchecked_ref();
+    {
+      let (sa, sb) = unsafe {
+        let sa = &*(sa.as_ptr() as *const _ as *const LdsTile<ETy>);
+        // avoid the second barrier:
+        let sb = sb.unchecked_ref();
+        (sa, sb)
+      };
 
       let mut kci = 0u16;
       while kci < (TILE_S as u16) {
         let va = sa[wi_y as usize][kci as usize];
         let vbs = sb[kci as usize][vp.wi().x as usize];
 
-        let mut w = 0u32;
+        let mut w = 0u16;
         while w < wpt {
-          acc[w as usize] += va * vbs[w as usize];
+          acc[w as usize] = va
+            .mul_add(vbs[w as usize], acc[w as usize]);
           w += 1;
         }
 
@@ -200,16 +198,17 @@ fn gemm_v1<A1, A2>(vp: VectorParams<Dim2D<Range<u32>>>,
     }
 
     drop(sa);
+    // avoid the second barrier:
     unsafe { sb.unsynced_drop() }
   }
 
   // copy sc back to C:
-  let mut w = 0u32;
+  let mut w = 0u16;
   while w < wpt {
     let i_y = g_y + w;
     let i_x = g_x;
     if mod_k || (i_y < stride && i_x < stride) {
-      c.store((i_x, i_y), [acc[w as usize]; 1]);
+      c.store((i_x as _, i_y as _), [acc[w as usize]; 1]);
     }
 
     w += 1;
@@ -300,7 +299,6 @@ pub fn bench<F, R>(what: &str, hardness: f64, f: F) -> R
 pub fn main() {
   println!("TILE_S = {}, WPT = {}", TILE_S, WPT);
 
-  env_logger::init();
   let ctxt = Context::new().expect("create context");
 
   let dev = HsaAmdGpuAccel::nth_device(&ctxt, 0)
@@ -313,7 +311,7 @@ pub fn main() {
   const GRID: usize = AXIS_SIZE;
 
   let shape = (AXIS_SIZE, AXIS_SIZE);
-  let dim = NonZeroU32::new(AXIS_SIZE as u32).unwrap();
+  let dim = NonZeroU16::new(AXIS_SIZE as u16).unwrap();
   let hardness = (2 * AXIS_SIZE * AXIS_SIZE * AXIS_SIZE) as f64;
 
   let mut invoc = GemmArgs::module(&dev);
@@ -324,13 +322,13 @@ pub fn main() {
   let alloc = dev.fine_lap_node_alloc(0);
 
   println!("{}mb on host", (3 * SIZE * size_of::<ETy>()) / 1024 / 1024);
-  println!("{}mb on device", (2 * SIZE * size_of::<ETy>()) / 1024 / 1024);
+  println!("{}mb on device", (3 * SIZE * size_of::<ETy>()) / 1024 / 1024);
 
   let mut la = LapVec::with_capacity_in(SIZE, alloc.clone());
   let mut lb = LapVec::with_capacity_in(SIZE, alloc.clone());
   let mut lc: LapVec<ETy> =
-    LapVec::with_capacity_in(SIZE, alloc.clone()); // for verification
-  let mut nd_lc = LapVec::with_capacity_in(SIZE, alloc.clone());
+    LapVec::with_capacity_in(SIZE, alloc.clone());
+  let mut nd_lc = LapVec::with_capacity_in(SIZE, alloc.clone()); // for verification
 
   la.resize(SIZE, 0u32.as_());
   lb.resize(SIZE, 0u32.as_());
@@ -338,19 +336,7 @@ pub fn main() {
   nd_lc.resize(SIZE, 0u32.as_());
 
   let setup_memory = |b: &mut LapVec<_>| {
-    use nix::sys::mman::*;
-
     b.add_access(&dev).expect("grant GPU access to host memory");
-
-    unsafe {
-      let b_region = b.pool_ptr().unwrap();
-      let r = madvise(b_region.as_ptr().as_ptr() as _,
-                      b_region.len() as _,
-                      MmapAdvise::MADV_HUGEPAGE);
-      if let Err(err) = r {
-        eprintln!("failed to madvise for hugepages: {}", err);
-      }
-    }
   };
   setup_memory(&mut la);
   setup_memory(&mut lb);
@@ -410,7 +396,6 @@ pub fn main() {
     ArgsPool::new::<GemmArgs>(&dev, 1)
       .expect("ArgsPool::new")
   });
-  let args_pool = Rc::new(args_pool);
 
   let group_size = invoc.group_size().expect("codegen failure");
   let private_size = invoc.private_size().unwrap();
@@ -421,7 +406,7 @@ pub fn main() {
   // ensure the invocation doesn't block on this step:
   invoc.compile().expect("kernel cross codegen");
 
-  let mut invoc = invoc.into_invoc(args_pool);
+  let mut invoc = invoc.into_invoc(&args_pool);
 
   println!("starting GPU gemm...");
 
@@ -450,7 +435,9 @@ pub fn main() {
     .expect("export gemm results");
   drop(c_img);
 
-  time("nd linalg gemm", || {
+  println!("got GPU results; beginning CPU verification...");
+
+  bench("nd linalg gemm", hardness, || {
     let a = nd::aview1(&la[..]).into_shape(shape).unwrap();
     let b = nd::aview1(&lb[..]).into_shape(shape).unwrap();
     let mut c = nd::aview_mut1(&mut nd_lc[..]).into_shape(shape).unwrap();

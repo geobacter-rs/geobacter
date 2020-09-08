@@ -7,7 +7,7 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 
-use log::*;
+use tracing::*;
 
 use grt_core::AcceleratorTargetDesc;
 use grt_core::codegen::*;
@@ -111,7 +111,6 @@ impl PlatformCodegen for VkPlatformCodegen {
       obj
     } else {
       // fallback to invoking llc manually:
-      // TODO send LLVM patches upstream so that amd-comgr is useful for this.
 
       let bc = codegen.take_bitcode()
         .expect("no object output");
@@ -204,10 +203,10 @@ impl PlatformCodegen for VkPlatformCodegen {
       let lang_items = LangItems::new(tcx);
 
       let inst = Instance::mono(tcx, id);
-      let ty = inst.monomorphic_ty(tcx);
+      let ty = inst.ty(tcx, ParamEnv::reveal_all());
       // check for function types. We don't attach any spirv
       // metadata to functions.
-      let root = match ty.kind {
+      let root = match ty.kind() {
         Adt(def, _) => lang_items.get_item(def.did),
         _ => None,
       };
@@ -290,8 +289,8 @@ struct LangItems {
 impl LangItems {
   fn new(tcx: TyCtxt) -> Self {
     LangItems {
-      maybe_uninit: tcx.require_lang_item(LangItem::MaybeUninitLangItem, None),
-      unsafe_cell: tcx.require_lang_item(LangItem::UnsafeCellTypeLangItem, None),
+      maybe_uninit: tcx.require_lang_item(LangItem::MaybeUninit, None),
+      unsafe_cell: tcx.require_lang_item(LangItem::UnsafeCell, None),
       builtin: tcx.require_lang_item(LangItem::SpirvBuiltin, None),
 
       builtin_input: tcx.require_lang_item(LangItem::SpirvInput, None),
@@ -333,12 +332,12 @@ impl VkPlatformCodegen {
                                    layout: TyAndLayout<'tcx>)
     -> SpirVAttrNode
   {
-    info!("build_spirv_ty_metadata: ty.kind = {:?}", layout.ty.kind);
+    info!("build_spirv_ty_metadata: ty.kind = {:?}", layout.ty.kind());
 
     let reveal_all = ParamEnv::reveal_all();
     let lcx = LayoutCx { tcx, param_env: reveal_all, };
 
-    let node = match layout.ty.kind {
+    let node = match *layout.ty.kind() {
       Bool | Char | Int(_) | Uint(_) | Float(_) => {
         default_node()
       }
@@ -447,8 +446,8 @@ impl VkPlatformCodegen {
                                 inst: Instance<'tcx>)
     -> SpirVAttrs
   {
-    let ty = inst.monomorphic_ty(tcx);
     let reveal_all = ParamEnv::reveal_all();
+    let ty = inst.ty(tcx, reveal_all);
     let layout = tcx.layout_of(reveal_all.and(ty))
       .unwrap();
     let mut node = Self::build_spirv_ty_metadata(tcx, lang_items,
@@ -457,7 +456,7 @@ impl VkPlatformCodegen {
     let mut attrs = SpirVAttrs::default();
 
     // The following things are only permissible on top level statics/globals
-    match layout.ty.kind {
+    match *layout.ty.kind() {
       Adt(adt_def, substs) if adt_def.did == lang_items.builtin => {
         // This is the `RawBuiltin` structure. We need to extract the `ID` constant
         // param and pass that to the builtin metadata.

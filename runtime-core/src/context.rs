@@ -10,7 +10,8 @@ use indexvec::{Idx, IndexVec};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard, MappedRwLockReadGuard,
                   RwLockReadGuard, RwLockWriteGuard, };
 
-use crate::rustc_data_structures::rayon::ThreadPoolBuilder;
+use rustc_span::SessionGlobals;
+use rustc_data_structures::rayon::ThreadPoolBuilder;
 
 use crate::{Accelerator, AcceleratorId, AcceleratorTargetDesc, Device};
 use crate::codegen::{PlatformCodegen, CodegenDriver, PKernelDesc};
@@ -58,7 +59,7 @@ impl AsyncCodegenMetadataLoader {
 /// This structure should be used like you'd use a singleton.
 struct ContextData {
   #[allow(dead_code)]
-  syntax_globals: Arc<rustc_ast::attr::Globals>,
+  session_globals: Arc<SessionGlobals>,
   metadata: AsyncCodegenMetadataLoader,
 
   next_accel_id: AtomicUsize,
@@ -86,9 +87,9 @@ impl Context {
 
     crate::rustc_driver::init_rustc_env_logger();
 
-    let syntax_globals = rustc_ast::attr::Globals::new(Edition::Edition2018);
-    let syntax_globals = Arc::new(syntax_globals);
-    let pool_globals = syntax_globals.clone();
+    let session_globals = rustc_span::SessionGlobals::new(Edition::Edition2018);
+    let session_globals = Arc::new(session_globals);
+    let pool_globals = session_globals.clone();
 
     ThreadPoolBuilder::new()
       // give us a huge stack (for codegen's use):
@@ -105,9 +106,9 @@ impl Context {
         }
         let pool_globals = pool_globals.clone();
         b.spawn(move || {
-          pool_globals.with(|| {
+          rustc_span::SESSION_GLOBALS.set(&*pool_globals, move || {
             tb.run()
-          })
+          });
         })?;
 
         Ok(())
@@ -122,7 +123,7 @@ impl Context {
       translators,
     };
     let data = ContextData {
-      syntax_globals,
+      session_globals,
       metadata: AsyncCodegenMetadataLoader::default(),
 
       next_accel_id: AtomicUsize::new(0),
@@ -137,6 +138,24 @@ impl Context {
 
   pub(crate) fn load_metadata(&self) -> LoadedMetadataResult {
     self.0.metadata.load()
+  }
+
+  #[doc(hidden)]
+  #[inline(always)]
+  pub fn with_rustc_span_globals<F, R>(&self, f: F) -> R
+    where F: FnOnce() -> R + Send,
+          R: Send,
+  {
+    use rustc_span::SESSION_GLOBALS;
+
+    let mut out = None;
+    rustc_data_structures::rayon::scope(|s| {
+      s.spawn(|_| {
+        let o = SESSION_GLOBALS.set(&*self.0.session_globals, f);
+        out = Some(o);
+      });
+    });
+    out.unwrap()
   }
 
   pub fn downgrade_ref(&self) -> WeakContext {

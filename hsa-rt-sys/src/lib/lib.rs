@@ -1,7 +1,7 @@
 #![feature(const_fn)]
 
 #![allow(non_upper_case_globals, non_camel_case_types,
-         non_snake_case, intra_doc_link_resolution_failure)]
+         non_snake_case, broken_intra_doc_links)]
 
 use std::cmp::Ordering;
 

@@ -1,12 +1,13 @@
 
+use std::alloc::*;
 use std::ptr::NonNull;
 
-use alloc_wg::alloc::*;
 use alloc_wg::vec::Vec;
 
 use hsa_rt::mem::region::RegionAlloc;
 
 use super::*;
+use smallvec::alloc::slice::from_raw_parts;
 
 pub type ArgsBox<T> = alloc_wg::boxed::Box<T, hsa_rt::mem::region::RegionAlloc>;
 
@@ -161,33 +162,28 @@ pub struct ArgsPoolAlloc<P>(pub(super) P)
 unsafe impl<P> AllocRef for ArgsPoolAlloc<P>
   where P: Deref<Target = ArgsPool>,
 {
-  fn alloc(&mut self, _layout: Layout, _init: AllocInit)
-    -> Result<MemoryBlock, AllocErr>
-  {
+  #[inline(always)]
+  fn alloc(&mut self, _layout: Layout) -> Result<NonNull<[u8]>, AllocErr> {
     Err(AllocErr)
   }
+  #[inline(always)]
   unsafe fn dealloc(&mut self, _ptr: NonNull<u8>, _layout: Layout) {
     // no-op
   }
 
-  unsafe fn grow(&mut self, _ptr: NonNull<u8>,
-                 _layout: Layout, _new_size: usize,
-                 _placement: ReallocPlacement,
-                 _init: AllocInit)
-    -> Result<MemoryBlock, AllocErr>
-  {
-    Err(AllocErr)
-  }
-
+  #[inline(always)]
   unsafe fn shrink(&mut self, ptr: NonNull<u8>,
-                   _layout: Layout,
-                   new_size: usize,
-                   _placement: ReallocPlacement)
-    -> Result<MemoryBlock, AllocErr>
+                   _old_layout: Layout,
+                   new_layout: Layout)
+    -> Result<NonNull<[u8]>, AllocErr>
   {
-    Ok(MemoryBlock {
-      ptr,
-      size: new_size,
-    })
+    let ptr = if new_layout.size() == 0 {
+      new_layout.dangling()
+    } else {
+      ptr
+    };
+
+    let s = from_raw_parts(ptr.as_ptr(), new_layout.size());
+    Ok(NonNull::from(s))
   }
 }

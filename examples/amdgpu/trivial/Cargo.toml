@@ -5,7 +5,6 @@ name = "examples-amdgpu-trivial"
 version = "0.1.0"
 
 [dependencies]
-env_logger = "0.6.0"
 nd = { version = "0.13.0", package = "ndarray", features = ["rayon"] }
 rand = { version = "0.7.0", features = ["small_rng", ] }
 grt-core = { version = "1.0.0", package = "geobacter-runtime-core" }

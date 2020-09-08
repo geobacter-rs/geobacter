@@ -1,7 +1,7 @@
 
 use super::*;
 
-use alloc_wg::alloc::*;
+use std::alloc::*;
 
 pub struct LapAlloc {
   pub(crate) id: AcceleratorId,
@@ -111,17 +111,17 @@ unsafe impl Send for LapAlloc { }
 unsafe impl Sync for LapAlloc { }
 
 unsafe impl AllocRef for LapAlloc {
-  fn alloc(&mut self, layout: Layout, init: AllocInit)
-    -> Result<MemoryBlock, AllocErr>
+  fn alloc(&mut self, layout: Layout)
+    -> Result<NonNull<[u8]>, AllocErr>
   {
-    let out = self.pool.alloc(layout, init)?;
+    let out = self.pool.alloc(layout)?;
     let bytes = layout.size();
     if bytes == 0 {
       return Ok(out);
     }
 
     unsafe {
-      self.update_access_grants(out.ptr, layout)
+      self.update_access_grants(out.as_non_null_ptr(), layout)
         .ok().ok_or(AllocErr)?;
     }
 
@@ -132,40 +132,52 @@ unsafe impl AllocRef for LapAlloc {
   }
 
   unsafe fn grow(&mut self, ptr: NonNull<u8>,
-                 layout: Layout, new_size: usize,
-                 placement: ReallocPlacement,
-                 init: AllocInit)
-    -> Result<MemoryBlock, AllocErr>
+                 old_layout: Layout, new_layout: Layout)
+    -> Result<NonNull<[u8]>, AllocErr>
   {
-    let new_ptr = self.pool.grow(ptr, layout, new_size,
-                                 placement, init)?;
-    if new_ptr.ptr == ptr {
+    let new = self.pool.grow(ptr, old_layout, new_layout)?;
+    if new.as_non_null_ptr() == ptr {
       // We grew in place; no need to grant access
-      return Ok(new_ptr);
+      return Ok(new);
     }
 
-    self.expect_update_access_grants(new_ptr.ptr, layout);
+    self.expect_update_access_grants(new.as_non_null_ptr(), new_layout);
 
-    Ok(new_ptr)
+    Ok(new)
+  }
+  unsafe fn grow_zeroed(&mut self,
+                        ptr: NonNull<u8>,
+                        old_layout: Layout,
+                        new_layout: Layout)
+                        -> Result<NonNull<[u8]>, AllocErr>
+  {
+    let new = self.pool.grow_zeroed(ptr, old_layout, new_layout)?;
+    if new.as_non_null_ptr() == ptr {
+      // We grew in place; no need to grant access
+      return Ok(new);
+    }
+
+    self.expect_update_access_grants(new.as_non_null_ptr(), new_layout);
+
+    Ok(new)
   }
 
   #[inline(always)]
-  unsafe fn shrink(&mut self, ptr: NonNull<u8>,
-                   layout: Layout,
-                   new_size: usize,
-                   placement: ReallocPlacement)
-    -> Result<MemoryBlock, AllocErr>
+  unsafe fn shrink(&mut self,
+                   ptr: NonNull<u8>,
+                   old_layout: Layout,
+                   new_layout: Layout)
+                   -> Result<NonNull<[u8]>, AllocErr>
   {
     // We don't need to update the access list here
-    let new = self.pool.shrink(ptr, layout, new_size,
-                               placement)?;
-    if new.ptr == ptr {
+    let new = self.pool.shrink(ptr, old_layout, new_layout)?;
+    if new.as_non_null_ptr() == ptr {
       // in place; no need to grant access
       return Ok(new);
     }
 
-    if new_size != 0 {
-      self.expect_update_access_grants(new.ptr, layout);
+    if new_layout.size() != 0 {
+      self.expect_update_access_grants(new.as_non_null_ptr(), new_layout);
     }
 
     Ok(new)

@@ -31,7 +31,7 @@ use rustc_session::config::OutputFilenames;
 use rustc_data_structures::fx::{FxHashMap};
 use rustc_data_structures::sync::{Lrc, WorkerLocal, };
 use rustc_feature as feature_gate;
-use rustc_hir::def_id::{CrateNum, DefId, DefIdMap };
+use rustc_hir::def_id::{CrateNum, DefId, DefIdMap, LocalDefId};
 use rustc_metadata;
 use rustc_metadata::{creader::CrateLoader, creader::CStore, };
 use rustc_incremental;
@@ -269,7 +269,10 @@ impl<P> WorkerTranslatorData<P>
     where F: FnOnce(Session, CStore) -> Result<R, error::PError<P>> + Send,
           R: Send,
   {
-    self::util::on_global_thread_pool(|| {
+    use rustc_data_structures::rayon::*;
+    use rustc_session::{DiagnosticOutput, Limit};
+
+    let f = move || {
       let metadata = self.context.load_metadata()
         .map_err(error::Error::LoadMetadata)?;
 
@@ -279,18 +282,21 @@ impl<P> WorkerTranslatorData<P>
 
 
       let registry = rustc_driver::diagnostics_registry();
-      let mut sess = rustc_session::build_session(opts, None, registry);
+      let diag = DiagnosticOutput::Default;
+      let lint_caps = Default::default();
+      let mut sess = rustc_session::build_session(opts, None, registry,
+                                                  diag, lint_caps, None);
 
-      sess.crate_types.set(sess.opts.crate_types.clone());
-      sess.recursion_limit.set(512);
-      sess.type_length_limit.set(1048576);
-      sess.const_eval_limit.set(1_000_000);
+      sess.init_crate_types(sess.opts.crate_types.clone());
+      sess.recursion_limit.set(Limit::new(512)).unwrap();
+      sess.type_length_limit.set(Limit::new(1048576)).unwrap();
+      sess.const_eval_limit.set(Limit::new(1_000_000)).unwrap();
 
       sess.init_features(feature_gate::Features::default());
 
       // TODO hash the accelerator target desc
       let dis = self::util::compute_crate_disambiguator(&sess);
-      sess.crate_disambiguator.set(dis);
+      sess.crate_disambiguator.set(dis).unwrap();
       self.target_desc.rustc_target_options(&mut sess.target.target);
 
       // initialize the cstore for this codegen:
@@ -317,7 +323,13 @@ impl<P> WorkerTranslatorData<P>
       }
 
       f(sess, cstore)
-    })
+    };
+
+    if current_thread_index().is_none() {
+      self.context.with_rustc_span_globals(f)
+    } else {
+      f()
+    }
   }
   fn codegen_kernel(&self, desc: PKernelDesc<P>)
     -> Result<Arc<PCodegenResults<P>>, error::PError<P>>
@@ -387,6 +399,7 @@ impl<P> WorkerTranslatorData<P>
     -> Result<PCodegenResults<P>, error::PError<P>>
   {
     use self::util::get_codegen_backend;
+    use rustc_hir::definitions::Definitions;
 
     let context = &self.context;
 
@@ -445,7 +458,10 @@ impl<P> WorkerTranslatorData<P>
     let resolver = Resolver::new_with_cloader(&sess, &ast_krate, crate_name,
                                               &resolver_arenas, crate_loader);
     let mut resolutions = resolver.into_outputs();
-    let definitions = mem::take(&mut resolutions.definitions);
+    let definitions: &Definitions = arenas.alloc(mem::replace(
+      &mut resolutions.definitions,
+      Definitions::new(crate_name, sess.local_crate_disambiguator()),
+    ));
 
     let mut intrinsics = IntrinsicsMap::default();
     {
@@ -493,8 +509,11 @@ impl<P> WorkerTranslatorData<P>
       &out,
       Some(driver_data),
     );
+    let icx = ty::tls::ImplicitCtxt::new(&gcx);
 
-    let results: Result<PCodegenResults<P>, PError<P>> = ty::tls::enter_global(&gcx, |tcx| {
+    let results: Result<PCodegenResults<P>, PError<P>> = ty::tls::enter_context(&icx, |icx| {
+      let tcx = icx.tcx;
+
       // Do some initialization of the DepGraph that can only be done with the
       // tcx available.
       tcx.sess.time("dep graph tcx init", || rustc_incremental::dep_graph_tcx_init(tcx));
@@ -584,7 +603,7 @@ pub fn create_rustc_options() -> rustc_session::config::Options {
   opts.debugging_opts.query_dep_graph = true;
   opts.optimize = OptLevel::No;
   opts.optimize = OptLevel::Aggressive;
-  opts.debuginfo = DebugInfo::Full;
+  //opts.debuginfo = DebugInfo::Limited;
 
   let output = (OutputType::Bitcode, None);
   let ir_out = (OutputType::LlvmAssembly, None);
@@ -618,7 +637,6 @@ pub fn create_rustc_options() -> rustc_session::config::Options {
   opts.cli_forced_codegen_units = Some(1);
   opts.incremental = None;
   opts.debugging_opts.verify_llvm_ir = false;
-  opts.debugging_opts.no_landing_pads = true;
   opts.cg.no_prepopulate_passes = false;
   if opts.cg.no_prepopulate_passes {
     opts.cg.passes.push("name-anon-globals".into());
@@ -634,7 +652,6 @@ pub fn create_rustc_options() -> rustc_session::config::Options {
     opts.cg.passes.push("simplifycfg".into());
   }
   opts.debugging_opts.print_llvm_passes = false;
-  opts.cg.llvm_args.push("-expensive-combines".into());
   opts.cg.llvm_args.push("-spec-exec-only-if-divergent-target".into());
   opts.cg.llvm_args.push("-amdgpu-early-inline-all".into());
   opts.cg.llvm_args.push("-amdgpu-prelink".into());
@@ -693,6 +710,7 @@ pub fn create_empty_hir_crate<'hir>() -> rustc_hir::Crate<'hir> {
     modules,
     non_exported_macro_attrs: Default::default(),
     proc_macros: Default::default(),
+    trait_map: Default::default(),
   }
 }
 
@@ -753,7 +771,7 @@ impl<P> WorkerTranslatorData<P>
       },
       crate_disambiguator: |tcx, cnum| {
         assert_eq!(cnum, LOCAL_CRATE);
-        tcx.sess.crate_disambiguator.borrow().clone()
+        tcx.sess.local_crate_disambiguator()
       },
       native_libraries: |_tcx, cnum| {
         assert_eq!(cnum, LOCAL_CRATE);
@@ -804,7 +822,7 @@ impl<P> WorkerTranslatorData<P>
             // modify the abi:
             let sig = FnSig {
               abi: pd.target_desc.kernel_abi.clone(),
-              ..*sig.skip_binder()
+              ..sig.skip_binder()
             };
             Binder::bind(sig)
           } else {
@@ -873,20 +891,23 @@ impl<P> WorkerTranslatorData<P>
         })
       },
       stubbed_instance: |tcx, inst| {
-        let did = match inst.def {
-          ty::InstanceDef::Item(did) => did,
+        match inst.def {
+          ty::InstanceDef::Item(def) => {
+            if def.as_const_arg().is_some() { return inst; }
+          },
           _ => { return inst; },
         };
 
         DriverData::<P>::with(tcx, move |tcx, pd| {
-          let did = pd.stubber.stub_def_id(tcx, did);
+          let did = pd.stubber.stub_def_id(tcx, inst.def_id());
 
           // we should be able to just replace `stub_instance.substs`
           // with `inst.substs`, assuming our stub signatures match the
           // real functions (which they should).
 
+          let def = ty::WithOptConstParam::unknown(did);
           ty::Instance {
-            def: ty::InstanceDef::Item(did),
+            def: ty::InstanceDef::Item(def),
             substs: inst.substs,
           }
         })
@@ -894,20 +915,20 @@ impl<P> WorkerTranslatorData<P>
       ..*providers
     };
 
-    fn entry_fn<'tcx>(_tcx: TyCtxt<'tcx>, _cnum: CrateNum) -> Option<(DefId, EntryFnType)> {
+    fn entry_fn<'tcx>(_tcx: TyCtxt<'tcx>, _cnum: CrateNum) -> Option<(LocalDefId, EntryFnType)> {
       None
     }
-    fn reachable_non_generics<'tcx>(tcx: TyCtxt<'tcx>, _cnum: CrateNum)
-      -> &'tcx DefIdMap<SymbolExportLevel>
+    fn reachable_non_generics<'tcx>(_tcx: TyCtxt<'tcx>, _cnum: CrateNum)
+      -> DefIdMap<SymbolExportLevel>
     {
       // we need to recodegen everything
-      tcx.arena.alloc(Default::default())
+      Default::default()
     }
-    fn upstream_monomorphizations(tcx: TyCtxt, _cnum: CrateNum)
-      -> &DefIdMap<FxHashMap<SubstsRef, CrateNum>>
+    fn upstream_monomorphizations(_tcx: TyCtxt, _cnum: CrateNum)
+      -> DefIdMap<FxHashMap<SubstsRef, CrateNum>>
     {
       // we never have any upstream monomorphizations.
-      tcx.arena.alloc(Default::default())
+      Default::default()
     }
     fn upstream_monomorphizations_for(_tcx: TyCtxt, _def_id: DefId)
       -> Option<&FxHashMap<SubstsRef, CrateNum>>

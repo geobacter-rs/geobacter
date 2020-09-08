@@ -12,7 +12,7 @@ pub enum Condition {
 }
 impl ConditionItem for Condition {
   fn parse_name_value(tcx: TyCtxt, item: &MetaItem) -> Option<Self> {
-    if item.check_name(Symbol::intern("platform")) &&
+    if item.has_name(Symbol::intern("platform")) &&
       item.value_str().unwrap().as_str() == "spirv" {
       return Some(Condition::Platform);
     }

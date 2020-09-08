@@ -35,6 +35,77 @@ mod link_args {
     btree_map::serialize::<S, InK, InV, OutK, OutV>(this, serializer)
   }
 }
+mod crt_objects {
+  use serde::*;
+  use std::collections::BTreeMap;
+
+  use rustc_target::spec;
+
+  use super::*;
+
+  pub type InK = spec::LinkOutputKind;
+  pub type InV = Vec<String>;
+  pub type OutK = LinkOutputKind;
+  pub type OutV = InV;
+  pub type Output = BTreeMap<InK, InV>;
+
+  pub fn deserialize<'de, D>(deserializer: D)
+                             -> Result<Output, D::Error>
+    where D: Deserializer<'de>,
+  {
+    btree_map::deserialize::<D, InK, InV, OutK, OutV>(deserializer)
+  }
+  pub fn serialize<S>(this: &Output, serializer: S)
+                      -> Result<S::Ok, S::Error>
+    where S: Serializer,
+  {
+    btree_map::serialize::<S, InK, InV, OutK, OutV>(this, serializer)
+  }
+}
+mod crt_objects_fallback {
+  use serde::*;
+
+  use rustc_target::spec;
+
+  use super::*;
+
+  pub type In = spec::crt_objects::CrtObjectsFallback;
+  pub type Out = CrtObjectsFallback;
+  pub type Output = Option<In>;
+
+  pub fn deserialize<'de, D>(deserializer: D) -> Result<Output, D::Error>
+    where D: Deserializer<'de>,
+  {
+    option::deserialize::<D, In, Out>(deserializer)
+  }
+  pub fn serialize<S>(this: &Output, serializer: S) -> Result<S::Ok, S::Error>
+    where S: Serializer,
+  {
+    option::serialize::<S, In, Out>(this, serializer)
+  }
+}
+mod code_model {
+  use serde::*;
+
+  use rustc_target::spec;
+
+  use super::*;
+
+  pub type In = spec::CodeModel;
+  pub type Out = CodeModel;
+  pub type Output = Option<In>;
+
+  pub fn deserialize<'de, D>(deserializer: D) -> Result<Output, D::Error>
+    where D: Deserializer<'de>,
+  {
+    option::deserialize::<D, In, Out>(deserializer)
+  }
+  pub fn serialize<S>(this: &Output, serializer: S) -> Result<S::Ok, S::Error>
+    where S: Serializer,
+  {
+    option::serialize::<S, In, Out>(this, serializer)
+  }
+}
 /// should be `abis`. oops.
 mod apis {
   use serde::*;
@@ -127,14 +198,25 @@ pub struct TargetOptions {
 
   /// Linker arguments that are passed *before* any user-defined libraries.
   #[serde(with = "self::link_args")]
-  pub pre_link_args: ::rustc_target::spec::LinkArgs, // ... unconditionally
-  #[serde(with = "self::link_args")]
-  pub pre_link_args_crt: ::rustc_target::spec::LinkArgs, // ... when linking with a bundled crt
+  pub pre_link_args: ::rustc_target::spec::LinkArgs,
+
   /// Objects to link before all others, always found within the
   /// sysroot folder.
-  pub pre_link_objects_exe: Vec<String>, // ... when linking an executable, unconditionally
-  pub pre_link_objects_exe_crt: Vec<String>, // ... when linking an executable with a bundled crt
-  pub pre_link_objects_dll: Vec<String>, // ... when linking a dylib
+  #[serde(with = "self::crt_objects")]
+  pub pre_link_objects: ::rustc_target::spec::crt_objects::CrtObjects,
+  #[serde(with = "self::crt_objects")]
+  pub post_link_objects: ::rustc_target::spec::crt_objects::CrtObjects,
+  /// Same as `(pre|post)_link_objects`, but when we fail to pull the objects with help of the
+  /// target's native gcc and fall back to the "self-contained" mode and pull them manually.
+  /// See `crt_objects.rs` for some more detailed documentation.
+  #[serde(with = "self::crt_objects")]
+  pub pre_link_objects_fallback: ::rustc_target::spec::crt_objects::CrtObjects,
+  #[serde(with = "self::crt_objects")]
+  pub post_link_objects_fallback: ::rustc_target::spec::crt_objects::CrtObjects,
+  /// Which logic to use to determine whether to fall back to the "self-contained" mode or not.
+  #[serde(with = "self::crt_objects_fallback")]
+  pub crt_objects_fallback: Option<::rustc_target::spec::crt_objects::CrtObjectsFallback>,
+
   /// Linker arguments that are unconditionally passed after any
   /// user-defined but before post_link_objects.  Standard platform
   /// libraries that should be always be linked to, usually go here.
@@ -150,12 +232,16 @@ pub struct TargetOptions {
   pub late_link_args_static: ::rustc_target::spec::LinkArgs,
   /// Objects to link after all others, always found within the
   /// sysroot folder.
-  pub post_link_objects: Vec<String>, // ... unconditionally
-  pub post_link_objects_crt: Vec<String>, // ... when linking with a bundled crt
   /// Linker arguments that are unconditionally passed *after* any
   /// user-defined libraries.
   #[serde(with = "self::link_args")]
   pub post_link_args: ::rustc_target::spec::LinkArgs,
+
+  /// Optional link script applied to `dylib` and `executable` crate types.
+  /// This is a string containing the script, not a path. Can only be applied
+  /// to linkers where `linker_is_gnu` is true.
+  pub link_script: Option<String>,
+
   /// Environment variables to be set before invoking the linker.
   pub link_env: Vec<(String, String)>,
   /// Environment variables to be removed for the linker invocation.
@@ -180,12 +266,15 @@ pub struct TargetOptions {
   pub executables: bool,
   /// Relocation model to use in object file. Corresponds to `llc
   /// -relocation-model=$relocation_model`. Defaults to "pic".
-  pub relocation_model: String,
+  #[serde(with = "RelocModel")]
+  pub relocation_model: ::rustc_target::spec::RelocModel,
   /// Code model to use. Corresponds to `llc -code-model=$code_model`.
-  pub code_model: Option<String>,
+  #[serde(with = "self::code_model")]
+  pub code_model: Option<::rustc_target::spec::CodeModel>,
   /// TLS model to use. Options are "global-dynamic" (default), "local-dynamic", "initial-exec"
   /// and "local-exec". This is similar to the -ftls-model option in GCC/Clang.
-  pub tls_model: String,
+  #[serde(with = "TlsModel")]
+  pub tls_model: ::rustc_target::spec::TlsModel,
   /// Do not emit code that uses the "red zone", if the ABI has one. Defaults to false.
   pub disable_redzone: bool,
   /// Eliminate frame pointers from stack frames if possible. Defaults to true.
@@ -247,6 +336,8 @@ pub struct TargetOptions {
   /// the functions in the executable are not randomized and can be used
   /// during an exploit of a vulnerability in any code.
   pub position_independent_executables: bool,
+  /// Executables that are both statically linked and position-independent are supported.
+  pub static_position_independent_executables: bool,
   /// Determines if the target always requires using the PLT for indirect
   /// library calls or not. This controls the default value of the `-Z plt` flag.
   pub needs_plt: bool,
@@ -273,6 +364,10 @@ pub struct TargetOptions {
   // If we give emcc .o files that are actually .bc files it
   // will 'just work'.
   pub obj_is_bitcode: bool,
+  /// Whether the target requires that emitted object code includes bitcode.
+  pub forces_embed_bitcode: bool,
+  /// Content of the LLVM cmdline section associated with embedded bitcode.
+  pub bitcode_llvm_cmdline: String,
 
   /// Don't use this field; instead use the `.min_atomic_width()` method.
   pub min_atomic_width: Option<u64>,
@@ -290,7 +385,7 @@ pub struct TargetOptions {
   /// A blacklist of ABIs unsupported by the current target. Note that generic
   /// ABIs are considered to be supported on all platforms and cannot be blacklisted.
   #[serde(with = "self::apis")]
-  pub abi_blacklist: Vec<::rustc_target::spec::abi::Abi>,
+  pub unsupported_abis: Vec<::rustc_target::spec::abi::Abi>,
 
   /// Whether or not linking dylibs to a static CRT is allowed.
   pub crt_static_allows_dylibs: bool,
@@ -322,9 +417,6 @@ pub struct TargetOptions {
   /// Whether library functions call lowering/optimization is disabled in LLVM
   /// for this target unconditionally.
   pub no_builtins: bool,
-
-  /// The codegen backend to use for this target, typically "llvm"
-  pub codegen_backend: String,
 
   /// The default visibility for symbols in this target should be "hidden"
   /// rather than "default"
@@ -377,6 +469,142 @@ pub struct TargetOptions {
 
   /// Additional arguments to pass to LLVM, similar to the `-C llvm-args` codegen option.
   pub llvm_args: Vec<String>,
+
+  /// Whether to use legacy .ctors initialization hooks rather than .init_array. Defaults
+  /// to false (uses .init_array).
+  pub use_ctors_section: bool,
+
+  /// Whether the linker is instructed to add a `GNU_EH_FRAME` ELF header
+  /// used to locate unwinding information is passed
+  /// (only has effect if the linker is `ld`-like).
+  pub eh_frame_header: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum CrtObjectsFallback {
+  Musl,
+  Mingw,
+  Wasm,
+}
+impl Into<spec::crt_objects::CrtObjectsFallback> for CrtObjectsFallback {
+  fn into(self) -> spec::crt_objects::CrtObjectsFallback {
+    use self::CrtObjectsFallback::*;
+    use rustc_target::spec::crt_objects::CrtObjectsFallback;
+
+    match self {
+      Musl => CrtObjectsFallback::Musl,
+      Mingw => CrtObjectsFallback::Mingw,
+      Wasm => CrtObjectsFallback::Wasm,
+    }
+  }
+}
+impl From<spec::crt_objects::CrtObjectsFallback> for CrtObjectsFallback {
+  fn from(v: spec::crt_objects::CrtObjectsFallback) -> CrtObjectsFallback {
+    use rustc_target::spec::crt_objects::CrtObjectsFallback::*;
+
+    match v {
+      Musl => CrtObjectsFallback::Musl,
+      Mingw => CrtObjectsFallback::Mingw,
+      Wasm => CrtObjectsFallback::Wasm,
+    }
+  }
+}
+#[derive(Serialize, Deserialize)]
+pub enum LinkOutputKind {
+  /// Dynamically linked non position-independent executable.
+  DynamicNoPicExe,
+  /// Dynamically linked position-independent executable.
+  DynamicPicExe,
+  /// Statically linked non position-independent executable.
+  StaticNoPicExe,
+  /// Statically linked position-independent executable.
+  StaticPicExe,
+  /// Regular dynamic library ("dynamically linked").
+  DynamicDylib,
+  /// Dynamic library with bundled libc ("statically linked").
+  StaticDylib,
+}
+impl Into<spec::LinkOutputKind> for LinkOutputKind {
+  fn into(self) -> spec::LinkOutputKind {
+    use self::LinkOutputKind::*;
+    use rustc_target::spec::LinkOutputKind;
+
+    match self {
+      DynamicNoPicExe => LinkOutputKind::DynamicNoPicExe,
+      DynamicPicExe => LinkOutputKind::DynamicPicExe,
+      StaticNoPicExe => LinkOutputKind::StaticNoPicExe,
+      StaticPicExe => LinkOutputKind::StaticPicExe,
+      DynamicDylib => LinkOutputKind::DynamicDylib,
+      StaticDylib => LinkOutputKind::StaticDylib,
+    }
+  }
+}
+impl From<spec::LinkOutputKind> for LinkOutputKind {
+  fn from(v: spec::LinkOutputKind) -> LinkOutputKind {
+    use rustc_target::spec::LinkOutputKind::*;
+
+    match v {
+      DynamicNoPicExe => LinkOutputKind::DynamicNoPicExe,
+      DynamicPicExe => LinkOutputKind::DynamicPicExe,
+      StaticNoPicExe => LinkOutputKind::StaticNoPicExe,
+      StaticPicExe => LinkOutputKind::StaticPicExe,
+      DynamicDylib => LinkOutputKind::DynamicDylib,
+      StaticDylib => LinkOutputKind::StaticDylib,
+    }
+  }
+}
+#[derive(Serialize, Deserialize)]
+pub enum CodeModel {
+  Tiny,
+  Small,
+  Kernel,
+  Medium,
+  Large,
+}
+impl Into<spec::CodeModel> for CodeModel {
+  fn into(self) -> spec::CodeModel {
+    use self::CodeModel::*;
+    use rustc_target::spec::CodeModel;
+
+    match self {
+      Tiny => CodeModel::Tiny,
+      Small => CodeModel::Small,
+      Kernel => CodeModel::Kernel,
+      Medium => CodeModel::Medium,
+      Large => CodeModel::Large,
+    }
+  }
+}
+impl From<spec::CodeModel> for CodeModel {
+  fn from(v: spec::CodeModel) -> CodeModel {
+    use rustc_target::spec::CodeModel::*;
+
+    match v {
+      Tiny => CodeModel::Tiny,
+      Small => CodeModel::Small,
+      Kernel => CodeModel::Kernel,
+      Medium => CodeModel::Medium,
+      Large => CodeModel::Large,
+    }
+  }
+}
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "::rustc_target::spec::RelocModel")]
+pub enum RelocModel {
+  Static,
+  Pic,
+  DynamicNoPic,
+  Ropi,
+  Rwpi,
+  RopiRwpi,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "::rustc_target::spec::TlsModel")]
+pub enum TlsModel {
+  GeneralDynamic,
+  LocalDynamic,
+  InitialExec,
+  LocalExec,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -645,6 +873,8 @@ pub enum Abi {
   AmdGpuKernel,
   SpirKernel,
   EfiApi,
+  AvrInterrupt,
+  AvrNonBlockingInterrupt,
 
   // Multiplatform / generic ABIs
   Rust,
@@ -676,6 +906,8 @@ impl Into<spec::abi::Abi> for Abi {
       AmdGpuKernel => Abi::AmdGpuKernel,
       SpirKernel => Abi::SpirKernel,
       EfiApi => Abi::EfiApi,
+      AvrInterrupt => Abi::AvrInterrupt,
+      AvrNonBlockingInterrupt => Abi::AvrNonBlockingInterrupt,
 
       // Multiplatform / generic ABIs
       Rust => Abi::Rust,
@@ -708,6 +940,8 @@ impl From<spec::abi::Abi> for Abi {
       AmdGpuKernel => Abi::AmdGpuKernel,
       SpirKernel => Abi::SpirKernel,
       EfiApi => Abi::EfiApi,
+      AvrInterrupt => Abi::AvrInterrupt,
+      AvrNonBlockingInterrupt => Abi::AvrNonBlockingInterrupt,
 
       // Multiplatform / generic ABIs
       Rust => Abi::Rust,
@@ -933,5 +1167,25 @@ mod vec {
       map.serialize_element(&k)?;
     }
     map.end()
+  }
+}
+mod option {
+  use serde::*;
+
+  pub fn deserialize<'de, D, InK, OutK>(deserializer: D) -> Result<Option<InK>, D::Error>
+    where D: Deserializer<'de>,
+          OutK: Deserialize<'de> + Into<InK>,
+  {
+    let i = <Option<OutK>>::deserialize(deserializer)?
+      .map(Into::into);
+    Ok(i)
+  }
+  pub fn serialize<S, InK, OutK>(this: &Option<InK>, serializer: S) -> Result<S::Ok, S::Error>
+    where S: Serializer,
+          InK: Clone + Into<OutK>,
+          OutK: Serialize,
+  {
+    this.clone().map(Into::into)
+      .serialize(serializer)
   }
 }

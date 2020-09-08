@@ -6,15 +6,23 @@
 #![feature(std_internals)]
 #![feature(arbitrary_self_types)]
 #![feature(raw)]
+#![feature(once_cell)]
 #![feature(geobacter, geobacter_intrinsics)]
 
 #![recursion_limit="256"]
 
+extern crate any_key;
+extern crate erased_serde;
+extern crate goblin;
+extern crate indexed_vec as indexvec;
+#[macro_use]
+extern crate tracing;
+extern crate owning_ref;
 extern crate rustc_ast;
-extern crate rustc_metadata;
-extern crate rustc_data_structures;
 extern crate rustc_codegen_ssa;
+extern crate rustc_data_structures;
 extern crate rustc_driver;
+extern crate rustc_errors;
 extern crate rustc_feature;
 extern crate rustc_geobacter;
 extern crate rustc_hir;
@@ -22,6 +30,7 @@ extern crate rustc_incremental;
 extern crate rustc_index;
 extern crate rustc_interface;
 extern crate rustc_lint;
+extern crate rustc_metadata;
 #[macro_use] extern crate rustc_middle;
 extern crate rustc_mir;
 extern crate rustc_mir_build;
@@ -32,38 +41,28 @@ extern crate rustc_session;
 extern crate rustc_span;
 extern crate rustc_symbol_mangling;
 extern crate rustc_target;
-extern crate rustc_ty;
-extern crate rustc_typeck;
 extern crate rustc_trait_selection;
 extern crate rustc_traits;
-extern crate serde;
-extern crate erased_serde;
-extern crate indexed_vec as indexvec;
-extern crate flate2;
-extern crate goblin;
-#[macro_use]
-extern crate log;
+extern crate rustc_ty;
+extern crate rustc_typeck;
 extern crate seahash;
-extern crate owning_ref;
-extern crate any_key;
+extern crate serde;
+
+use rustc_session::config::host_triple;
 
 use std::any::Any;
 use std::error::Error;
 use std::fmt::Debug;
 use std::geobacter::platform::Platform;
 use std::hash::{Hash, Hasher, };
-use std::sync::{Arc, };
+use std::sync::Arc;
 
 use crate::any_key::AnyHash;
-
-use crate::serde::{Serialize, };
-
-use rustc_session::config::host_triple;
-use crate::rustc_target::spec::{Target, TargetTriple, abi::Abi, };
-
-use crate::context::{Context, PlatformModuleData, };
-use crate::codegen::{PlatformCodegen, CodegenDriver};
+use crate::codegen::{CodegenDriver, PlatformCodegen};
 use crate::codegen::products::PCodegenResults;
+use crate::context::{Context, PlatformModuleData, };
+use crate::rustc_target::spec::{abi::Abi, Target, TargetTriple, };
+use crate::serde::Serialize;
 
 pub mod context;
 pub mod codegen;
@@ -250,183 +249,9 @@ impl Hash for AcceleratorTargetDesc {
                             hasher);
     ::std::hash::Hash::hash(&self.kernel_abi, hasher);
 
-    macro_rules! impl_for {
-      ({
-        $(pub $field_name:ident: $field_ty:ty,)*
-      }, $field:expr) => (
-        $(::std::hash::Hash::hash(&$field.$field_name, hasher);)*
-      );
-    }
+    ::std::hash::Hash::hash(&self.target, hasher);
+    ::std::hash::Hash::hash(&self.host_target, hasher);
 
-    impl_for!({
-      pub llvm_target: String,
-      pub target_endian: String,
-      pub target_pointer_width: String,
-      pub target_c_int_width: String,
-      pub target_os: String,
-      pub target_env: String,
-      pub target_vendor: String,
-      pub arch: String,
-      pub data_layout: String,
-      pub linker_flavor: LinkerFlavor,
-    }, self.target);
-    impl_for!({
-      pub llvm_target: String,
-      pub target_endian: String,
-      pub target_pointer_width: String,
-      pub target_c_int_width: String,
-      pub target_os: String,
-      pub target_env: String,
-      pub target_vendor: String,
-      pub arch: String,
-      pub data_layout: String,
-      pub linker_flavor: LinkerFlavor,
-    }, self.host_target);
-
-    // skipped:
-    // pub is_builtin: bool,
-    impl_for!({
-      pub linker: Option<String>,
-      pub lld_flavor: LldFlavor,
-      pub pre_link_args: LinkArgs,
-      pub pre_link_args_crt: LinkArgs,
-      pub pre_link_objects_exe: Vec<String>,
-      pub pre_link_objects_exe_crt: Vec<String>,
-      pub pre_link_objects_dll: Vec<String>,
-      pub late_link_args: LinkArgs,
-      pub post_link_objects: Vec<String>,
-      pub post_link_objects_crt: Vec<String>,
-      pub post_link_args: LinkArgs,
-      pub link_env: Vec<(String, String)>,
-      pub asm_args: Vec<String>,
-      pub cpu: String,
-      pub features: String,
-      pub dynamic_linking: bool,
-      pub only_cdylib: bool,
-      pub executables: bool,
-      pub relocation_model: String,
-      pub code_model: Option<String>,
-      pub tls_model: String,
-      pub disable_redzone: bool,
-      pub eliminate_frame_pointer: bool,
-      pub function_sections: bool,
-      pub dll_prefix: String,
-      pub dll_suffix: String,
-      pub exe_suffix: String,
-      pub staticlib_prefix: String,
-      pub staticlib_suffix: String,
-      pub target_family: Option<String>,
-      pub abi_return_struct_as_int: bool,
-      pub is_like_osx: bool,
-      pub is_like_solaris: bool,
-      pub is_like_windows: bool,
-      pub is_like_msvc: bool,
-      pub is_like_android: bool,
-      pub is_like_emscripten: bool,
-      pub is_like_fuchsia: bool,
-      pub linker_is_gnu: bool,
-      pub allows_weak_linkage: bool,
-      pub has_rpath: bool,
-      pub no_default_libraries: bool,
-      pub position_independent_executables: bool,
-      pub relro_level: RelroLevel,
-      pub archive_format: String,
-      pub allow_asm: bool,
-      pub has_elf_tls: bool,
-      pub obj_is_bitcode: bool,
-      pub min_atomic_width: Option<u64>,
-      pub max_atomic_width: Option<u64>,
-      pub atomic_cas: bool,
-      pub panic_strategy: PanicStrategy,
-      pub abi_blacklist: Vec<Abi>,
-      pub crt_static_allows_dylibs: bool,
-      pub crt_static_default: bool,
-      pub crt_static_respected: bool,
-      pub stack_probes: bool,
-      pub min_global_align: Option<u64>,
-      pub default_codegen_units: Option<u64>,
-      pub trap_unreachable: bool,
-      pub requires_lto: bool,
-      pub singlethread: bool,
-      pub no_builtins: bool,
-      pub codegen_backend: String,
-      pub default_hidden_visibility: bool,
-      pub emit_debug_gdb_scripts: bool,
-      pub requires_uwtable: bool,
-      pub override_export_symbols: Option<Vec<String>>,
-      pub addr_spaces: AddrSpaces,
-    }, self.target.options);
-    impl_for!({
-      pub linker: Option<String>,
-      pub lld_flavor: LldFlavor,
-      pub pre_link_args: LinkArgs,
-      pub pre_link_args_crt: LinkArgs,
-      pub pre_link_objects_exe: Vec<String>,
-      pub pre_link_objects_exe_crt: Vec<String>,
-      pub pre_link_objects_dll: Vec<String>,
-      pub late_link_args: LinkArgs,
-      pub post_link_objects: Vec<String>,
-      pub post_link_objects_crt: Vec<String>,
-      pub post_link_args: LinkArgs,
-      pub link_env: Vec<(String, String)>,
-      pub asm_args: Vec<String>,
-      pub cpu: String,
-      pub features: String,
-      pub dynamic_linking: bool,
-      pub only_cdylib: bool,
-      pub executables: bool,
-      pub relocation_model: String,
-      pub code_model: Option<String>,
-      pub tls_model: String,
-      pub disable_redzone: bool,
-      pub eliminate_frame_pointer: bool,
-      pub function_sections: bool,
-      pub dll_prefix: String,
-      pub dll_suffix: String,
-      pub exe_suffix: String,
-      pub staticlib_prefix: String,
-      pub staticlib_suffix: String,
-      pub target_family: Option<String>,
-      pub abi_return_struct_as_int: bool,
-      pub is_like_osx: bool,
-      pub is_like_solaris: bool,
-      pub is_like_windows: bool,
-      pub is_like_msvc: bool,
-      pub is_like_android: bool,
-      pub is_like_emscripten: bool,
-      pub is_like_fuchsia: bool,
-      pub linker_is_gnu: bool,
-      pub allows_weak_linkage: bool,
-      pub has_rpath: bool,
-      pub no_default_libraries: bool,
-      pub position_independent_executables: bool,
-      pub relro_level: RelroLevel,
-      pub archive_format: String,
-      pub allow_asm: bool,
-      pub has_elf_tls: bool,
-      pub obj_is_bitcode: bool,
-      pub min_atomic_width: Option<u64>,
-      pub max_atomic_width: Option<u64>,
-      pub atomic_cas: bool,
-      pub panic_strategy: PanicStrategy,
-      pub abi_blacklist: Vec<Abi>,
-      pub crt_static_allows_dylibs: bool,
-      pub crt_static_default: bool,
-      pub crt_static_respected: bool,
-      pub stack_probes: bool,
-      pub min_global_align: Option<u64>,
-      pub default_codegen_units: Option<u64>,
-      pub trap_unreachable: bool,
-      pub requires_lto: bool,
-      pub singlethread: bool,
-      pub no_builtins: bool,
-      pub codegen_backend: String,
-      pub default_hidden_visibility: bool,
-      pub emit_debug_gdb_scripts: bool,
-      pub requires_uwtable: bool,
-      pub override_export_symbols: Option<Vec<String>>,
-      pub addr_spaces: AddrSpaces,
-    }, self.host_target.options);
 
     let platform = self.platform.as_any_hash();
     platform.hash(hasher);
@@ -504,9 +329,9 @@ erased_serde::serialize_trait_object!(PlatformTargetDesc);
 
 #[cfg(test)]
 mod test {
-  use super::*;
-
   use serde::*;
+
+  use super::*;
 
   #[derive(Clone, Debug, Serialize, Deserialize, Hash, Eq, PartialEq)]
   pub struct MyTargetDesc;
@@ -528,7 +353,7 @@ mod test {
 
   impl Accelerator for MyAccelerator {
     fn id(&self) -> AcceleratorId { unimplemented!() }
-    fn platform(&self) -> Platform { unimplemented!() }
+    fn platform(&self) -> Option<Platform> { unimplemented!() }
     fn accel_target_desc(&self) -> &Arc<AcceleratorTargetDesc> { unimplemented!() }
     fn set_accel_target_desc(&mut self, _desc: Arc<AcceleratorTargetDesc>) { unimplemented!() }
     fn create_target_codegen(self: &mut Arc<Self>, _ctxt: &Context)

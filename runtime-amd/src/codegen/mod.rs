@@ -291,7 +291,6 @@ impl PlatformCodegen for Codegenner {
                             attrs: &mut CodegenFnAttrs)
   {
     use rustc_attr::InlineAttr;
-    use rustc_middle::middle::codegen_fn_attrs::SpirVAttrs;
     use rustc_middle::ty::*;
     use rustc_session::config::*;
     use rustc_span::symbol::*;
@@ -320,7 +319,7 @@ impl PlatformCodegen for Codegenner {
 
     // XXX this is crude. This sort of "lang_item" should probably be moved into
     // the Geobacter fork so it can be managed in the real `lang_item` system.
-    match tcx.type_of(id).kind {
+    match *tcx.type_of(id).kind() {
       Adt(adt_did, ..) => {
         let rt_item = Symbol::intern("runtime_item");
         let amdgpu = Symbol::intern("amdgpu");
@@ -333,14 +332,14 @@ impl PlatformCodegen for Codegenner {
             _ => { return; },
           };
 
-          if !item.check_name(amdgpu) { return; }
+          if !item.has_name(amdgpu) { return; }
 
           let inner = item.meta_item_list();
           if inner.is_none() { return; }
           let inner = inner.unwrap();
 
           for item in inner.iter() {
-            if !item.check_name(rt_item) {
+            if !item.has_name(rt_item) {
               continue;
             }
 

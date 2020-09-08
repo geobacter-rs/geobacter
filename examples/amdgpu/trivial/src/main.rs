@@ -91,7 +91,6 @@ pub fn time<F, R>(what: &str, f: F) -> R
 }
 
 pub fn main() {
-  env_logger::init();
   let ctxt = time("create context", || {
     Context::new()
       .expect("create context")

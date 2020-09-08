@@ -14,8 +14,6 @@ path = "main.rs"
 hsa-rt = "0.1.0"
 grt-amd  = { version = "1.0.0", package = "geobacter-runtime-amd" }
 nd = { package = "ndarray", version = "0.13.0", features = ["approx"] }
-env_logger = "0.6.2"
 approx = "0.3.2"
-nix = "0.17.0"
 rand = { version = "0.7.3", features = ["small_rng"] }
 num-traits = "0.2.11"

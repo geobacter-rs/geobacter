@@ -1,12 +1,12 @@
-
+use std::alloc::*;
 use std::convert::*;
 use std::ffi::c_void;
-use std::ptr::NonNull;
-
-use crate::alloc_wg::alloc::*;
+use std::ptr::{copy_nonoverlapping, NonNull, null_mut};
+use std::slice::from_raw_parts;
 
 use error::*;
-use super::region::{Region, };
+
+use super::region::Region;
 
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Debug, Hash)]
 pub struct RegionAlloc {
@@ -22,39 +22,47 @@ impl RegionAlloc {
 }
 
 unsafe impl AllocRef for RegionAlloc {
-  fn alloc(&mut self, layout: Layout, init: AllocInit)
-    -> Result<MemoryBlock, AllocErr>
+  fn alloc(&mut self, layout: Layout)
+    -> Result<NonNull<[u8]>, AllocErr>
   {
-    let bytes = layout.size();
-    if bytes == 0 {
-      return Ok(MemoryBlock {
-        ptr: layout.dangling(),
-        size: 0,
-      });
+    unsafe {
+      let bytes = layout.size();
+      if bytes == 0 {
+        let ptr = layout.dangling();
+        let ptr = from_raw_parts(ptr.as_ptr(), 0);
+        return Ok(NonNull::from(ptr));
+      }
+
+      let size = layout.size();
+      let align = layout.align();
+      let layout = if align > self.alignment {
+        layout.pad_to_align()
+      } else {
+        layout
+      };
+
+      let granule_padding = layout.padding_needed_for(self.granule);
+      let len = layout.size().wrapping_add(granule_padding);
+
+      let mut dest = 0 as *mut c_void;
+      let dest_ptr = &mut dest as *mut *mut c_void;
+      check_err!(ffi::hsa_memory_allocate(self.region.0, len as _, dest_ptr))
+        .ok().ok_or(AllocErr)?;
+
+      if dest == null_mut() { return Err(AllocErr); }
+
+      // now align the pointer
+      if align > self.alignment {
+        let dest_ptr = dest as usize;
+
+        let aligned = dest_ptr.wrapping_add(align).wrapping_sub(1) & !align.wrapping_sub(1);
+        assert!(aligned + size <= len);
+        dest = aligned as *mut c_void;
+      }
+
+      let s = from_raw_parts(dest as *mut u8 as *const u8, size);
+      Ok(NonNull::from(s))
     }
-
-    let align = layout.align();
-    if align > self.alignment {
-      return Err(AllocErr);
-    }
-
-    let len = ((bytes - 1) / self.granule + 1) * self.granule;
-
-    let mut dest = 0 as *mut c_void;
-    let dest_ptr = &mut dest as *mut *mut c_void;
-    check_err!(ffi::hsa_memory_allocate(self.region.0, len as _, dest_ptr))
-      .ok().ok_or(AllocErr)?;
-
-    let agent_ptr = NonNull::new(dest as *mut u8)
-      .ok_or(AllocErr)?;
-
-    let mut block = MemoryBlock {
-      ptr: agent_ptr,
-      size: bytes,
-    };
-    block.init(init);
-
-    Ok(block)
   }
   unsafe fn dealloc(&mut self, ptr: NonNull<u8>, layout: Layout) {
     if layout.size() != 0 {
@@ -64,73 +72,91 @@ unsafe impl AllocRef for RegionAlloc {
     }
   }
 
-  unsafe fn grow(&mut self, ptr: NonNull<u8>,
-                 layout: Layout, new_size: usize,
-                 placement: ReallocPlacement,
-                 init: AllocInit)
-    -> Result<MemoryBlock, AllocErr>
+  unsafe fn grow(&mut self,
+                 ptr: NonNull<u8>,
+                 old_layout: Layout,
+                 new_layout: Layout)
+    -> Result<NonNull<[u8]>, AllocErr>
   {
-    let len = layout.size();
-    let mut memory = MemoryBlock {
-      ptr,
-      size: len,
-    };
-    let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
-    if len != 0 {
-      let max = ((len - 1) / self.granule + 1) * self.granule;
-      if max >= new_size {
-        // we can do in-place here
-        memory.size = new_size;
-        memory.init_offset(init, len);
-        return Ok(memory);
+    let new_size = new_layout.size();
+    let old_size = old_layout.size();
+    if new_size < old_size {
+      return Err(AllocErr);
+    }
+    if old_layout.align() < new_layout.align() {
+      return Err(AllocErr);
+    }
+    if old_size != 0 {
+      let inplace_layout = old_layout
+        .align_to(self.granule)
+        .map_err(|_| AllocErr)?
+        .pad_to_align();
+      if new_layout.size() <= inplace_layout.size() {
+        // we can do it in-place here
+        let out_ptr = from_raw_parts(ptr.as_ptr(), new_size);
+        let out_ptr = NonNull::from(out_ptr);
+        return Ok(out_ptr);
       }
     }
 
-    if let ReallocPlacement::InPlace = placement {
-      return Err(AllocErr);
-    }
-
-    let mut new_memory = self.alloc(new_layout,
-                                    AllocInit::Uninitialized)?;
-
-    if len != 0 {
-      std::ptr::copy_nonoverlapping(memory.ptr.as_ptr(),
-                                    new_memory.ptr.as_ptr(),
-                                    len);
-    }
-    new_memory.init_offset(init, len);
-    self.dealloc(memory.ptr, layout);
-
-    Ok(new_memory)
+    let new_ptr = self.alloc(new_layout)?;
+    // SAFETY: because `new_layout.size()` must be greater than or equal to
+    // `old_layout.size()`, both the old and new memory allocation are valid for reads and
+    // writes for `old_layout.size()` bytes. Also, because the old allocation wasn't yet
+    // deallocated, it cannot overlap `new_ptr`. Thus, the call to `copy_nonoverlapping` is
+    // safe. The safety contract for `dealloc` must be upheld by the caller.
+    copy_nonoverlapping(ptr.as_ptr(), new_ptr.as_mut_ptr(),
+                        old_size);
+    self.dealloc(ptr, old_layout);
+    Ok(new_ptr)
+  }
+  unsafe fn grow_zeroed(&mut self,
+                        ptr: NonNull<u8>,
+                        old_layout: Layout,
+                        new_layout: Layout)
+    -> Result<NonNull<[u8]>, AllocErr>
+  {
+    let mut new_ptr = self.grow(ptr, old_layout, new_layout)?;
+    let t = &mut new_ptr.as_mut()[old_layout.size()..new_layout.size()];
+    t.as_mut_ptr()
+      .write_bytes(0, t.len());
+    Ok(new_ptr)
   }
 
-  unsafe fn shrink(&mut self, ptr: NonNull<u8>,
-                   layout: Layout,
-                   new_size: usize,
-                   placement: ReallocPlacement)
-    -> Result<MemoryBlock, AllocErr>
+  unsafe fn shrink(&mut self,
+                   ptr: NonNull<u8>,
+                   old_layout: Layout,
+                   new_layout: Layout)
+    -> Result<NonNull<[u8]>, AllocErr>
   {
-    let min = || ((layout.size() - 1) / self.granule + 0) * self.granule;
-    if ReallocPlacement::InPlace == placement || layout.size() == 0 || new_size >= min() {
-      // we can do in-place here, possibly wasting some space
-      return Ok(MemoryBlock {
-        ptr,
-        size: new_size,
-      });
+    let old_size = old_layout.size();
+    let new_size = new_layout.size();
+    if new_size > old_size {
+      return Err(AllocErr);
+    }
+    if old_layout.align() < new_layout.align() {
+      return Err(AllocErr);
+    }
+    if new_size == 0 {
+      self.dealloc(ptr, old_layout);
+      return self.alloc(new_layout);
     }
 
-    let new_layout = Layout::from_size_align_unchecked(new_size, layout.align());
-    let new_memory = self.alloc(new_layout,
-                                AllocInit::Uninitialized)?;
-    if new_size != 0 {
-      std::ptr::copy_nonoverlapping(ptr.as_ptr(),
-                                    new_memory.ptr.as_ptr(),
-                                    new_size);
+    let min = old_size & !self.granule;
+    if new_size >= min {
+      // shrink by doing nothing
+      let ptr = from_raw_parts(ptr.as_ptr(), new_size);
+      return Ok(NonNull::from(ptr));
     }
 
-    self.dealloc(ptr, layout);
+    // shrink by reallocating
+    let new_ptr = self.alloc(new_layout)?;
+    copy_nonoverlapping(ptr.as_ptr(),
+                        new_ptr.as_non_null_ptr().as_ptr(),
+                        new_size);
+    self.dealloc(ptr, old_layout);
 
-    Ok(new_memory)
+    Ok(new_ptr)
   }
 }
 

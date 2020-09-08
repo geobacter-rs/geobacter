@@ -20,6 +20,7 @@
 #![feature(raw)]
 #![feature(dropck_eyepatch)]
 #![feature(allocator_api)]
+#![feature(slice_ptr_get)]
 #![feature(geobacter)]
 
 // For textures:
@@ -50,7 +51,7 @@ extern crate rustc_hir;
 extern crate rustc_middle;
 extern crate rustc_session;
 extern crate rustc_target;
-extern crate serialize as rustc_serialize;
+extern crate rustc_serialize;
 extern crate rustc_span;
 
 extern crate hsa_rt;
@@ -799,7 +800,7 @@ impl fmt::Debug for HsaAmdGpuAccel {
 impl HsaAmdGpuAccel {
   fn init_target_desc(&mut self) -> Result<(), Error> {
     use rustc_target::spec::{PanicStrategy, abi::Abi, AddrSpaceKind,
-                             AddrSpaceIdx, AddrSpaceProps, };
+                             AddrSpaceIdx, AddrSpaceProps, CodeModel};
 
     let desc = Arc::get_mut(&mut self.target_desc).unwrap();
 
@@ -839,7 +840,6 @@ impl HsaAmdGpuAccel {
                           v24:32-v32:32-v48:64-v96:128-v192:256-\
                           v256:256-v512:512-v1024:1024-v2048:2048-\
                           n32:64-S32-A5-ni:7".into();
-    target.options.codegen_backend = "llvm".into();
     target.options.panic_strategy = PanicStrategy::Abort;
     target.options.trap_unreachable = true;
     target.options.position_independent_executables = true;
@@ -852,7 +852,7 @@ impl HsaAmdGpuAccel {
     target.options.is_builtin = false;
     target.options.simd_types_indirect = false;
     target.options.stack_probes = false;
-    target.options.code_model = Some("small".into());
+    target.options.code_model = Some(CodeModel::Small);
     {
       let addr_spaces = &mut target.options.addr_spaces;
       addr_spaces.clear();

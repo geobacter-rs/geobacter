@@ -6,7 +6,6 @@ use num_traits::cast::{cast, NumCast};
 
 use rustc_ast::attr::mk_attr_outer;
 use rustc_ast::ast::{self, NestedMetaItem, MetaItem, MetaItemKind};
-use rustc_data_structures::sync::Lrc;
 use rustc_span::{Span, sym, Symbol};
 use rustc_middle::ty::TyCtxt;
 use rustc_hir::def_id::DefId;
@@ -76,21 +75,21 @@ impl<T> ConditionalExpr<T>
           }
         }
 
-        if item.check_name(sym::any) {
+        if item.has_name(sym::any) {
           let vals = list.iter()
             .filter_map(|sub_item| {
               Self::parse_from_attrs(tcx, sub_item.meta_item().unwrap())
             })
             .collect();
           return Some(ConditionalExpr::Any(vals));
-        } else if item.check_name(sym::all) {
+        } else if item.has_name(sym::all) {
           let vals = list.iter()
             .filter_map(|sub_item| {
               Self::parse_from_attrs(tcx, sub_item.meta_item().unwrap())
             })
             .collect();
           return Some(ConditionalExpr::All(vals));
-        } else if item.check_name(sym::not) {
+        } else if item.has_name(sym::not) {
           if list.len() != 1 {
             tcx.sess.span_err(item.span, "expected 1 cfg-pattern");
             return None;
@@ -176,7 +175,7 @@ pub fn geobacter_attrs<F>(tcx: TyCtxt<'_>, did: DefId,
 {
   let attrs = tcx.get_attrs(did);
   for attr in attrs.iter() {
-    if !attr.check_name(Symbol::intern("geobacter")) { continue; }
+    if !attr.has_name(Symbol::intern("geobacter")) { continue; }
 
     let list = match attr.meta_item_list() {
       Some(list) => list,
@@ -201,20 +200,20 @@ pub fn geobacter_attrs<F>(tcx: TyCtxt<'_>, did: DefId,
 /// the list of attributes will probably need to originate from the unmodified
 /// providers.
 pub fn geobacter_cfg_attrs<'tcx, T>(tcx: TyCtxt<'tcx>,
-                                    previous: Lrc<[ast::Attribute]>,
+                                    previous: &'tcx [ast::Attribute],
                                     root_conditions: &[T])
-  -> Lrc<[ast::Attribute]>
+  -> &'tcx [ast::Attribute]
   where T: ConditionItem,
 {
   let gattr = Symbol::intern("geobacter_attr");
-  if previous.iter().all(|item| !item.check_name(gattr) ) {
+  if previous.iter().all(|item| !item.has_name(gattr) ) {
     return previous;
   }
 
   let mut out = Vec::with_capacity(previous.len());
 
   for item in previous.iter() {
-    if !item.check_name(gattr) {
+    if !item.has_name(gattr) {
       out.push(item.clone());
       continue;
     }
@@ -259,5 +258,5 @@ pub fn geobacter_cfg_attrs<'tcx, T>(tcx: TyCtxt<'tcx>,
     }
   }
 
-  Lrc::from(out)
+  tcx.arena.alloc_from_iter(out.into_iter())
 }
