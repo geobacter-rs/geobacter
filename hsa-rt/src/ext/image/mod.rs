@@ -549,8 +549,10 @@ fn check_slice<T, G>(slice: &[T], g: &G, layout: &Linear, region: &Region<G>)
   if slice_len > slice.len() {
     Err(Error::InvalidArgument)
   } else {
-    let row_pitch = size_of::<T>() * row_stride;
-    let slice_pitch = size_of::<T>() * slice_stride;
+    let row_pitch = size_of::<T>().checked_mul(row_stride)
+      .ok_or(Error::Overflow)?;
+    let slice_pitch = size_of::<T>().checked_mul(slice_stride)
+      .ok_or(Error::Overflow)?;
     Ok((row_pitch, slice_pitch))
   }
 }
