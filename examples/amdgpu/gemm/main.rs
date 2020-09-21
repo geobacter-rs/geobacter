@@ -20,11 +20,12 @@ use std::geobacter::spec_param as param;
 use std::mem::{size_of, drop};
 use std::num::NonZeroU16;
 use std::ops::*;
+use std::slice::{from_raw_parts, from_raw_parts_mut};
 use std::time::*;
 
 type ImageRef<'a, A> = grt_amd::texture::ImageRef<'a,
   A,
-  Format<ETy, channel_order::R>,
+  Format<ETy, channel_order::RGBA>,
   TwoD<u32>,
   layout::Opaque,
 >;
@@ -46,8 +47,8 @@ impl<'b> Completion for GemmArgs<'b> {
 impl<'b> Kernel for GemmArgs<'b> {
   type Grid = Dim2D<Range<u32>>;
   const WORKGROUP: <Self::Grid as GridDims>::Workgroup = Dim2D {
-    x: ..TILE_S as _,
-    y: ..RTS as _,
+    x: ..RTS as _,
+    y: ..TILE_S as _,
   };
   type Queue = DeviceSingleQueue;
 
@@ -100,7 +101,7 @@ fn mod_block_k() -> bool {
   }
 }
 
-const WPT: usize = 1;
+const WPT: usize = 4;
 const RTS: usize = TILE_S / WPT;
 
 const TILE_S: usize = 32;
@@ -135,40 +136,23 @@ fn gemm_v1<A1, A2>(vp: VectorParams<Dim2D<Range<u32>>>,
 
   let mut acc = [0u32.as_(); WPT];
 
-  let wg_size = Dim2D::from(TILE_S as u16);
-  let wg = vp.wg_id().as_::<u16>();
+  let wi = vp.wi();
+  let wg_id = vp.wg_id().as_::<u16>();
 
-  let Dim2D { x: wi_x, y: wi_y, } = vp.wi() * Dim2D {
-    x: 1,
-    y: wpt as u16,
-  };
-  let Dim2D { x: wg_x, y: wg_y, } = wg * wg_size;
-
-  let g_x = wg_x + wi_x;
-  let g_y = wg_y + wi_y;
+  let g_x = wg_id.x * (RTS as u16) + wi.x;
+  let g_y = wg_id.y * (TILE_S as u16) + wi.y;
 
   let mut k = 0u16;
   while k < stride {
     // init SMEM:
-    let mut bt = [0u32.as_(); WPT];
-    let mut at = [0u32.as_(); WPT];
+    let ao_y = g_y;
+    let ao_x = k / wpt + wi.x;
 
-    let mut w = 0u16;
-    while w < wpt {
-      // Note: we write A into LDS transposed
-      let ao_y = g_y + w;
-      let ao_x = k + wi_x;
+    let bo_y = k + wi.y;
+    let bo_x = wi.x + wg_id.x * (RTS as u16);
 
-      let bo_y = k + wi_y + w;
-      let bo_x = g_x;
-
-      at[w as usize] = a.load((ao_x as _, ao_y as _));
-      bt[w as usize] = b.load((bo_x as _, bo_y as _));
-
-      w += 1;
-    }
-
-    k += TILE_S as u16;
+    let at: [ETy; WPT] = a.load((ao_x as _, ao_y as _));
+    let bt: [ETy; WPT] = b.load((bo_x as _, bo_y as _));
 
     let sa = sa.init(&vp, at);
     let sb = sb.init(&vp, bt);
@@ -183,8 +167,8 @@ fn gemm_v1<A1, A2>(vp: VectorParams<Dim2D<Range<u32>>>,
 
       let mut kci = 0u16;
       while kci < (TILE_S as u16) {
-        let va = sa[wi_y as usize][kci as usize];
-        let vbs = sb[kci as usize][vp.wi().x as usize];
+        let va = sa[wi.y as usize][kci as usize];
+        let vbs = &sb[kci as usize][wi.x as usize];
 
         let mut w = 0u16;
         while w < wpt {
@@ -200,18 +184,13 @@ fn gemm_v1<A1, A2>(vp: VectorParams<Dim2D<Range<u32>>>,
     drop(sa);
     // avoid the second barrier:
     unsafe { sb.unsynced_drop() }
+
+    k += TILE_S as u16;
   }
 
-  // copy sc back to C:
-  let mut w = 0u16;
-  while w < wpt {
-    let i_y = g_y + w;
-    let i_x = g_x;
-    if mod_k || (i_y < stride && i_x < stride) {
-      c.store((i_x as _, i_y as _), [acc[w as usize]; 1]);
-    }
-
-    w += 1;
+  // Write output:
+  if mod_k || (g_y < stride && g_x * wpt < stride) {
+     c.store((g_x as _, g_y as _), acc);
   }
 }
 
@@ -304,9 +283,9 @@ pub fn main() {
   let dev = HsaAmdGpuAccel::nth_device(&ctxt, 0)
     .expect("no device");
 
-  // XXX this is the maximum image size along a single side: 14bits, the hw limit as of GFX9.
+  // This is the maximum image size along a single side: 14bits, the hw limit as of GFX9.
   const AXIS_SIZE_: usize = 4 * 4096;
-  const AXIS_SIZE: usize = ((AXIS_SIZE_ - 1) / TILE_S) * TILE_S;
+  const AXIS_SIZE: usize = ((AXIS_SIZE_ - 1) / TILE_S + 1) * TILE_S;
   const SIZE: usize = AXIS_SIZE * AXIS_SIZE;
   const GRID: usize = AXIS_SIZE;
 
@@ -346,7 +325,7 @@ pub fn main() {
   let mut nd_lc = nd_lc.into_boxed_slice();
 
   let mut rng = SmallRng::seed_from_u64(1);
-  let dist = Uniform::new(0u32 as ETy, 1u32 as ETy);
+  let dist = Uniform::new(-1.0 as ETy, 1.0 as ETy);
   let mut rng_mat = |l: &mut LapVec<_>| {
     let mut l = nd::aview_mut1(&mut l[..]).into_shape(shape).unwrap();
     for mut l in l.axis_iter_mut(nd::Axis(0)) {
@@ -371,7 +350,7 @@ pub fn main() {
   }
 
   let geometry = geometry::TwoD {
-    width: GRID as u32,
+    width: GRID as u32 / 4,
     height: GRID as u32,
   };
   let mut a_img = dev
@@ -381,9 +360,13 @@ pub fn main() {
     .create_ro_texture(geometry)
     .expect("create b_img");
 
-  a_img.import_all_packed(&la)
+  a_img.import_all_packed(unsafe {
+    from_raw_parts(la.as_ptr() as *const [f32; 4], la.len() / 4)
+  })
     .expect("a_img import");
-  b_img.import_all_packed(&lb)
+  b_img.import_all_packed(unsafe {
+    from_raw_parts(lb.as_ptr() as *const [f32; 4], lb.len() / 4)
+  })
     .expect("b_img import");
 
   let c_img = dev
@@ -419,7 +402,7 @@ pub fn main() {
       completion: kernel_signal,
     };
     let grid = Dim2D {
-      x: 0..GRID as u32,
+      x: 0..GRID as u32 / 4,
       y: 0..GRID as u32,
     };
     let _wait = unsafe {
@@ -431,7 +414,9 @@ pub fn main() {
   drop(a_img);
   drop(b_img);
 
-  c_img.export_all_packed(&mut lc)
+  c_img.export_all_packed(unsafe {
+    from_raw_parts_mut(lc.as_mut_ptr() as *mut [f32; 4], lc.len() / 4)
+  })
     .expect("export gemm results");
   drop(c_img);
 
@@ -447,6 +432,6 @@ pub fn main() {
                                 0.0 as ETy, &mut c);
 
     let lc = nd::aview1(&lc[..]).into_shape(shape).unwrap();
-    approx::assert_relative_eq!(c, lc, epsilon = 500000.0 * std::f32::EPSILON);
+    approx::assert_relative_eq!(c, lc, epsilon = (AXIS_SIZE as f32) * std::f32::EPSILON);
   });
 }
