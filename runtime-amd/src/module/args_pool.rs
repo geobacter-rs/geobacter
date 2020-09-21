@@ -1,13 +1,11 @@
 
 use std::alloc::*;
 use std::ptr::NonNull;
+use std::slice::from_raw_parts;
 
 use alloc_wg::vec::Vec;
 
-use hsa_rt::mem::region::RegionAlloc;
-
 use super::*;
-use smallvec::alloc::slice::from_raw_parts;
 
 pub type ArgsBox<T> = alloc_wg::boxed::Box<T, hsa_rt::mem::region::RegionAlloc>;
 
@@ -42,7 +40,7 @@ impl ArgsPool {
     // bump the size to the minimum allocation size:
     let bytes = max(pool_min_alloc, bytes);
 
-    let mut arena: Vec<u8, RegionAlloc> =
+    let mut arena: Vec<u8, _> =
       Vec::try_with_capacity_in(bytes, kernargs_region)?;
     unsafe {
       arena.set_len(bytes);
@@ -65,7 +63,7 @@ impl ArgsPool {
     // bump the size to the minimum allocation size:
     let bytes = max(pool_min_alloc, bytes);
 
-    let mut arena: Vec<u8, RegionAlloc> =
+    let mut arena: Vec<u8, _> =
       Vec::try_with_capacity_in(bytes, kernargs_region)?;
     unsafe {
       arena.set_len(bytes);
@@ -88,7 +86,7 @@ impl ArgsPool {
     self.start_byte() + self.size()
   }
 
-  pub fn region(&self) -> &RegionAlloc {
+  pub fn region(&self) -> &hsa_rt::mem::region::RegionAlloc {
     self.base.build_alloc()
   }
 
