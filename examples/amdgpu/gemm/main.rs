@@ -147,7 +147,7 @@ fn gemm_v1<A1, A2>(vp: VectorParams<Dim2D<Range<u32>>>,
     let ao_x = k / wpt + wi.x;
 
     let bo_y = k + wi.y;
-    let bo_x = wi.x + wg_id.x * (RTS as u16);
+    let bo_x = g_x;
 
     let mut at: [ETy; WPT] = [0u32.as_(); WPT];
     if mod_k || (ao_y < stride && ao_x * wpt < stride) {
