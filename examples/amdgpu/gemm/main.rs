@@ -36,7 +36,7 @@ struct GemmArgs<'b> {
   a: ImageRef<'b, ReadOnly>,
   b: ImageRef<'b, ReadOnly>,
   c: ImageRef<'b, WriteOnly>,
-  queue: DeviceSingleQueue,
+  queue: DeviceMultiQueue,
   completion: GlobalSignal,
 }
 
@@ -50,7 +50,7 @@ impl<'b> Kernel for GemmArgs<'b> {
     x: ..RTS as _,
     y: ..TILE_S as _,
   };
-  type Queue = DeviceSingleQueue;
+  type Queue = DeviceMultiQueue;
 
   fn queue(&self) -> &Self::Queue { &self.queue }
 
@@ -83,8 +83,6 @@ impl<'b> Kernel for GemmArgs<'b> {
     });
   }
 }
-unsafe impl<'b> Send for GemmArgs<'b> { }
-unsafe impl<'b> Sync for GemmArgs<'b> { }
 
 /// Get the dimension specialization parameter. This should only be called on
 /// the device.
@@ -383,7 +381,7 @@ pub fn main() {
   let group_size = invoc.group_size().expect("codegen failure");
   let private_size = invoc.private_size().unwrap();
 
-  let queue = dev.create_single_queue2(None, group_size, private_size)
+  let queue = dev.create_multi_queue2(None, group_size, private_size)
     .expect("HsaAmdGpuAccel::create_single_queue");
 
   // ensure the invocation doesn't block on this step:
