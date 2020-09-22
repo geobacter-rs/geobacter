@@ -149,8 +149,14 @@ fn gemm_v1<A1, A2>(vp: VectorParams<Dim2D<Range<u32>>>,
     let bo_y = k + wi.y;
     let bo_x = wi.x + wg_id.x * (RTS as u16);
 
-    let at: [ETy; WPT] = a.load((ao_x as _, ao_y as _));
-    let bt: [ETy; WPT] = b.load((bo_x as _, bo_y as _));
+    let mut at: [ETy; WPT] = [0u32.as_(); WPT];
+    if mod_k || (ao_y < stride && ao_x * wpt < stride) {
+      at = a.load((ao_x as _, ao_y as _));
+    }
+    let mut bt: [ETy; WPT] = [0u32.as_(); WPT];
+    if mod_k || (bo_y < stride && bo_x * wpt < stride) {
+      bt = b.load((bo_x as _, bo_y as _));
+    }
 
     let sa = sa.init(&vp, at);
     let sb = sb.init(&vp, bt);
