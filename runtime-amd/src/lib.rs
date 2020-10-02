@@ -39,7 +39,7 @@
 
 extern crate any_key;
 extern crate goblin;
-extern crate log;
+extern crate tracing as log;
 extern crate serde;
 extern crate rmp_serde as rmps;
 
