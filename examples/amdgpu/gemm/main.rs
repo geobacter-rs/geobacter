@@ -15,6 +15,8 @@ use num_traits::AsPrimitive;
 use rand::distributions::Uniform;
 use rand::prelude::*;
 
+use packed_simd::*;
+
 use std::geobacter::platform::*;
 use std::geobacter::spec_param as param;
 use std::mem::{size_of, drop};
@@ -87,16 +89,13 @@ impl<'b> Kernel for GemmArgs<'b> {
 /// Get the dimension specialization parameter. This should only be called on
 /// the device.
 fn dim_spec_param() -> NonZeroU16 {
-  debug_assert!(!platform().is_host());
+  debug_assert!(platform().is_amdgcn());
   *param::get(&dim_spec_param).unwrap()
 }
 /// Do we need to do bounds checks, because TILE_S doesn't divide the grid evenly?
 fn mod_block_k() -> bool {
-  if let Some(&v) = param::get(&mod_block_k) {
-    v
-  } else {
-    false
-  }
+  debug_assert!(platform().is_amdgcn());
+  *param::get(&mod_block_k).unwrap()
 }
 
 const WPT: usize = 4;
@@ -105,18 +104,7 @@ const RTS: usize = TILE_S / WPT;
 const TILE_S: usize = 32;
 type ETy = f32;
 // types which allow us to block a whole row at a time during the naive gemm.
-type LdsArray<E> = [[[E; WPT]; RTS + 1]; TILE_S];
-type LdsTile<E> = [[E; TILE_S + WPT]; TILE_S];
-
-/// LdsArray and LdsTile *MUST* have the same size. This function will cause a compile
-/// error if they don't match.
-#[allow(dead_code)]
-fn assert_lds_size() -> LdsTile<ETy> {
-  let v: LdsArray<ETy> = [[[0.0f32; WPT]; RTS + 1]; TILE_S];
-  unsafe {
-    ::std::mem::transmute(v)
-  }
-}
+type LdsArray<E> = [[Simd<[E; WPT]>; RTS + 1]; TILE_S];
 
 fn gemm_v1<A1, A2>(vp: VectorParams<Dim2D<Range<u32>>>,
                    a: ImageRef<A1>, b: ImageRef<A1>,
@@ -132,7 +120,7 @@ fn gemm_v1<A1, A2>(vp: VectorParams<Dim2D<Range<u32>>>,
 
   let wpt = WPT as u16;
 
-  let mut acc = [0u32.as_(); WPT];
+  let mut acc = <Simd<[ETy; WPT]>>::splat(0.0f32);
 
   let wi = vp.wi();
   let wg_id = vp.wg_id().as_::<u16>();
@@ -158,28 +146,40 @@ fn gemm_v1<A1, A2>(vp: VectorParams<Dim2D<Range<u32>>>,
       bt = b.load((bo_x as _, bo_y as _));
     }
 
+    let at: Simd<[ETy; WPT]> = at.into();
+    let bt: Simd<[ETy; WPT]> = bt.into();
+
     let sa = sa.init(&vp, at);
     let sb = sb.init(&vp, bt);
 
     {
       let (sa, sb) = unsafe {
-        let sa = &*(sa.as_ptr() as *const _ as *const LdsTile<ETy>);
+        let sa = &*sa;
         // avoid the second barrier:
         let sb = sb.unchecked_ref();
         (sa, sb)
       };
 
       let mut kci = 0u16;
-      while kci < (TILE_S as u16) {
-        let va = sa[wi.y as usize][kci as usize];
-        let vbs = &sb[kci as usize][wi.x as usize];
+      // load the next vector ahead of time to avoid stalls.
+      let mut vbs_next = sb[0][wi.x as usize];
+      let mut vas_next: [ETy; WPT] = sa[wi.y as usize][0].into();
 
-        let mut w = 0u16;
-        while w < wpt {
-          acc[w as usize] = va
-            .mul_add(vbs[w as usize], acc[w as usize]);
-          w += 1;
+      let mut vas = vas_next;
+      while kci < (TILE_S as u16) {
+        if kci % 4 == 0 {
+          vas = vas_next;
+          if kci + 4 < (TILE_S as u16) {
+            vas_next = sa[wi.y as usize][(kci / 4 + 1) as usize].into();
+          }
         }
+        let va = <Simd<[ETy; WPT]>>::splat(vas[(kci % 4) as usize]);
+        let vbs = vbs_next;
+        if kci + 1 < (TILE_S as u16) {
+          vbs_next = sb[(kci + 1) as usize][wi.x as usize];
+        }
+
+        acc = va.mul_add(vbs, acc);
 
         kci += 1;
       }
@@ -194,7 +194,8 @@ fn gemm_v1<A1, A2>(vp: VectorParams<Dim2D<Range<u32>>>,
 
   // Write output:
   if mod_k || (g_y < stride && g_x * wpt < stride) {
-     c.store((g_x as _, g_y as _), acc);
+    let acc: [ETy; WPT] = acc.into();
+    c.store((g_x as _, g_y as _), acc);
   }
 }
 
