@@ -93,8 +93,10 @@ pub fn derive_geobacter_deps(input: proc_macro::TokenStream)
 
     unsafe impl #impl_generics crate::geobacter_runtime_amd::module::Deps for #name #ty_generics
     #where_clause {
-      fn iter_deps<'deps_lt>(&'deps_lt self, f: &mut FnMut(&'deps_lt dyn crate::geobacter_runtime_amd::signal::DeviceConsumable) -> Result<(), crate::geobacter_runtime_amd::module::CallError>)
-        -> Result<(), crate::geobacter_runtime_amd::module::CallError>
+      fn iter_deps<'deps_lt>(&'deps_lt self, f: &mut dyn FnMut(&'deps_lt dyn
+        crate::geobacter_runtime_amd::signal::DeviceConsumable) -> ::std::result::Result<(),
+          crate::geobacter_runtime_amd::module::CallError>)
+        -> ::std::result::Result<(), crate::geobacter_runtime_amd::module::CallError>
       {
         use crate::geobacter_runtime_amd::module::Deps;
         #(#expanded)*
