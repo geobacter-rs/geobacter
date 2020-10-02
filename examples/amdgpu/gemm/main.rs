@@ -387,7 +387,7 @@ pub fn main() {
   let group_size = invoc.group_size().expect("codegen failure");
   let private_size = invoc.private_size().unwrap();
 
-  let queue = dev.create_multi_queue2(None, group_size, private_size)
+  let queue = dev.create_multi_queue2(None, private_size, group_size)
     .expect("HsaAmdGpuAccel::create_single_queue");
 
   // ensure the invocation doesn't block on this step:
