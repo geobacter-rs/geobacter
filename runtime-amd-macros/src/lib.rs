@@ -125,16 +125,12 @@ fn derive_struct_args(input: &DeriveInput) -> Vec<TokenStream> {
     .map(|(idx, field)| {
       if let Some(ref name) = field.ident {
         quote! {
-          {
-            self.#name.iter_deps(f)?;
-          }
+          self.#name.iter_deps(f)?;
         }
       } else {
         let idx = syn::Index::from(idx);
         quote! {
-          {
-            self.#idx.iter_deps(f)?;
-          }
+          self.#idx.iter_deps(f)?;
         }
       }
     })
