@@ -426,16 +426,15 @@ pub fn main() {
 
   println!("got GPU results; beginning CPU verification...");
 
-  bench("nd linalg gemm", hardness, || {
-    let a = nd::aview1(&la[..]).into_shape(shape).unwrap();
-    let b = nd::aview1(&lb[..]).into_shape(shape).unwrap();
-    let mut c = nd::aview_mut1(&mut nd_lc[..]).into_shape(shape).unwrap();
+  let a = nd::aview1(&la[..]).into_shape(shape).unwrap();
+  let b = nd::aview1(&lb[..]).into_shape(shape).unwrap();
+  let mut c = nd::aview_mut1(&mut nd_lc[..]).into_shape(shape).unwrap();
 
+  bench("nd linalg gemm", hardness, || {
     // compute using host and check against the GPU's results:
     nd::linalg::general_mat_mul(1.0 as ETy, &a, &b,
                                 0.0 as ETy, &mut c);
-
-    let lc = nd::aview1(&lc[..]).into_shape(shape).unwrap();
-    approx::assert_relative_eq!(c, lc, epsilon = (AXIS_SIZE as f32) * std::f32::EPSILON);
   });
+  let lc = nd::aview1(&lc[..]).into_shape(shape).unwrap();
+  approx::assert_relative_eq!(c, lc, epsilon = (AXIS_SIZE as f32) * std::f32::EPSILON);
 }
