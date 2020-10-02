@@ -13,15 +13,15 @@ use std::rc::{Rc, };
 use std::sync::{Arc, atomic::*, };
 
 use hsa_rt::ext::image::*;
-use hsa_rt::signal::SignalRef;
+use hsa_rt::signal::{SignalRef, SignalLoad};
 use hsa_rt::queue::RingQueue;
 
 use smallvec::SmallVec;
 
 use crate::{Error, HsaAmdGpuAccel};
 use crate::module::{CallError, DeviceMultiQueue, DeviceSingleQueue, Completion, };
-use crate::signal::{SignalHandle, DeviceConsumable, DeviceSignal, GlobalSignal,
-                    HostConsumable, SignalFactory, };
+use crate::signal::{SignalHandle, DeviceConsumable, DeviceSignal, GlobalSignal, HostConsumable,
+                    SignalFactory, GlobalSignalRef, DeviceSignalRef};
 use crate::boxed::{RawPoolBox, LocallyAccessiblePoolBox, };
 use crate::alloc::{LapBox, LapVec};
 
@@ -68,16 +68,15 @@ pub unsafe trait Deps {
     {
       let mut f = |sig: &dyn DeviceConsumable| -> Result<(), Error> {
         let sig = unsafe {
-          ::std::mem::transmute_copy(sig.signal_ref())
+          ::std::mem::transmute_copy(&sig.signal_ref())
         };
         signals.push(sig);
         if signals.len() == 5 {
           {
-            let mut deps = signals.iter();
+            let mut deps = signals.drain(..);
             queue.try_enqueue_barrier_and(&mut deps,
                                           Some(completion.signal_ref()))?;
           }
-          signals.clear();
         }
 
         Ok(())
@@ -85,7 +84,7 @@ pub unsafe trait Deps {
       iter_deps(self, &mut f)?;
     }
     if signals.len() > 0 {
-      let mut deps = signals.iter();
+      let mut deps = signals.drain(..);
       queue.try_enqueue_barrier_and(&mut deps,
                                     Some(completion.signal_ref()))?;
     }
@@ -122,9 +121,23 @@ unsafe impl Deps for DeviceSignal {
     f(self)
   }
 }
+unsafe impl<'b> Deps for DeviceSignalRef<'b> {
+  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+                   -> Result<(), CallError>
+  {
+    f(self)
+  }
+}
 unsafe impl Deps for GlobalSignal {
   fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
     -> Result<(), CallError>
+  {
+    f(self)
+  }
+}
+unsafe impl<'b> Deps for GlobalSignalRef<'b> {
+  fn iter_deps<'a>(&'a self, f: &mut dyn FnMut(&'a dyn DeviceConsumable) -> Result<(), CallError>)
+                   -> Result<(), CallError>
   {
     f(self)
   }
@@ -567,7 +580,8 @@ impl<T> DerefMut for CompletionDep<T>
 impl<T> SignalHandle for CompletionDep<T>
   where T: Completion,
 {
-  fn signal_ref(&self) -> &SignalRef {
+  #[inline(always)]
+  fn signal_ref(&self) -> SignalRef {
     self.0.completion().signal_ref()
   }
 

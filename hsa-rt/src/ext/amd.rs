@@ -744,8 +744,8 @@ pub unsafe fn async_copy(dst: MemoryPoolPtr<[u8]>,
                          dst_agent: &Agent,
                          src_agent: &Agent,
 
-                         deps: &[&SignalRef],
-                         completion: &SignalRef)
+                         deps: &[SignalRef],
+                         completion: SignalRef)
   -> Result<(), Error>
 {
   let dst_ptr = dst.0.as_ptr() as *mut _;

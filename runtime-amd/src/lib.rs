@@ -92,7 +92,7 @@ use hsa_rt::ext::amd::{MemoryPool, MemoryPoolPtr, async_copy, unlock_memory,
                        MemoryPoolAlloc, GlobalFlags, };
 use hsa_rt::mem::region::{RegionAlloc, };
 use hsa_rt::queue::{KernelSingleQueue, KernelMultiQueue};
-use hsa_rt::signal::Signal;
+use hsa_rt::signal::{Signal, SignalBinops};
 
 use grt_core::{Accelerator, AcceleratorTargetDesc,
                PlatformTargetDesc, Device, };

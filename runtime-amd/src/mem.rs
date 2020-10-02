@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use hsa_rt::ext::amd::{MemoryPoolPtr, };
-use hsa_rt::signal::SignalRef;
+use hsa_rt::signal::{SignalRef, SignalLoad};
 
 use crate::{HsaAmdGpuAccel, AcceleratorId, Error, };
 use crate::alloc::*;
@@ -152,7 +152,7 @@ impl<S, H, D, R> SignalHandle for H2DMemoryTransfer<S, H, D, R>
         H: ?Sized,
         R: Deps,
 {
-  fn signal_ref(&self) -> &SignalRef { self.transfer.signal_ref() }
+  fn signal_ref(&self) -> SignalRef { self.transfer.signal_ref() }
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
     self.transfer.as_host_consumable()
   }

@@ -2,34 +2,39 @@
 //! Note: sometime Soon(TM) this will undergo a large refactor, in order to remove
 //! many foot guns relating to direct use of the associated SignalRefs.
 
+use std::convert::TryInto;
 use std::geobacter::platform::platform;
 use std::ops::*;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{fence, Ordering, };
+use std::time::Duration;
 
 use crate::HsaAmdGpuAccel;
 use crate::module::{Deps, CallError, };
 
 use hsa_rt::error::Error as HsaError;
-use hsa_rt::signal::{Signal, SignalRef, ConditionOrdering, WaitState, };
+use hsa_rt::signal::{Signal, SignalRef, ConditionOrdering, WaitState};
 
 use grt_core::AcceleratorId;
 
-pub use hsa_rt::signal::Value;
+pub use hsa_rt::signal::{Value, SignalLoad, SignalStore, SignalSilentStore, SignalExchange,
+                         SignalCas, SignalBinops, SignalHostWait};
 
 pub mod completion;
 pub mod deps;
+pub mod gpu;
 
 pub trait SignalHandle {
-  fn signal_ref(&self) -> &SignalRef;
+  fn signal_ref(&self) -> SignalRef;
 
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable>;
 }
 impl<'a, T> SignalHandle for &'a T
   where T: SignalHandle + ?Sized,
 {
-  fn signal_ref(&self) -> &SignalRef { (**self).signal_ref() }
+  #[inline(always)]
+  fn signal_ref(&self) -> SignalRef { (**self).signal_ref() }
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
     (**self).as_host_consumable()
   }
@@ -37,7 +42,8 @@ impl<'a, T> SignalHandle for &'a T
 impl<'a, T> SignalHandle for &'a mut T
   where T: SignalHandle + ?Sized,
 {
-  fn signal_ref(&self) -> &SignalRef { (**self).signal_ref() }
+  #[inline(always)]
+  fn signal_ref(&self) -> SignalRef { (**self).signal_ref() }
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
     (**self).as_host_consumable()
   }
@@ -45,7 +51,8 @@ impl<'a, T> SignalHandle for &'a mut T
 impl<T> SignalHandle for Rc<T>
   where T: SignalHandle + ?Sized,
 {
-  fn signal_ref(&self) -> &SignalRef { (**self).signal_ref() }
+  #[inline(always)]
+  fn signal_ref(&self) -> SignalRef { (**self).signal_ref() }
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
     (**self).as_host_consumable()
   }
@@ -53,14 +60,11 @@ impl<T> SignalHandle for Rc<T>
 impl<T> SignalHandle for Arc<T>
   where T: SignalHandle + ?Sized,
 {
-  fn signal_ref(&self) -> &SignalRef { (**self).signal_ref() }
+  #[inline(always)]
+  fn signal_ref(&self) -> SignalRef { (**self).signal_ref() }
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
     (**self).as_host_consumable()
   }
-}
-impl Deref for dyn SignalHandle {
-  type Target = SignalRef;
-  fn deref(&self) -> &SignalRef { self.signal_ref() }
 }
 /// Interface for safely resetting a signal to some initial state.
 /// This is separate because reset doesn't use interior mutability, and
@@ -70,13 +74,13 @@ impl Deref for dyn SignalHandle {
 /// You probably shouldn't implement this yourself.
 pub trait ResettableSignal {
   /// Must only return Some(..) when self is internally unique.
-  fn resettable_get_mut(&mut self, f: impl FnOnce(&SignalRef)) -> bool;
+  fn resettable_get_mut(&mut self, f: impl FnOnce(SignalRef)) -> bool;
 }
 impl<T> ResettableSignal for T
   where T: SignalHandle,
 {
   #[inline(always)]
-  default fn resettable_get_mut(&mut self, f: impl FnOnce(&SignalRef)) -> bool {
+  default fn resettable_get_mut(&mut self, f: impl FnOnce(SignalRef)) -> bool {
     f(self.signal_ref());
     true
   }
@@ -85,7 +89,7 @@ impl<T> ResettableSignal for Rc<T>
   where T: SignalHandle,
 {
   #[inline(always)]
-  fn resettable_get_mut(&mut self, f: impl FnOnce(&SignalRef)) -> bool {
+  fn resettable_get_mut(&mut self, f: impl FnOnce(SignalRef)) -> bool {
     Rc::get_mut(self)
       .map(|this| f(this.signal_ref()) )
       .is_some()
@@ -95,7 +99,7 @@ impl<T> ResettableSignal for Arc<T>
   where T: SignalHandle,
 {
   #[inline(always)]
-  fn resettable_get_mut(&mut self, f: impl FnOnce(&SignalRef)) -> bool {
+  fn resettable_get_mut(&mut self, f: impl FnOnce(SignalRef)) -> bool {
     Arc::get_mut(self)
       .map(|this| f(this.signal_ref()) )
       .is_some()
@@ -104,50 +108,110 @@ impl<T> ResettableSignal for Arc<T>
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct HostSignal(pub(crate) Signal);
-impl Deref for HostSignal {
-  type Target = SignalRef;
-  fn deref(&self) -> &SignalRef {
-    &*self.0
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HostSignalRef<'a>(pub(crate) SignalRef<'a>);
+
+impl HostSignal {
+  #[inline(always)]
+  pub fn as_ref(&self) -> HostSignalRef {
+    HostSignalRef(self.0.as_ref())
   }
 }
+impl Deref for HostSignal {
+  type Target = Signal;
+  #[inline(always)]
+  fn deref(&self) -> &Signal { &self.0 }
+}
 impl SignalHandle for HostSignal {
-  fn signal_ref(&self) -> &SignalRef { &**self }
+  #[inline(always)]
+  fn signal_ref(&self) -> SignalRef { self.0.as_ref() }
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
     Some(self)
   }
 }
+impl<'a> Deref for HostSignalRef<'a> {
+  type Target = SignalRef<'a>;
+  #[inline(always)]
+  fn deref(&self) -> &SignalRef<'a> { &self.0 }
+}
+impl<'a> SignalHandle for HostSignalRef<'a> {
+  #[inline(always)]
+  fn signal_ref(&self) -> SignalRef { self.0 }
+  #[inline(always)]
+  fn as_host_consumable(&self) -> Option<&dyn HostConsumable> { Some(self) }
+}
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct DeviceSignal(pub(crate) Signal, pub(crate) AcceleratorId);
-impl Deref for DeviceSignal {
-  type Target = SignalRef;
-  fn deref(&self) -> &SignalRef {
-    &*self.0
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DeviceSignalRef<'a>(pub(crate) SignalRef<'a>, pub(crate) AcceleratorId);
+
+impl DeviceSignal {
+  #[inline(always)]
+  pub fn as_ref(&self) -> DeviceSignalRef {
+    DeviceSignalRef(self.0.as_ref(), self.1)
   }
 }
+
+impl Deref for DeviceSignal {
+  type Target = Signal;
+  #[inline(always)]
+  fn deref(&self) -> &Signal { &self.0 }
+}
 impl SignalHandle for DeviceSignal {
-  fn signal_ref(&self) -> &SignalRef { &**self }
+  #[inline(always)]
+  fn signal_ref(&self) -> SignalRef { self.0.as_ref() }
+  fn as_host_consumable(&self) -> Option<&dyn HostConsumable> { None }
+}
+impl<'a> Deref for DeviceSignalRef<'a> {
+  type Target = SignalRef<'a>;
+  #[inline(always)]
+  fn deref(&self) -> &SignalRef<'a> { &self.0 }
+}
+impl<'a> SignalHandle for DeviceSignalRef<'a> {
+  #[inline(always)]
+  fn signal_ref(&self) -> SignalRef { self.0 }
+  #[inline(always)]
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> { None }
 }
 
 /// A signal handle which any device on this system can consume (wait on).
 #[derive(Debug, Eq, PartialEq)]
 pub struct GlobalSignal(pub(crate) Signal);
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GlobalSignalRef<'a>(pub(crate) SignalRef<'a>);
 
 impl GlobalSignal {
   pub fn new(initial: Value) -> Result<Self, HsaError> {
     Signal::new(initial, &[])
       .map(GlobalSignal)
   }
-}
-impl Deref for GlobalSignal {
-  type Target = SignalRef;
-  fn deref(&self) -> &SignalRef {
-    &*self.0
+  #[inline(always)]
+  pub fn as_ref(&self) -> GlobalSignalRef {
+    GlobalSignalRef(self.0.as_ref())
   }
 }
+impl Deref for GlobalSignal {
+  type Target = Signal;
+  #[inline(always)]
+  fn deref(&self) -> &Signal { &self.0 }
+}
 impl SignalHandle for GlobalSignal {
-  fn signal_ref(&self) -> &SignalRef { &**self }
+  #[inline(always)]
+  fn signal_ref(&self) -> SignalRef { self.0.as_ref() }
+  fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
+    Some(self)
+  }
+}
+impl<'a> Deref for GlobalSignalRef<'a> {
+  type Target = SignalRef<'a>;
+  #[inline(always)]
+  fn deref(&self) -> &SignalRef<'a> { &self.0 }
+}
+impl<'a> SignalHandle for GlobalSignalRef<'a> {
+  #[inline(always)]
+  fn signal_ref(&self) -> SignalRef { self.0 }
+  #[inline(always)]
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {
     Some(self)
   }
@@ -190,6 +254,20 @@ impl DeviceConsumable for GlobalSignal {
     true
   }
 }
+impl<'a> DeviceConsumable for DeviceSignalRef<'a> {
+  #[inline(always)]
+  fn usable_on_device(&self, id: AcceleratorId) -> bool {
+    self.1 == id
+  }
+}
+impl<'a> DeviceConsumable for GlobalSignalRef<'a> {
+  #[inline(always)]
+  fn usable_on_device(&self, _: AcceleratorId) -> bool {
+    // we're usable on all devices
+    true
+  }
+}
+
 impl<'a> DeviceConsumable for &'a DeviceSignal {
   fn usable_on_device(&self, id: AcceleratorId) -> bool {
     self.1 == id
@@ -202,8 +280,82 @@ impl<'a> DeviceConsumable for &'a GlobalSignal {
   }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum WakeCondition {
+  Equal(Value),
+  NotEqual(Value),
+  Less(Value),
+  GreaterEqual(Value),
+}
+impl WakeCondition {
+  #[inline(always)]
+  fn into_pair(self) -> (ConditionOrdering, Value) {
+    match self {
+      WakeCondition::Equal(v) => (ConditionOrdering::Equal, v),
+      WakeCondition::NotEqual(v) => (ConditionOrdering::NotEqual, v),
+      WakeCondition::Less(v) => (ConditionOrdering::Less, v),
+      WakeCondition::GreaterEqual(v) => (ConditionOrdering::GreaterEqual, v),
+    }
+  }
+  #[inline(always)]
+  pub fn satisfied(&self, v: Value) -> bool {
+    match self {
+      WakeCondition::Equal(expected) if v == *expected => true,
+      WakeCondition::NotEqual(expected) if v != *expected => true,
+      WakeCondition::Less(expected) if v < *expected => true,
+      WakeCondition::GreaterEqual(expected) if v >= *expected => true,
+      _ => false,
+    }
+  }
+}
+
+#[inline(always)]
+fn wait_for_condition_relaxed(s: SignalRef, spin: bool, cond: WakeCondition,
+                              timeout: Option<Duration>) -> Result<Value, Value>
+{
+  let timeout = timeout.and_then(|timeout| {
+    timeout.as_nanos()
+      .try_into()
+      .ok()
+  });
+
+  let wait = if spin {
+    WaitState::Active
+  } else {
+    WaitState::Blocked
+  };
+
+  let (condition, compare) = cond.into_pair();
+
+  let val = s.wait_relaxed(condition, compare, timeout,
+                           wait);
+  log::debug!("completion signal wakeup: {}", val);
+  if cond.satisfied(val) {
+    Ok(val)
+  } else {
+    Err(val)
+  }
+}
+
 /// A signal which may be waited on by the host.
 pub trait HostConsumable: SignalHandle {
+  /// Returns Err() only when timeout is Some().
+  unsafe fn wait_for_condition_relaxed(&self, spin: bool, cond: WakeCondition,
+                                       timeout: Option<Duration>)
+                                       -> Result<Value, Value>
+  {
+    wait_for_condition_relaxed(self.signal_ref(), spin, cond, timeout)
+  }
+  #[inline]
+  fn wait_for_condition(&self, spin: bool, cond: WakeCondition,
+                        timeout: Option<Duration>)
+                        -> Result<Value, Value>
+  {
+    let r = unsafe { self.wait_for_condition_relaxed(spin, cond, timeout) };
+    fence(Ordering::Acquire);
+    r
+  }
+
   /// The signal can be set to negative numbers to indicate
   /// an error. Err(..) will be returned in this case.
   /// If `spin` is true, this thread will spin-wait, else
@@ -217,31 +369,36 @@ pub trait HostConsumable: SignalHandle {
   /// completed this signal).
   /// If unsure, use `self.wait_for_zero`, below.
   unsafe fn wait_for_zero_relaxed(&self, spin: bool) -> Result<(), Value> {
-    let r;
-
+    let cond = WakeCondition::Less(1);
     loop {
-      let wait = if spin {
-        WaitState::Active
-      } else {
-        WaitState::Blocked
+      let r = wait_for_condition_relaxed(self.signal_ref(), spin, cond, None);
+      let got = match r {
+        Ok(got) => got,
+        Err(_) => continue,
       };
-
-      let val = self.signal_ref()
-        .wait_relaxed(ConditionOrdering::Less,
-                      1, None, wait);
-      log::debug!("completion signal wakeup: {}", val);
-      if val == 0 {
-        r = Ok(());
-        break;
-      }
-      if val < 0 {
-        r = Err(val);
-        break;
-      }
+      return if got < 0 {
+        Err(got)
+      } else {
+        Ok(())
+      };
     }
-
-    r
   }
+  unsafe fn wait_for_zero_timeout_relaxed(&self, spin: bool,
+                                          timeout: Duration)
+    -> Result<(), Value>
+  {
+    let cond = WakeCondition::Less(1);
+    loop {
+      let got = wait_for_condition_relaxed(self.signal_ref(), spin, cond,
+                                         Some(timeout))?;
+      return if got < 0 {
+        Err(got)
+      } else {
+        Ok(())
+      };
+    }
+  }
+
   /// The signal can be set to negative numbers to indicate
   /// an error. Err(..) will be returned in this case.
   /// If `active` is true, this thread will spin-wait, else
@@ -249,15 +406,26 @@ pub trait HostConsumable: SignalHandle {
   ///
   /// This function waits for an acquire memory fence before
   /// returning.
+  #[inline]
   fn wait_for_zero(&self, spin: bool) -> Result<(), Value> {
     let r = unsafe { self.wait_for_zero_relaxed(spin) };
+    fence(Ordering::Acquire);
+    r
+  }
+  #[inline]
+  fn wait_for_zero_timeout(&self, spin: bool, timeout: Duration)
+    -> Result<(), Value>
+  {
+    let r = unsafe { self.wait_for_zero_timeout_relaxed(spin, timeout) };
     fence(Ordering::Acquire);
     r
   }
 }
 
 impl HostConsumable for HostSignal { }
+impl<'a> HostConsumable for HostSignalRef<'a> { }
 impl HostConsumable for GlobalSignal { }
+impl<'a> HostConsumable for GlobalSignalRef<'a> { }
 impl<'a, T> HostConsumable for &'a T
   where T: HostConsumable + ?Sized,
 { }

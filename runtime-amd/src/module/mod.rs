@@ -15,7 +15,7 @@ use log::{error, };
 use hsa_rt::agent::Agent;
 use hsa_rt::executable::FrozenExecutable;
 use hsa_rt::queue::{DispatchPacket, RingQueue, };
-use hsa_rt::signal::SignalRef;
+use hsa_rt::signal::{SignalRef, SignalLoad};
 
 use smallvec::SmallVec;
 
@@ -436,15 +436,14 @@ impl<A, P, FM> Invoc<A, P, FM>
       let mut signals: SmallVec<[SignalRef; 5]> = SmallVec::new();
       {
         let mut f = |sig: &dyn DeviceConsumable| -> Result<(), Error> {
-          let sig = ::std::mem::transmute_copy(sig.signal_ref());
+          let sig = ::std::mem::transmute_copy(&sig.signal_ref());
           signals.push(sig);
           if signals.len() == 5 {
             {
-              let mut deps = signals.iter();
+              let mut deps = signals.drain(..);
               q.try_enqueue_barrier_and(&mut deps, None)?;
               assert_eq!(deps.len(), 0);
             }
-            signals.clear();
           }
 
           Ok(())
@@ -453,7 +452,7 @@ impl<A, P, FM> Invoc<A, P, FM>
           .iter_arg_deps(&mut f)?;
       }
       if signals.len() > 0 {
-        let mut deps = signals.iter();
+        let mut deps = signals.drain(..);
         q.try_enqueue_barrier_and(&mut deps, None)?;
         assert_eq!(deps.len(), 0);
       }
@@ -574,7 +573,7 @@ impl<P, A, S> SignalHandle for InvocCompletion<P, A, S>
         S: SignalHandle + ?Sized,
         A: Completion<CompletionSignal = S> + ?Sized,
 {
-  fn signal_ref(&self) -> &SignalRef {
+  fn signal_ref(&self) -> SignalRef {
     self.args
       .completion()
       .signal_ref()
@@ -673,7 +672,7 @@ impl<P, A, S, R> SignalHandle for InvocCompletionReturn<P, A, S, R>
         S: SignalHandle + ?Sized,
         A: Completion<CompletionSignal = S> + ?Sized,
 {
-  fn signal_ref(&self) -> &SignalRef {
+  fn signal_ref(&self) -> SignalRef {
     self.invoc.signal_ref()
   }
   fn as_host_consumable(&self) -> Option<&dyn HostConsumable> {

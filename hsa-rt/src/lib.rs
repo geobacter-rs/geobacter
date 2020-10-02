@@ -5,6 +5,7 @@
 #![feature(allocator_api)]
 #![feature(alloc_layout_extra)]
 #![feature(slice_ptr_get)]
+#![feature(untagged_unions)]
 
 // For images:
 #![feature(repr_simd)]

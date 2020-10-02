@@ -15,7 +15,8 @@ use crate::agent::Agent;
 use crate::error::Error;
 use crate::ffi;
 use crate::mem::region::Region;
-use crate::signal::{Signal, ConditionOrdering, WaitState, SignalRef, };
+use signal::{Signal, ConditionOrdering, WaitState, SignalRef,
+             SignalHostWait, SignalBinops, SignalStore};
 use utils::uninit;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -48,7 +49,7 @@ impl StdError for QueueError { }
 
 #[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct SoftQueue<T = Signal>
-  where T: AsRef<Signal> + Send + Sync,
+  where T: Send + Sync,
 {
   sys: RawQueue,
 
@@ -57,7 +58,7 @@ pub struct SoftQueue<T = Signal>
   _ctxt: ApiContext,
 }
 impl<T> SoftQueue<T>
-  where T: AsRef<Signal> + Send + Sync,
+  where T: SignalHostWait + Send + Sync,
 {
   pub fn doorbell_ref(&self) -> &T {
     &self.doorbell
@@ -75,7 +76,7 @@ impl<T> SoftQueue<T>
       from_raw_parts_mut(base_addr, packet_count)
     };
 
-    let doorbell = self.doorbell.as_ref();
+    let doorbell = &self.doorbell;
 
     let mut read_index = self.sys.load_read_index_scacquire();
     loop {
@@ -97,7 +98,7 @@ impl<T> SoftQueue<T>
         _m: PhantomData,
       });
       if packet.completion_signal != Default::default() {
-        SignalRef(packet.completion_signal)
+        SignalRef(packet.completion_signal, PhantomData)
           .subtract_screlease(1);
       }
 
@@ -125,7 +126,7 @@ impl<T> SoftQueue<T>
 pub struct KernelQueue<T>
   where T: QueueKind,
 {
-  sys: T,
+  pub(crate) sys: T,
   _ctxt: ApiContext,
 }
 
@@ -338,9 +339,9 @@ pub trait RingQueue {
   /// XXX Need a way to pass the dep signals in by value and still have them
   /// kept alive until this barrier finishes.
   fn try_enqueue_barrier_and<'a, D>(&self, deps: &mut D,
-                                    completion: Option<&SignalRef>)
+                                    completion: Option<SignalRef<'a>>)
     -> Result<(), QueueError>
-    where D: Iterator<Item = &'a SignalRef>,
+    where D: Iterator<Item = SignalRef<'a>>,
   {
     let ty = header(ffi::hsa_packet_type_t_HSA_PACKET_TYPE_BARRIER_AND,
                     &FenceScope::None,
@@ -371,9 +372,9 @@ pub trait RingQueue {
     Ok(())
   }
   fn try_enqueue_barrier_or<'a, D>(&self, deps: &mut D,
-                               completion: Option<&SignalRef>)
+                               completion: Option<SignalRef<'a>>)
     -> Result<(), QueueError>
-    where D: Iterator<Item = &'a SignalRef>,
+    where D: Iterator<Item = SignalRef<'a>>,
   {
     let ty = header(ffi::hsa_packet_type_t_HSA_PACKET_TYPE_BARRIER_OR,
                     &FenceScope::None,
@@ -439,7 +440,7 @@ impl<T> RingQueue for Queue<T>
   fn doorbell_ref(&self) -> SignalRef {
     SignalRef(unsafe {
       (*self.sys.0).doorbell_signal
-    })
+    }, PhantomData)
   }
 }
 impl<T> RingQueue for KernelQueue<T>
@@ -450,7 +451,7 @@ impl<T> RingQueue for KernelQueue<T>
   fn doorbell_ref(&self) -> SignalRef {
     SignalRef(unsafe {
       (*self.sys.0).doorbell_signal
-    })
+    }, PhantomData)
   }
 }
 impl<T, U> RingQueue for Rc<T>
@@ -535,7 +536,7 @@ impl ApiContext {
                      agent_dispatch: bool,
                      doorbell_signal: T)
     -> Result<SoftQueue<T>, Error>
-    where T: AsRef<Signal> + Send + Sync,
+    where T: SignalHostWait + Send + Sync,
   {
     let queue_type = match queue_type {
       QueueType::Single => ffi::hsa_queue_type_t_HSA_QUEUE_TYPE_SINGLE,
@@ -553,7 +554,7 @@ impl ApiContext {
                                                     size as _,
                                                     queue_type,
                                                     features,
-                                                    doorbell_signal.as_ref().0,
+                                                    doorbell_signal.as_hndl(),
                                                     &mut out as *mut _) => out)?;
     Ok(SoftQueue {
       sys: RawQueue(out),
@@ -567,7 +568,7 @@ impl ApiContext {
 
 #[doc(hidden)]
 #[derive(Eq, PartialEq, Ord, PartialOrd)]
-pub struct RawQueue(*mut ffi::hsa_queue_t);
+pub struct RawQueue(pub(crate) *mut ffi::hsa_queue_t);
 impl fmt::Debug for RawQueue {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     write!(f, "{:p}", self.0)
@@ -666,7 +667,7 @@ pub struct DispatchPacket<'a, KernArg> {
   pub screlease_scope: FenceScope,
   pub kernel_object: u64,
   pub kernel_args: &'a KernArg,
-  pub completion_signal: Option<&'a SignalRef>,
+  pub completion_signal: Option<SignalRef<'a>>,
 }
 
 impl<'a, KernArg> DispatchPacket<'a, KernArg> {
