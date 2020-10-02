@@ -4,12 +4,12 @@
 extern crate proc_macro;
 extern crate proc_macro2;
 
-use proc_macro2::TokenStream;
+use proc_macro2::{TokenStream, Span};
 use quote::*;
 use syn::*;
 use syn::spanned::Spanned;
 
-#[proc_macro_derive(GeobacterDeps)]
+#[proc_macro_derive(GeobacterDeps, attributes(geobacter_amd))]
 pub fn derive_geobacter_deps(input: proc_macro::TokenStream)
   -> proc_macro::TokenStream
 {
@@ -114,6 +114,30 @@ pub fn derive_geobacter_args(_input: proc_macro::TokenStream)
 {
   unimplemented!();
 }
+
+fn should_ignore_field(field: &Field, input_span: Span) -> bool {
+  let attr_ident = Ident::new("geobacter_amd", input_span);
+  let ignore_ident = Ident::new("ignore_dep", input_span);
+  field.attrs.iter()
+    .any(|attr| {
+      if attr.path.is_ident(&attr_ident) {
+        if let Ok(inner) = attr.parse_meta() {
+          match inner {
+            Meta::Path(ref p) => return p.is_ident(&ignore_ident),
+            Meta::List(ref l) => return l.nested.iter()
+              .any(|inner| match inner {
+                NestedMeta::Meta(Meta::Path(p)) => p.is_ident(&ignore_ident),
+                _ => false,
+              }),
+            _ => {}
+          }
+        }
+      }
+
+      false
+    })
+}
+
 fn derive_struct_args(input: &DeriveInput) -> Vec<TokenStream> {
   let data = match input.data {
     Data::Struct(ref s) => s,
@@ -122,6 +146,10 @@ fn derive_struct_args(input: &DeriveInput) -> Vec<TokenStream> {
 
   data.fields.iter()
     .enumerate()
+    .filter(|&(_, ref field)| {
+      // filter out fields with `#[geobacter_amd(ignore_dep)]`.
+      !should_ignore_field(field, input.span())
+    })
     .map(|(idx, field)| {
       if let Some(ref name) = field.ident {
         quote! {
