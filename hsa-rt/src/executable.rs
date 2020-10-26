@@ -53,7 +53,7 @@ impl Executable {
       handle: 0,
     });
     let o = check_err!(ffi::hsa_executable_load_agent_code_object(self.0,
-                                                                  agent.0,
+                                                                  agent.handle(),
                                                                   reader.sys().0,
                                                                   options.as_ptr(),
                                                                   transmute(&mut this.0)) => this)?;
@@ -82,7 +82,7 @@ impl Executable {
     let name = CString::new(name)
       .map_err(|_| Error::InvalidArgument )?;
     check_err!(ffi::hsa_executable_agent_global_variable_define(self.0,
-                                                                agent.0,
+                                                                agent.handle(),
                                                                 name.as_ptr(),
                                                                 ptr))?;
     Ok(())
@@ -166,7 +166,7 @@ pub trait CommonExecutable {
     {
       let mut data = (self, &mut out);
       check_err!(ffi::hsa_executable_iterate_agent_symbols(self.sys().0,
-                                                           agent.0,
+                                                           agent.handle(),
                                                            Some(get_symbol),
                                                            transmute(&mut data)))?;
     }
@@ -181,7 +181,7 @@ pub trait CommonExecutable {
     let name = CString::new(name)
       .map_err(|_| Error::InvalidArgument )?;
     let agent = agent
-      .map(|a| &a.0 as *const _ )
+      .map(|a| a as *const Agent as *const ffi::hsa_agent_t )
       .unwrap_or(0 as *const _);
     let mut out: ffi::hsa_executable_symbol_t = unsafe {
       uninit()

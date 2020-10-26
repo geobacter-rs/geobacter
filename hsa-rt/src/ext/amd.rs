@@ -23,6 +23,7 @@ use ffi;
 pub use mem::region::{GlobalFlags, Segment, };
 use signal::SignalRef;
 use utils::uninit;
+use std::num::NonZeroU64;
 
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Debug, Hash)]
 pub struct MemoryPool(ffi::hsa_amd_memory_pool_t);
@@ -38,7 +39,8 @@ impl Agent {
     }
 
     let mut out: Vec<MemoryPool> = vec![];
-    Ok(check_err!(ffi::hsa_amd_agent_iterate_memory_pools(self.0, Some(get_pool), transmute(&mut out)) => out)?)
+    Ok(check_err!(ffi::hsa_amd_agent_iterate_memory_pools(self.handle(), Some(get_pool),
+                  transmute(&mut out)) => out)?)
   }
 }
 
@@ -46,7 +48,7 @@ macro_rules! pool_agent_info {
   ($self:expr, $agent:expr, $id:expr, $out:ty) => {
     {
       let mut out: [$out; 1] = [Default::default(); 1];
-      check_err!(ffi::hsa_amd_agent_memory_pool_get_info($agent.0, $self.0,
+      check_err!(ffi::hsa_amd_agent_memory_pool_get_info($agent.handle(), $self.0,
                                                          $id, out.as_mut_ptr() as *mut _) => out[0])
     }
   }
@@ -310,13 +312,113 @@ impl MemoryPoolAlloc {
   pub fn alloc_granule(&self) -> usize { self.granule }
   pub fn alloc_alignment(&self) -> usize { self.alignment }
   pub fn pool(&self) -> MemoryPool { self.pool }
+
+  pub unsafe fn try_grow(&self, ptr: NonNull<u8>,
+                         old_layout: Layout, new_layout: Layout,
+                         try: impl FnOnce(NonNull<[u8]>) -> Result<(), AllocError>)
+                         -> Result<NonNull<[u8]>, AllocError>
+  {
+    let new_size = new_layout.size();
+    let old_size = old_layout.size();
+    if new_size < old_size {
+      return Err(AllocError);
+    }
+    if old_layout.align() < new_layout.align() {
+      return Err(AllocError);
+    }
+    if old_size != 0 {
+      let inplace_layout = old_layout
+        .align_to(self.granule)
+        .map_err(|_| AllocError )?
+        .pad_to_align();
+      if new_layout.size() <= inplace_layout.size() {
+        // we can do it in-place here
+        let out_ptr = from_raw_parts(ptr.as_ptr(), new_size);
+        let out_ptr = NonNull::from(out_ptr);
+        return Ok(out_ptr);
+      }
+    }
+
+    let new_ptr = AllocRef::alloc(self, new_layout)?;
+    match try(new_ptr) {
+      Ok(()) => { },
+      Err(err) => {
+        AllocRef::dealloc(self, new_ptr.cast(), new_layout);
+        return Err(err);
+      }
+    }
+    // SAFETY: because `new_layout.size()` must be greater than or equal to
+    // `old_layout.size()`, both the old and new memory allocation are valid for reads and
+    // writes for `old_layout.size()` bytes. Also, because the old allocation wasn't yet
+    // deallocated, it cannot overlap `new_ptr`. Thus, the call to `copy_nonoverlapping` is
+    // safe. The safety contract for `dealloc` must be upheld by the caller.
+    copy_nonoverlapping(ptr.as_ptr(), new_ptr.as_mut_ptr(),
+                        old_size);
+    AllocRef::dealloc(self, ptr, old_layout);
+    Ok(new_ptr)
+  }
+  pub unsafe fn try_grow_zeroed(&self,
+                                ptr: NonNull<u8>,
+                                old_layout: Layout,
+                                new_layout: Layout,
+                                try: impl FnOnce(NonNull<[u8]>) -> Result<(), AllocError>)
+                                -> Result<NonNull<[u8]>, AllocError>
+  {
+    let mut new_ptr = self.try_grow(ptr, old_layout, new_layout, try)?;
+    let t = &mut new_ptr.as_mut()[old_layout.size()..new_layout.size()];
+    t.as_mut_ptr()
+      .write_bytes(0, t.len());
+    Ok(new_ptr)
+  }
+
+  pub unsafe fn try_shrink(&self, ptr: NonNull<u8>,
+                           old_layout: Layout,
+                           new_layout: Layout,
+                           try: impl FnOnce(NonNull<[u8]>) -> Result<(), AllocError>)
+                           -> Result<NonNull<[u8]>, AllocError>
+  {
+    let old_size = old_layout.size();
+    let new_size = new_layout.size();
+    if new_size > old_size {
+      return Err(AllocError);
+    }
+    if old_layout.align() < new_layout.align() {
+      return Err(AllocError);
+    }
+    if new_size == 0 {
+      let new_ptr = AllocRef::alloc(self, new_layout)?;
+      AllocRef::dealloc(self, ptr, old_layout);
+      return Ok(new_ptr);
+    }
+
+    let min = old_size & !self.granule;
+    if new_size >= min {
+      // shrink by doing nothing
+      let ptr = from_raw_parts(ptr.as_ptr(), new_size);
+      return Ok(NonNull::from(ptr));
+    }
+
+    // shrink by reallocating
+    let new_ptr = AllocRef::alloc(self, new_layout)?;
+    match try(new_ptr) {
+      Ok(()) => { },
+      Err(err) => {
+        AllocRef::dealloc(self, new_ptr.cast(), new_layout);
+        return Err(err);
+      }
+    }
+    copy_nonoverlapping(ptr.as_ptr(),
+                        new_ptr.as_non_null_ptr().as_ptr(),
+                        new_size);
+    AllocRef::dealloc(self, ptr, old_layout);
+
+    Ok(new_ptr)
+  }
 }
 
 #[cfg(feature = "alloc-wg")]
 unsafe impl AllocRef for MemoryPoolAlloc {
-  fn alloc(&mut self, layout: Layout)
-    -> Result<NonNull<[u8]>, AllocErr>
-  {
+  fn alloc(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
     unsafe {
       let bytes = layout.size();
       if bytes == 0 {
@@ -340,9 +442,9 @@ unsafe impl AllocRef for MemoryPoolAlloc {
       let dest_ptr = &mut dest as *mut *mut c_void;
       check_err!(ffi::hsa_amd_memory_pool_allocate(self.pool.0, len as _,
                                                    0, dest_ptr))
-        .ok().ok_or(AllocErr)?;
+        .ok().ok_or(AllocError)?;
 
-      if dest == null_mut() { return Err(AllocErr); }
+      if dest == null_mut() { return Err(AllocError); }
 
       // now align the pointer
       if align > self.alignment {
@@ -357,95 +459,36 @@ unsafe impl AllocRef for MemoryPoolAlloc {
       Ok(NonNull::from(s))
     }
   }
-  unsafe fn dealloc(&mut self, ptr: NonNull<u8>, layout: Layout) {
+  unsafe fn dealloc(&self, ptr: NonNull<u8>, layout: Layout) {
     if layout.size() != 0 {
       self.pool.dealloc_from_pool(ptr)
         // Should errors be ignored instead of panicking?
         .expect("deallocation failure");
     }
   }
-  unsafe fn grow(&mut self, ptr: NonNull<u8>,
+  #[inline(always)]
+  unsafe fn grow(&self, ptr: NonNull<u8>,
                  old_layout: Layout, new_layout: Layout)
-                 -> Result<NonNull<[u8]>, AllocErr>
+                 -> Result<NonNull<[u8]>, AllocError>
   {
-    let new_size = new_layout.size();
-    let old_size = old_layout.size();
-    if new_size < old_size {
-      return Err(AllocErr);
-    }
-    if old_layout.align() < new_layout.align() {
-      return Err(AllocErr);
-    }
-    if old_size != 0 {
-      let inplace_layout = old_layout
-        .align_to(self.granule)
-        .map_err(|_| AllocErr )?
-        .pad_to_align();
-      if new_layout.size() <= inplace_layout.size() {
-        // we can do it in-place here
-        let out_ptr = from_raw_parts(ptr.as_ptr(), new_size);
-        let out_ptr = NonNull::from(out_ptr);
-        return Ok(out_ptr);
-      }
-    }
-
-    let new_ptr = AllocRef::alloc(self, new_layout)?;
-    // SAFETY: because `new_layout.size()` must be greater than or equal to
-    // `old_layout.size()`, both the old and new memory allocation are valid for reads and
-    // writes for `old_layout.size()` bytes. Also, because the old allocation wasn't yet
-    // deallocated, it cannot overlap `new_ptr`. Thus, the call to `copy_nonoverlapping` is
-    // safe. The safety contract for `dealloc` must be upheld by the caller.
-    copy_nonoverlapping(ptr.as_ptr(), new_ptr.as_mut_ptr(),
-                        old_size);
-    AllocRef::dealloc(self, ptr, old_layout);
-    Ok(new_ptr)
+    self.try_grow(ptr, old_layout, new_layout, |_| Ok(()) )
   }
-  unsafe fn grow_zeroed(&mut self,
+  #[inline(always)]
+  unsafe fn grow_zeroed(&self,
                         ptr: NonNull<u8>,
                         old_layout: Layout,
                         new_layout: Layout)
-                        -> Result<NonNull<[u8]>, AllocErr>
+                        -> Result<NonNull<[u8]>, AllocError>
   {
-    let mut new_ptr = self.grow(ptr, old_layout, new_layout)?;
-    let t = &mut new_ptr.as_mut()[old_layout.size()..new_layout.size()];
-    t.as_mut_ptr()
-      .write_bytes(0, t.len());
-    Ok(new_ptr)
+    self.try_grow_zeroed(ptr, old_layout, new_layout, |_| Ok(()) )
   }
-
-  unsafe fn shrink(&mut self, ptr: NonNull<u8>,
+  #[inline(always)]
+  unsafe fn shrink(&self, ptr: NonNull<u8>,
                    old_layout: Layout,
                    new_layout: Layout)
-                   -> Result<NonNull<[u8]>, AllocErr>
+                   -> Result<NonNull<[u8]>, AllocError>
   {
-    let old_size = old_layout.size();
-    let new_size = new_layout.size();
-    if new_size > old_size {
-      return Err(AllocErr);
-    }
-    if old_layout.align() < new_layout.align() {
-      return Err(AllocErr);
-    }
-    if new_size == 0 {
-      AllocRef::dealloc(self, ptr, old_layout);
-      return AllocRef::alloc(self, new_layout);
-    }
-
-    let min = old_size & !self.granule;
-    if new_size >= min {
-      // shrink by doing nothing
-      let ptr = from_raw_parts(ptr.as_ptr(), new_size);
-      return Ok(NonNull::from(ptr));
-    }
-
-    // shrink by reallocating
-    let new_ptr = AllocRef::alloc(self, new_layout)?;
-    copy_nonoverlapping(ptr.as_ptr(),
-                        new_ptr.as_non_null_ptr().as_ptr(),
-                        new_size);
-    AllocRef::dealloc(self, ptr, old_layout);
-
-    Ok(new_ptr)
+    self.try_shrink(ptr, old_layout, new_layout, |_| Ok(()) )
   }
 }
 #[cfg(feature = "alloc-wg")]
@@ -544,7 +587,7 @@ impl<T> MemoryPoolPtr<T>
     let agents = [agent.0; 1];
 
     let agents_len = agents.len();
-    let agents_ptr = agents.as_ptr();
+    let agents_ptr = agents.as_ptr() as *const _;
 
     check_err!(ffi::hsa_amd_agents_allow_access(agents_len as _,
                                                 agents_ptr,
@@ -714,12 +757,16 @@ pub trait QueryPtrInfo<T> {
 
     accessible_by.sort_unstable();
 
+    let owner = NonZeroU64::new(info.agentOwner.handle)
+      .map(|owner| Agent(owner, ApiContext::upref()) )
+      .ok_or(Error::InvalidAgent)?;
+
     let info = PtrInfo {
       ty: PtrType::from_ffi(info.type_),
       agent_base_addr: info.agentBaseAddress as *mut _,
       host_base_addr: info.hostBaseAddress as *mut _,
       size: info.sizeInBytes as _,
-      owner: Agent(info.agentOwner, ApiContext::upref()),
+      owner,
       accessible_by,
     };
 
@@ -765,8 +812,8 @@ pub unsafe fn async_copy(dst: MemoryPoolPtr<[u8]>,
     ptr::null()
   };
 
-  check_err!(ffi::hsa_amd_memory_async_copy(dst_ptr, dst_agent.0,
-                                            src_ptr, src_agent.0,
+  check_err!(ffi::hsa_amd_memory_async_copy(dst_ptr, dst_agent.handle(),
+                                            src_ptr, src_agent.handle(),
                                             bytes as _,
 
                                             deps_len, deps_ptr,

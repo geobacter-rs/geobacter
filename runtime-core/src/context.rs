@@ -7,7 +7,7 @@ use std::intrinsics::likely;
 use std::sync::{Arc, Weak, atomic::AtomicUsize, atomic::Ordering, };
 
 use indexvec::{Idx, IndexVec};
-use parking_lot::{RwLock, RwLockUpgradableReadGuard, MappedRwLockReadGuard,
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard, MappedRwLockReadGuard,
                   RwLockReadGuard, RwLockWriteGuard, };
 
 use rustc_span::SessionGlobals;
@@ -79,9 +79,36 @@ pub struct Context(Arc<ContextData>);
 unsafe impl Send for Context { }
 unsafe impl Sync for Context { }
 
+static mut CTX: Option<WeakContext> = None;
+
 impl Context {
+  pub fn global() -> Option<Context> {
+    // CTX can only be written during context initialization, which will run an acquire fence.
+    // Otherwise this races, but that's NBD because this will just return None in that case
+    unsafe {
+      if let Some(ctx) = CTX.clone() {
+        if let Some(ctx) = ctx.upgrade() {
+          return Some(ctx);
+        }
+      }
+    }
+    None
+  }
+
   pub fn new() -> Result<Context, Box<dyn Error>> {
     use crate::rustc_span::edition::Edition;
+
+    if let Some(ctx) = Self::global() {
+      return Ok(ctx);
+    }
+
+    lazy_static::lazy_static! {
+      static ref INIT: Mutex<()> = parking_lot::const_mutex(());
+    }
+    let _ = INIT.lock(); // ensure only one of us is created
+    if let Some(ctx) = Self::global() {
+      return Ok(ctx);
+    }
 
     crate::utils::env::initialize();
 
@@ -133,6 +160,12 @@ impl Context {
     let data = Arc::new(data);
     let context = Context(data);
 
+    // now install the global ref:
+    let weak = context.downgrade_ref();
+    unsafe {
+      CTX = Some(weak);
+    }
+
     Ok(context)
   }
 
@@ -183,6 +216,26 @@ impl Context {
       .map(|accel| accel.clone() );
 
     Ok(r)
+  }
+
+  pub fn get_accel_ref(&self, id: AcceleratorId)
+                       -> Option<MappedRwLockReadGuard<dyn Accelerator>>
+  {
+    RwLockReadGuard::try_map(self.0.m.read(), |b| {
+      b.accelerators.get(id)
+        .and_then(|t| t.as_ref() )
+        .map(|accel| &**accel)
+    }).ok()
+  }
+  pub fn get_dev_ref<T>(&self, id: AcceleratorId)
+                        -> Option<MappedRwLockReadGuard<T>>
+    where T: Device,
+  {
+    let b = self.get_accel_ref(id)?;
+    MappedRwLockReadGuard::try_map(b, |accel| {
+      T::downcast_ref(accel)
+    })
+      .ok()
   }
 
   pub fn take_accel_id(&self) -> AcceleratorId {
@@ -253,6 +306,9 @@ unsafe impl Send for WeakContext { }
 unsafe impl Sync for WeakContext { }
 
 impl WeakContext {
+  pub fn new() -> Self {
+    WeakContext(Weak::new())
+  }
   pub fn upgrade(&self) -> Option<Context> {
     self.0.upgrade()
       .map(|v| Context(v) )

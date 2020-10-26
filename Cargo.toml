@@ -38,5 +38,5 @@ geobacter-runtime-amd-macros = { path = "runtime-amd-macros" }
 geobacter-runtime-amd = { path = "runtime-amd" }
 geobacter-runtime-nv = { path = "runtime-nv" }
 geobacter-runtime-vk = { path = "runtime-vk" }
-alloc-wg = { git = "https://github.com/TimDiekmann/alloc-wg.git" }
+alloc-wg = { git = "https://github.com/geobacter-rs/alloc-wg.git" }
 vulkano = { path = "../vulkano/vulkano" }

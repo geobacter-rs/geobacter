@@ -22,8 +22,8 @@ impl RegionAlloc {
 }
 
 unsafe impl AllocRef for RegionAlloc {
-  fn alloc(&mut self, layout: Layout)
-    -> Result<NonNull<[u8]>, AllocErr>
+  fn alloc(&self, layout: Layout)
+    -> Result<NonNull<[u8]>, AllocError>
   {
     unsafe {
       let bytes = layout.size();
@@ -47,9 +47,9 @@ unsafe impl AllocRef for RegionAlloc {
       let mut dest = 0 as *mut c_void;
       let dest_ptr = &mut dest as *mut *mut c_void;
       check_err!(ffi::hsa_memory_allocate(self.region.0, len as _, dest_ptr))
-        .ok().ok_or(AllocErr)?;
+        .ok().ok_or(AllocError)?;
 
-      if dest == null_mut() { return Err(AllocErr); }
+      if dest == null_mut() { return Err(AllocError); }
 
       // now align the pointer
       if align > self.alignment {
@@ -64,7 +64,7 @@ unsafe impl AllocRef for RegionAlloc {
       Ok(NonNull::from(s))
     }
   }
-  unsafe fn dealloc(&mut self, ptr: NonNull<u8>, layout: Layout) {
+  unsafe fn dealloc(&self, ptr: NonNull<u8>, layout: Layout) {
     if layout.size() != 0 {
       self.region.deallocate(ptr.as_ptr())
         // Should errors be ignored instead of panicking?
@@ -72,24 +72,24 @@ unsafe impl AllocRef for RegionAlloc {
     }
   }
 
-  unsafe fn grow(&mut self,
+  unsafe fn grow(&self,
                  ptr: NonNull<u8>,
                  old_layout: Layout,
                  new_layout: Layout)
-    -> Result<NonNull<[u8]>, AllocErr>
+    -> Result<NonNull<[u8]>, AllocError>
   {
     let new_size = new_layout.size();
     let old_size = old_layout.size();
     if new_size < old_size {
-      return Err(AllocErr);
+      return Err(AllocError);
     }
     if old_layout.align() < new_layout.align() {
-      return Err(AllocErr);
+      return Err(AllocError);
     }
     if old_size != 0 {
       let inplace_layout = old_layout
         .align_to(self.granule)
-        .map_err(|_| AllocErr)?
+        .map_err(|_| AllocError)?
         .pad_to_align();
       if new_layout.size() <= inplace_layout.size() {
         // we can do it in-place here
@@ -110,11 +110,11 @@ unsafe impl AllocRef for RegionAlloc {
     self.dealloc(ptr, old_layout);
     Ok(new_ptr)
   }
-  unsafe fn grow_zeroed(&mut self,
+  unsafe fn grow_zeroed(&self,
                         ptr: NonNull<u8>,
                         old_layout: Layout,
                         new_layout: Layout)
-    -> Result<NonNull<[u8]>, AllocErr>
+    -> Result<NonNull<[u8]>, AllocError>
   {
     let mut new_ptr = self.grow(ptr, old_layout, new_layout)?;
     let t = &mut new_ptr.as_mut()[old_layout.size()..new_layout.size()];
@@ -123,19 +123,19 @@ unsafe impl AllocRef for RegionAlloc {
     Ok(new_ptr)
   }
 
-  unsafe fn shrink(&mut self,
+  unsafe fn shrink(&self,
                    ptr: NonNull<u8>,
                    old_layout: Layout,
                    new_layout: Layout)
-    -> Result<NonNull<[u8]>, AllocErr>
+    -> Result<NonNull<[u8]>, AllocError>
   {
     let old_size = old_layout.size();
     let new_size = new_layout.size();
     if new_size > old_size {
-      return Err(AllocErr);
+      return Err(AllocError);
     }
     if old_layout.align() < new_layout.align() {
-      return Err(AllocErr);
+      return Err(AllocError);
     }
     if new_size == 0 {
       self.dealloc(ptr, old_layout);

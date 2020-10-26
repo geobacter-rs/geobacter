@@ -12,12 +12,14 @@ use serde::{Serialize, Deserialize, };
 use ApiContext;
 use crate::error::Error;
 use ffi;
+use std::num::NonZeroU64;
 
 macro_rules! agent_info {
   ($self:expr, $id:expr, $out:expr) => {
     {
       let mut out = $out;
-      check_err!(ffi::hsa_agent_get_info($self.0, $id, out.as_mut_ptr() as *mut _) => out)
+      let __agent = ffi::hsa_agent_s { handle: $self.0.get(), };
+      check_err!(ffi::hsa_agent_get_info(__agent, $id, out.as_mut_ptr() as *mut _) => out)
     }
   }
 }
@@ -349,9 +351,15 @@ pub struct IsaInfo {
 }
 
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct Agent(pub(crate) ffi::hsa_agent_t,
-                 pub(crate) ApiContext);
+#[repr(transparent)]
+pub struct Agent(pub(crate) NonZeroU64, pub(crate) ApiContext);
 impl Agent {
+  #[inline(always)]
+  pub(crate) fn handle(&self) -> ffi::hsa_agent_t {
+    ffi::hsa_agent_s {
+      handle: self.0.get(),
+    }
+  }
   pub fn name(&self) -> Result<String, Error> {
     let bytes = agent_info!(self, ffi::hsa_agent_info_t_HSA_AGENT_INFO_NAME, [0u8; 64])?;
     let mut str = &bytes[..];
@@ -432,7 +440,10 @@ impl Agent {
     }
 
     let mut out: Vec<Cache> = vec![];
-    Ok(check_err!(ffi::hsa_agent_iterate_caches(self.0, Some(get),
+    let agent = ffi::hsa_agent_s {
+      handle: self.0.get(),
+    };
+    Ok(check_err!(ffi::hsa_agent_iterate_caches(agent, Some(get),
                                                 transmute(&mut out)) => out)?)
   }
 
@@ -447,7 +458,10 @@ impl Agent {
     }
 
     let mut out: Vec<Isa> = vec![];
-    Ok(check_err!(ffi::hsa_agent_iterate_isas(self.0, Some(get),
+    let agent = ffi::hsa_agent_s {
+      handle: self.0.get(),
+    };
+    Ok(check_err!(ffi::hsa_agent_iterate_isas(agent, Some(get),
                                               transmute(&mut out)) => out)?)
   }
 
@@ -481,7 +495,7 @@ impl Agent {
   }
 
   #[doc(hidden)]
-  pub unsafe fn raw_handle(&self) -> ffi::hsa_agent_t { self.0 }
+  pub unsafe fn raw_handle(&self) -> ffi::hsa_agent_t { self.handle() }
 }
 impl ::ContextRef for Agent {
   fn context(&self) -> &ApiContext { &self.1 }
@@ -492,7 +506,7 @@ impl fmt::Debug for Agent {
     let name = name.as_ref()
       .map(|v| v.as_ref() )
       .unwrap_or_else(|_| "<bad name!>" );
-    write!(f, "Agent({}, \"{}\")", self.0.handle, name)
+    write!(f, "Agent({}, \"{}\")", self.handle().handle, name)
   }
 }
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -514,14 +528,21 @@ impl ApiContext {
   pub fn agents(&self) -> Result<Vec<Agent>, Error> {
     extern "C" fn get_agent(agent_out: ffi::hsa_agent_t,
                             agents: *mut c_void) -> ffi::hsa_status_t {
-      let agents: &mut Vec<Agent> = unsafe {
+      let agents: &mut Vec<Option<Agent>> = unsafe {
         transmute(agents)
       };
-      agents.push(Agent(agent_out, ApiContext::upref()));
+      let agent = NonZeroU64::new(agent_out.handle)
+        .map(|agent| Agent(agent, ApiContext::upref()) );
+      agents.push(agent);
       ffi::hsa_status_t_HSA_STATUS_SUCCESS
     }
 
-    let mut out: Vec<Agent> = vec![];
-    Ok(check_err!(ffi::hsa_iterate_agents(Some(get_agent), transmute(&mut out)) => out)?)
+    let mut out: Vec<Option<Agent>> = vec![];
+    check_err!(ffi::hsa_iterate_agents(Some(get_agent), transmute(&mut out)) => ())?;
+
+    let out = out.into_iter()
+      .filter_map(|v| v )
+      .collect();
+    Ok(out)
   }
 }

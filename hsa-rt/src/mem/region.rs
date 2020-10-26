@@ -208,7 +208,7 @@ impl Agent {
     }
 
     let mut out: Vec<Region> = vec![];
-    Ok(check_err!(ffi::hsa_agent_iterate_regions(self.0, Some(get),
+    Ok(check_err!(ffi::hsa_agent_iterate_regions(self.handle(), Some(get),
                                                  transmute(&mut out)) => out)?)
   }
 }

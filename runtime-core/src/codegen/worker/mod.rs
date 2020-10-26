@@ -285,7 +285,7 @@ impl<P> WorkerTranslatorData<P>
       let diag = DiagnosticOutput::Default;
       let lint_caps = Default::default();
       let mut sess = rustc_session::build_session(opts, None, registry,
-                                                  diag, lint_caps, None);
+                                                  diag, lint_caps, None, None);
 
       sess.init_crate_types(sess.opts.crate_types.clone());
       sess.recursion_limit.set(Limit::new(512)).unwrap();
@@ -408,7 +408,8 @@ impl<P> WorkerTranslatorData<P>
     info!("translating {:?}, hash: 0x{:x}",
           instance, hash);
 
-    let codegen = get_codegen_backend(&sess);
+    let codegen = get_codegen_backend(&sess.opts);
+    codegen.init(&sess);
 
     // extern only providers:
     let mut local_providers = rustc_middle::ty::query::Providers::default();
@@ -446,6 +447,7 @@ impl<P> WorkerTranslatorData<P>
         inner: DUMMY_SP,
         items: vec![],
         inline: false,
+        unsafety: ast::Unsafe::No,
       },
       attrs: vec![],
       span: DUMMY_SP,

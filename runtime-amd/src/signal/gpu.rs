@@ -1,6 +1,6 @@
 //! Methods that can be run on the GPU.
 
-use std::geobacter::amdgpu::workitem::ReadFirstLane;
+use std::geobacter::amdgpu::{interrupt::send_interrupt, workitem::ReadFirstLane};
 use std::geobacter::platform::platform;
 use std::sync::atomic::Ordering;
 
@@ -10,15 +10,10 @@ use crate::signal::*;
 
 #[inline(always)]
 pub(crate) unsafe fn update_mbox(sig: &AmdSignal) {
-  extern "C" {
-    #[link_name = "llvm.amdgcn.s.sendmsg"]
-    fn sendmsg(_: i32, _: u32);
-  }
-
   if let Some(mb) = sig.event_mailbox() {
     let id = sig.event_id;
     mb.store(id as _, Ordering::Release);
-    sendmsg(1 | (0 << 4), id.read_first_lane() & 0xff);
+    send_interrupt(1 | (0 << 4), id.read_first_lane() & 0xff);
   }
 }
 
@@ -287,8 +282,7 @@ mod test {
     wait.store_screlease(0);
 
     let r = signal
-      .wait_for_zero_timeout(false, Duration::new(1, 0))
-      .expect("timeout");
+      .wait_for_zero_timeout(false, Duration::new(1, 0));
     assert!(r.is_ok());
   }
 
@@ -356,6 +350,6 @@ mod test {
     let _dev = device();
 
     let signal = GlobalSignal::new(0).unwrap();
-    assert_eq!(AmdHsaSignal::load(&signal, Ordering::Relaxed), 0);
+    assert_eq!(signal.amd_load(Ordering::Relaxed), 0);
   }
 }

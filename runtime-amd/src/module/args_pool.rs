@@ -161,19 +161,19 @@ unsafe impl<P> AllocRef for ArgsPoolAlloc<P>
   where P: Deref<Target = ArgsPool>,
 {
   #[inline(always)]
-  fn alloc(&mut self, _layout: Layout) -> Result<NonNull<[u8]>, AllocErr> {
-    Err(AllocErr)
+  fn alloc(&self, _layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+    Err(AllocError)
   }
   #[inline(always)]
-  unsafe fn dealloc(&mut self, _ptr: NonNull<u8>, _layout: Layout) {
+  unsafe fn dealloc(&self, _ptr: NonNull<u8>, _layout: Layout) {
     // no-op
   }
 
   #[inline(always)]
-  unsafe fn shrink(&mut self, ptr: NonNull<u8>,
+  unsafe fn shrink(&self, ptr: NonNull<u8>,
                    _old_layout: Layout,
                    new_layout: Layout)
-    -> Result<NonNull<[u8]>, AllocErr>
+    -> Result<NonNull<[u8]>, AllocError>
   {
     let ptr = if new_layout.size() == 0 {
       new_layout.dangling()

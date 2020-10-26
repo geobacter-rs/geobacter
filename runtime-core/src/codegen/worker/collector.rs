@@ -182,8 +182,10 @@ pub fn collect_items_rec<'tcx>(tcx: TyCtxt<'tcx>,
         let ty = instance.ty(tcx, ParamEnv::reveal_all());
         visit_drop_use(tcx, ty, true, &mut output);
 
-        if let Ok(val) = tcx.const_eval_poly(def_id) {
-          collect_const_value(tcx, val, &mut output);
+        if let Ok(alloc) = tcx.eval_static_initializer(def_id) {
+          for &((), id) in alloc.relocations().values() {
+            collect_miri(tcx, id, &mut output);
+          }
         }
       },
       MonoItem::Fn(instance) => {

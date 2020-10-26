@@ -212,7 +212,7 @@ impl<G, F> Descriptor<G, F>
         let slice_pitch = slice_pitch.unwrap_or_default();
 
         check_err! {
-          ffi::hsa_ext_image_data_get_info_with_layout(agent.0, &ffi, access as _,
+          ffi::hsa_ext_image_data_get_info_with_layout(agent.handle(), &ffi, access as _,
                                                        ffi::hsa_ext_image_data_layout_t_HSA_EXT_IMAGE_DATA_LAYOUT_LINEAR,
                                                        row_pitch as _, slice_pitch as _,
                                                        &mut out) => out
@@ -220,7 +220,7 @@ impl<G, F> Descriptor<G, F>
       },
       layout::Layout::Opaque => {
         check_err! {
-          ffi::hsa_ext_image_data_get_info(agent.0, &ffi, access as _, &mut out) => out
+          ffi::hsa_ext_image_data_get_info(agent.handle(), &ffi, access as _, &mut out) => out
         }
       },
     }
@@ -577,7 +577,7 @@ impl<A, F, G, L, R> Image<A, F, G, L, R>
 
     let region = region.try_into()?;
     check_err!(
-      ffi::hsa_ext_image_clear(self.agent.0, self.handle, v as *const _ as *const _,
+      ffi::hsa_ext_image_clear(self.agent.handle(), self.handle, v as *const _ as *const _,
                                &region)
     )
   }
@@ -615,7 +615,7 @@ impl<A, F, G, L, R> Image<A, F, G, L, R>
     range.hsa_dim(&mut ffi_range)?;
 
     check_err!(
-      ffi::hsa_ext_image_copy(self.agent.0, src.handle, &ffi_src_offset,
+      ffi::hsa_ext_image_copy(self.agent.handle(), src.handle, &ffi_src_offset,
                               self.handle, &ffi_dst_offset, &ffi_range)
     )
   }
@@ -653,7 +653,7 @@ impl<A, F, G, L, R> Image<A, F, G, L, R>
     let src_ptr = src.as_ptr() as *const c_void;
 
     check_err!(
-      ffi::hsa_ext_image_import(self.agent.0, src_ptr,
+      ffi::hsa_ext_image_import(self.agent.handle(), src_ptr,
                                 row_pitch as _, slice_pitch as _,
                                 self.handle, &ffi_region)
     )
@@ -691,7 +691,7 @@ impl<A, F, G, L, R> Image<A, F, G, L, R>
     let dst_ptr = dst.as_mut_ptr() as *mut c_void;
 
     check_err!(
-      ffi::hsa_ext_image_export(self.agent.0, self.handle,
+      ffi::hsa_ext_image_export(self.agent.handle(), self.handle,
                                 dst_ptr, row_pitch as _, slice_pitch as _,
                                 &ffi_region)
     )
@@ -718,7 +718,7 @@ impl<A, F, G, L, R> Image<A, F, G, L, R>
     match self.l.into() {
       Layout::Opaque => {
         check_err!(
-          ffi::hsa_ext_image_create(self.agent.0, &ffi, ptr, access, &mut out)
+          ffi::hsa_ext_image_create(self.agent.handle(), &ffi, ptr, access, &mut out)
         )?;
       },
       Layout::Linear {
@@ -728,7 +728,7 @@ impl<A, F, G, L, R> Image<A, F, G, L, R>
         let row_pitch = row_pitch.unwrap_or_default();
         let slice_pitch = slice_pitch.unwrap_or_default();
         check_err!(
-          ffi::hsa_ext_image_create_with_layout(self.agent.0, &ffi, ptr, access,
+          ffi::hsa_ext_image_create_with_layout(self.agent.handle(), &ffi, ptr, access,
                                                 layout, row_pitch as _, slice_pitch as _,
                                                 &mut out)
         )?;
@@ -766,7 +766,7 @@ impl<A, F, G, L, R> Drop for Image<A, F, G, L, R>
 {
   fn drop(&mut self) {
     unsafe {
-      ffi::hsa_ext_image_destroy(self.agent.0, self.handle);
+      ffi::hsa_ext_image_destroy(self.agent.handle(), self.handle);
     }
   }
 }
@@ -851,14 +851,14 @@ impl Agent {
     match layout.into() {
       Layout::Opaque => {
         check_err!(
-          ffi::hsa_ext_image_get_capability(self.0, ffi_geometry,
+          ffi::hsa_ext_image_get_capability(self.handle(), ffi_geometry,
                                             &ffi_format, &mut out)
         )?;
       },
       Layout::Linear { .. } => {
         let layout = ffi::hsa_ext_image_data_layout_t_HSA_EXT_IMAGE_DATA_LAYOUT_LINEAR;
         check_err!(
-          ffi::hsa_ext_image_get_capability_with_layout(self.0, ffi_geometry,
+          ffi::hsa_ext_image_get_capability_with_layout(self.handle(), ffi_geometry,
                                                         &ffi_format, layout,
                                                         &mut out)
         )?;
@@ -909,7 +909,7 @@ impl Agent {
     match layout.into() {
       Layout::Opaque => {
         check_err!(
-          ffi::hsa_ext_image_create(self.0, &ffi, data.data.as_ptr() as *const _,
+          ffi::hsa_ext_image_create(self.handle(), &ffi, data.data.as_ptr() as *const _,
                                     access.into() as _, &mut out)
         )?;
       },
@@ -920,7 +920,7 @@ impl Agent {
         let row_pitch = row_pitch.unwrap_or_default();
         let slice_pitch = slice_pitch.unwrap_or_default();
         check_err!(
-          ffi::hsa_ext_image_create_with_layout(self.0, &ffi,
+          ffi::hsa_ext_image_create_with_layout(self.handle(), &ffi,
                                                 data.data.as_ptr() as *const _,
                                                 access.into() as _,
                                                 layout, row_pitch as _ , slice_pitch as _,

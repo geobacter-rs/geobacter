@@ -17,4 +17,4 @@ nd = { package = "ndarray", version = "0.13.0", features = ["approx"] }
 approx = "0.3.2"
 rand = { version = "0.7.3", features = ["small_rng"] }
 num-traits = "0.2.11"
-packed_simd = { git = "https://github.com/rust-lang-nursery/packed_simd.git" }
+packed_simd = { package = "packed_simd_2", version = "0.3.4" }

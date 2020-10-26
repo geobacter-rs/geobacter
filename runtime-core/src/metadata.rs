@@ -133,7 +133,7 @@ impl CrateMetadataLoader {
       // see if it is a rustc plugin. If so, we must skip it!
       let root = object.owner_blob().get_root();
       if root.plugin_registrar_fn.is_some() ||
-        root.proc_macro_decls_static.is_some() {
+        root.proc_macro_data.is_some() {
         continue 'outer;
       }
 

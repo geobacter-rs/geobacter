@@ -80,7 +80,7 @@ impl<T> RawPoolBox<T>
 impl<T> RawPoolBox<[T]>
   where T: Sized,
 {
-  pub unsafe fn new_uninit_slice(mut pool: MemoryPoolAlloc, count: usize)
+  pub unsafe fn new_uninit_slice(pool: MemoryPoolAlloc, count: usize)
     -> Result<Self, Error>
   {
     let layout = Layout::new::<T>()

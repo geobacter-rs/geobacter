@@ -52,6 +52,27 @@ impl<T> BoxPoolPtr for LapVec<T> {
     Some(MemoryPoolPtr::from_ptr(pool, ptr).into_bytes())
   }
 }
+impl<T> BoxPoolPtr for LapArc<T>
+  where T: ?Sized,
+{
+  #[doc(hidden)]
+  unsafe fn pool_ptr(&self) -> Option<MemoryPoolPtr<[u8]>> {
+    let pool = LapArc::alloc_ref(self).pool().clone();
+    let ptr = LapArc::as_inner_ptr(self);
+    Some(MemoryPoolPtr::from_ptr(pool, ptr))
+  }
+}
+impl<T> BoxPoolPtr for LapWeak<T>
+  where T: ?Sized,
+{
+  #[doc(hidden)]
+  unsafe fn pool_ptr(&self) -> Option<MemoryPoolPtr<[u8]>> {
+    let pool = self.alloc_ref()?.pool().clone();
+    let ptr = self.as_inner_ptr()?;
+    Some(MemoryPoolPtr::from_ptr(pool, ptr))
+  }
+}
+
 
 /// A host to device memory transfer. Can be used as a queue dependency.
 /// You don't construct this type directly; an implementation of `H2DMemcpyGroup`

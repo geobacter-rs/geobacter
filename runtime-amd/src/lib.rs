@@ -64,7 +64,6 @@ extern crate geobacter_runtime_amd_macros;
 pub use geobacter_runtime_amd_macros::*;
 
 use std::any::Any;
-use std::cell::UnsafeCell;
 use std::cmp::max;
 use std::collections::{BTreeMap, };
 use std::convert::*;
@@ -360,10 +359,8 @@ impl HsaAmdGpuAccel {
   /// region *are not cache-coherent* with the CPU, thus this is unsafe.
   pub unsafe fn coarse_lap_node_alloc(&self, node: u32) -> alloc::LapAlloc {
     alloc::LapAlloc {
-      id: self.id(),
-      device_agent: self.agent().clone(),
-      pool: self.host_nodes()[node as usize].coarse.clone(),
-      accessible: UnsafeCell::new(None),
+      pool: self.host_nodes()[node as usize].coarse.pool(),
+      accessible: Default::default(),
     }
   }
   /// Returns an allocator interface for allocating in the provided NUMA node
@@ -371,14 +368,12 @@ impl HsaAmdGpuAccel {
   /// region are cache-coherent with the CPU.
   pub fn fine_lap_node_alloc(&self, node: u32) -> alloc::LapAlloc {
     alloc::LapAlloc {
-      id: self.id(),
-      device_agent: self.agent().clone(),
       pool: self.host_nodes[node as usize]
         .fine
         .as_ref()
         .unwrap()
-        .clone(),
-      accessible: UnsafeCell::new(None),
+        .pool(),
+      accessible: Default::default(),
     }
   }
 
@@ -579,7 +574,7 @@ impl HsaAmdGpuAccel {
     where T: Sized + Unpin,
   {
     let mut v = LapVec::try_with_capacity_in(count,
-                                             self.clone().into())?;
+                                             self.into())?;
     v.set_len(count);
     let mut v = v.try_into_boxed_slice()?;
     v.add_access(&*self)?;
@@ -588,7 +583,7 @@ impl HsaAmdGpuAccel {
   pub fn alloc_host_visible<T>(self: &Arc<Self>, v: T) -> Result<LapBox<T>, Error>
     where T: Sized,
   {
-    let mut v = LapBox::new_in(v, self.clone().into());
+    let mut v = LapBox::new_in(v, self.into());
     v.add_access(&*self)?;
     Ok(v)
   }

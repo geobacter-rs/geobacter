@@ -152,7 +152,7 @@ impl Agent {
     let callback_data_ptr = 0 as *mut _;
 
     let mut out: *mut ffi::hsa_queue_t = unsafe { uninit() };
-    check_err!(ffi::hsa_queue_create(self.0, size as _, queue_type,
+    check_err!(ffi::hsa_queue_create(self.handle(), size as _, queue_type,
                                      None, callback_data_ptr,
                                      private_segment_size, group_segment_size,
                                      &mut out as *mut _))?;
@@ -175,7 +175,7 @@ impl Agent {
     let callback_data_ptr = 0 as *mut _;
 
     let mut out: *mut ffi::hsa_queue_t = unsafe { uninit() };
-    check_err!(ffi::hsa_queue_create(self.0, size as _, queue_type,
+    check_err!(ffi::hsa_queue_create(self.handle(), size as _, queue_type,
                                      None, callback_data_ptr,
                                      private_segment_size, group_segment_size,
                                      &mut out as *mut _))?;
@@ -220,7 +220,7 @@ impl Agent {
       .unwrap_or(0 as *mut _);
 
     let mut out: *mut ffi::hsa_queue_t = unsafe { uninit() };
-    check_err!(ffi::hsa_queue_create(self.0, size as _, queue_type,
+    check_err!(ffi::hsa_queue_create(self.handle(), size as _, queue_type,
                                      callback_ffi_fn, callback_data_ptr,
                                      private_segment_size, group_segment_size,
                                      &mut out as *mut _))?;
@@ -267,7 +267,7 @@ impl Agent {
       .unwrap_or(0 as *mut _);
 
     let mut out: *mut ffi::hsa_queue_t = unsafe { uninit() };
-    check_err!(ffi::hsa_queue_create(self.0, size as _, queue_type,
+    check_err!(ffi::hsa_queue_create(self.handle(), size as _, queue_type,
                                      callback_ffi_fn, callback_data_ptr,
                                      private_segment_size, group_segment_size,
                                      &mut out as *mut _))?;
