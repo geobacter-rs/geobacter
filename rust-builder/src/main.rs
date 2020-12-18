@@ -187,10 +187,6 @@ trait Builder {
   fn docs_enabled(&self) -> bool;
 
   fn check_required_tools(&self) -> Result<(), Box<dyn Error>> {
-    if which("chrpath").is_err() {
-      return Err("I need `chrpath` somewhere in PATH".into());
-    }
-
     if self.rustup_enabled() && which("rustup").is_err() {
       return Err("I need `rustup` somewhere in PATH".into());
     }
