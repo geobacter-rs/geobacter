@@ -228,6 +228,8 @@ assertions = {}
     }
     if which("ninja").is_ok() {
       writeln!(config, "ninja = true").unwrap();
+    } else {
+      writeln!(config, "ninja = false").unwrap();
     }
     write!(config, r#"
 targets = "X86;ARM;AMDGPU;AArch64;Mips;PowerPC;SystemZ;MSP430;Sparc;NVPTX;Hexagon"
