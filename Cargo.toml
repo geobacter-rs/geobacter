@@ -11,9 +11,7 @@ members = ["runtime-core",
            "tools/hsa-agent-info",
            "runtime-amd", "runtime-amd-macros",
            "examples/amdgpu/trivial", "examples/amdgpu/fractal",
-           "examples/amdgpu/gemm", "examples/amdgpu/conv",
-
-           "runtime-bpf",
+           "examples/amdgpu/gemm",
 
            "runtime-nv", ]
 
