@@ -152,6 +152,7 @@ trait Builder {
     cmd.current_dir(self.target_dir())
       .arg(task)
       .arg("--config").arg(self.config_path())
+      .arg("--stage").arg("2")
       .env("RUSTFLAGS_NOT_BOOTSTRAP", RUST_FLAGS);
 
     if let Some(j) = self.jobs() {
