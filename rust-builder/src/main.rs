@@ -142,7 +142,13 @@ trait Builder {
     self.src_dir().join("x.py")
   }
   fn x_py_command(&self, task: &str) -> Command {
-    let mut cmd = Command::new(self.x_py());
+    let mut cmd = if cfg!(target_env = "msvc") {
+      let mut cmd = Command::new("python");
+      cmd.arg(self.x_py());
+      cmd
+    } else {
+      Command::new(self.x_py())
+    };
     cmd.current_dir(self.target_dir())
       .arg(task)
       .arg("--config").arg(self.config_path())
