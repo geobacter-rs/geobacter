@@ -232,7 +232,7 @@ assertions = {}
       writeln!(config, "ninja = false").unwrap();
     }
     write!(config, r#"
-targets = "X86;ARM;AMDGPU;AArch64;Mips;PowerPC;SystemZ;MSP430;Sparc;NVPTX;Hexagon"
+targets = "X86;ARM;AMDGPU;AArch64;Mips;PowerPC;SystemZ;MSP430;Sparc;SPIRV;NVPTX;Hexagon"
 "#).unwrap();
     write!(config, r#"
 [build]
