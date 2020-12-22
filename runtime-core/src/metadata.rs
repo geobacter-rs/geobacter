@@ -1,4 +1,5 @@
 
+use std::convert::TryInto;
 use std::error::Error;
 use std::io;
 use std::path::{PathBuf, Path};
@@ -6,6 +7,11 @@ use std::str::Utf8Error;
 use std::{fmt};
 use std::ops::{Deref};
 use std::sync::{Arc, };
+
+use goblin::elf::Elf;
+use goblin::pe::PE;
+
+use memmap::Mmap;
 
 use rustc_data_structures::fx::{FxHashMap, };
 use rustc_data_structures::sync::MetadataRef;
@@ -22,7 +28,6 @@ use rustc_span::symbol::{Symbol};
 use snap::read::FrameDecoder;
 
 use crate::utils::{new_hash_set, };
-use std::convert::TryInto;
 
 #[derive(Debug)]
 pub enum MetadataLoadingError {
@@ -32,7 +37,7 @@ pub enum MetadataLoadingError {
   SymbolUtf(Utf8Error),
   Header,
   Deflate(PathBuf, String, io::Error),
-  Elf(goblin::error::Error),
+  ObjectFormat(goblin::error::Error),
 }
 impl Error for MetadataLoadingError { }
 impl fmt::Display for MetadataLoadingError {
@@ -46,7 +51,7 @@ impl fmt::Display for MetadataLoadingError {
       &MetadataLoadingError::SymbolUtf(ref e) => fmt::Display::fmt(e, f),
       &MetadataLoadingError::Header => f.pad("corrupt/unsupported metadata header"),
       &MetadataLoadingError::Deflate(_, _, ref e) => fmt::Display::fmt(e, f),
-      &MetadataLoadingError::Elf(ref e) => fmt::Display::fmt(e, f),
+      &MetadataLoadingError::ObjectFormat(ref e) => fmt::Display::fmt(e, f),
     }
   }
 }
@@ -67,7 +72,7 @@ impl From<io::Error> for MetadataLoadingError {
 }
 impl From<goblin::error::Error> for MetadataLoadingError {
   fn from(v: goblin::error::Error) -> Self {
-    MetadataLoadingError::Elf(v)
+    MetadataLoadingError::ObjectFormat(v)
   }
 }
 #[derive(Hash, Clone, PartialEq, Eq, Debug)]
@@ -341,24 +346,30 @@ pub struct Metadata {
 impl Metadata {
   pub fn new(src: CrateSource) -> Result<Metadata, MetadataLoadingError> {
     use std::fs::{File};
-    use std::io::{Read};
 
     use goblin::Object;
     use memmap::*;
-
-    use crate::rustc_data_structures::rayon::prelude::*;
 
     let src_file = File::open(src.as_path())?;
     let src_buffer = unsafe {
       MmapOptions::new().map(&src_file)?
     };
 
-    let object = match Object::parse(&src_buffer)? {
-      Object::Elf(elf) => elf,
+    match Object::parse(&src_buffer)? {
+      Object::Elf(elf) => Metadata::new_elf(src, &src_buffer, elf),
+      Object::PE(pe) => Metadata::new_pe(src, &src_buffer, pe),
 
       // TODO?
-      _ => panic!("can only load from elf files"),
-    };
+      _ => panic!("TODO: can't load from this object format: {}", src.as_path().display()),
+    }
+  }
+
+  fn new_elf(src: CrateSource, src_buffer: &Mmap, object: Elf)
+    -> Result<Metadata, MetadataLoadingError>
+  {
+    use std::io::{Read};
+
+    use crate::rustc_data_structures::rayon::prelude::*;
 
     let mut metadata_section = None;
     for section_header in object.section_headers.iter() {
@@ -400,10 +411,10 @@ impl Metadata {
       }
     }
 
-    let all_res: Vec<Result<_, MetadataLoadingError>> = syms.into_par_iter()
+    let all: Vec<_> = syms.into_par_iter()
       .map(|(sym, name)| {
         let start = sym.st_value as usize;
-        let end   = (sym.st_value + sym.st_size) as usize;
+        let end = (sym.st_value + sym.st_size) as usize;
         let region = &metadata_section[start..end];
 
         let md_len = METADATA_HEADER.len();
@@ -414,15 +425,30 @@ impl Metadata {
         if header != METADATA_HEADER {
           return Err(MetadataLoadingError::Header);
         }
-        let comp_start = md_len+8;
-        let encoded_len = &region[md_len..comp_start];
-        let mut le_len = [0u8; 8];
-        le_len.copy_from_slice(&encoded_len);
-        let comp_len: usize = u64::from_le_bytes(le_len)
-          .try_into()
-          .map_err(|_| MetadataLoadingError::Header )?;
-        let comp_end = comp_start + comp_len;
-        let compressed_bytes = &region[comp_start..comp_end];
+        let mut pos = md_len;
+        let sym_name_len: usize = {
+          let mut le_len = [0u8; 4];
+          le_len.copy_from_slice(&region[md_len..md_len+4]);
+          pos += 4;
+          u32::from_le_bytes(le_len)
+            .try_into()
+            .map_err(|_| MetadataLoadingError::Header )?
+        };
+        pos += sym_name_len; // We don't need to read the name for Elf; we get the name from the
+        // symbol table.
+
+        let comp_start = pos;
+        let comp_len: usize = {
+          let encoded_len = &region[comp_start..comp_start + 8];
+          let mut le_len = [0u8; 8];
+          le_len.copy_from_slice(&encoded_len);
+          pos += 8;
+          u64::from_le_bytes(le_len)
+            .try_into()
+            .map_err(|_| MetadataLoadingError::Header)?
+        };
+        let comp_end = pos + comp_len;
+        let compressed_bytes = &region[pos..comp_end];
 
         let mut inflated = Vec::new();
         FrameDecoder::new(compressed_bytes)
@@ -434,16 +460,105 @@ impl Metadata {
 
         Ok((name.to_string(), SharedMetadataBlob::new(inflated)))
       })
-      .collect();
-
-    let mut all = Vec::with_capacity(all_res.len());
-    for all_res in all_res.into_iter() {
-      all.push(all_res?);
-    }
+      .collect::<Result<Vec<_>, MetadataLoadingError>>()?;
 
     Ok(Metadata {
       src,
       owner_index: owner_index.unwrap(),
+      all,
+    })
+  }
+  fn new_pe(src: CrateSource, src_buffer: &Mmap, object: PE)
+    -> Result<Metadata, MetadataLoadingError>
+  {
+    use std::io::{Read};
+
+    use crate::rustc_data_structures::rayon::prelude::*;
+
+    let metadata_section = object.sections.iter()
+      .find(|section| {
+        match section.name() {
+          Ok(name) => name == METADATA_SECTION_NAME,
+          Err(_) => false,
+        }
+      });
+    if metadata_section.is_none() {
+      return Err(MetadataLoadingError::SectionMissing);
+    }
+    let metadata_section = metadata_section.unwrap();
+    let buffer_start = metadata_section.pointer_to_raw_data as usize;
+    let buffer_end = buffer_start + metadata_section.size_of_raw_data as usize;
+    let region = &src_buffer[buffer_start..buffer_end];
+
+    // The owner is always first.
+    let owner_index = 0;
+
+    let mut all_compressed = Vec::new();
+    let md_len = METADATA_HEADER.len();
+    let check_len = |pos, size| {
+      if region.len() <= pos + size {
+        Err(MetadataLoadingError::Header)
+      } else {
+        Ok(())
+      }
+    };
+    let mut pos = 0;
+    while (pos + (-(pos as isize) & 0xfff) as usize) < region.len() {
+      pos += (-(pos as isize) & 0xf) as usize;
+      check_len(pos, md_len)?;
+      let header = &region[pos..pos + md_len];
+      if header != METADATA_HEADER {
+        return Err(MetadataLoadingError::Header);
+      }
+      pos += md_len;
+      check_len(pos, 4)?;
+      let sym_name_len: usize = {
+        let mut le_len = [0u8; 4];
+        le_len.copy_from_slice(&region[pos..pos + 4]);
+        pos += 4;
+        u32::from_le_bytes(le_len)
+          .try_into()
+          .map_err(|_| MetadataLoadingError::Header )?
+      };
+      check_len(pos, sym_name_len)?;
+      let sym_name_bytes = &region[pos..pos + sym_name_len];
+      pos += sym_name_len;
+      let sym_name = std::str::from_utf8(sym_name_bytes)?;
+
+      check_len(pos, 8)?;
+      let comp_len: usize = {
+        let encoded_len = &region[pos..pos + 8];
+        let mut le_len = [0u8; 8];
+        le_len.copy_from_slice(&encoded_len);
+        pos += 8;
+        u64::from_le_bytes(le_len)
+          .try_into()
+          .map_err(|_| MetadataLoadingError::Header)?
+      };
+      check_len(pos, comp_len)?;
+      let comp_end = pos + comp_len;
+      let compressed_bytes = &region[pos..comp_end];
+      pos += comp_len;
+
+      all_compressed.push((sym_name, compressed_bytes));
+    }
+
+    let all = all_compressed.into_par_iter()
+      .map(|(name, compressed_bytes)| {
+        let mut inflated = Vec::new();
+        FrameDecoder::new(compressed_bytes)
+          .read_to_end(&mut inflated)
+          .map_err(|e| {
+            MetadataLoadingError::Deflate(src.as_path().into(), name.into(), e)
+          })?;
+
+        Ok((name.to_string(), SharedMetadataBlob::new(inflated)))
+      })
+      .collect::<Result<Vec<_>, MetadataLoadingError>>()?;
+
+    Ok(Metadata {
+      src,
+      owner_index,
       all,
     })
   }
