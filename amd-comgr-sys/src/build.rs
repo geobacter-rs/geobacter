@@ -9,7 +9,7 @@ pub fn main() {
 
   // XXX linux only
   let bindings = bindgen::Builder::default()
-    .header("/opt/rocm/include/amd_comgr.h")
+    .header("src/wrapper.h")
     .rust_target(bindgen::RustTarget::Nightly)
     .clang_arg("-I/opt/rocm/include")
     .clang_arg("-I/opt/rocm/hcc/lib/clang/9.0.0/include")
