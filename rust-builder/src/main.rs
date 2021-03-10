@@ -240,6 +240,8 @@ compiler-docs = true
 submodules = true
 low-priority = true
 full-bootstrap = true
+extended = true
+tools = ["cargo", "src"]
 
 [rust]
 debuginfo-level = {}
