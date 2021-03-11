@@ -1,8 +1,4 @@
-# The Geobacter Rust Compiler and Runtime :construction:
-
-This repository houses info about Geobacter; how to use it, how all these
-repositories fit together, and how Geobacter (ab)uses the Rust compiler to
-support its magic.
+# :construction: The Geobacter Rust Compiler and Runtime :construction:
 
 ## What is Geobacter?
 
