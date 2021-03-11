@@ -10,7 +10,7 @@ pub fn main() {
   let bindings = bindgen::Builder::default()
     .header("src/lib/wrapper.hpp")
     .rust_target(bindgen::RustTarget::Nightly)
-    .clang_arg("-I/opt/rocm/include/hsa")
+    .clang_arg("-I/opt/rocm/include")
     .clang_arg("-I/opt/rocm/hcc/lib/clang/9.0.0/include")
     .derive_debug(true)
     .derive_copy(true)
