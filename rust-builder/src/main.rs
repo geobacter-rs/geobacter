@@ -279,7 +279,7 @@ ar = "ar"
     run_unlogged_cmd("build-rust-docs", cmd);
   }
   fn build_toolchain(&self) {
-    let cmd = self.x_py_command("build");
+    let cmd = self.x_py_command("dist");
     run_unlogged_cmd("build-rust", cmd);
   }
   fn geobacter_driver(&self) -> PathBuf {
