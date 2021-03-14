@@ -216,6 +216,8 @@ trait Builder {
     let mut config = File::create(config).unwrap();
 
     write!(config, r#"
+changelog-seen = 2
+
 [llvm]
 release-debuginfo = {}
 assertions = {}
