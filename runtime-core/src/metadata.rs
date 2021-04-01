@@ -211,7 +211,7 @@ impl CrateMetadataLoader {
 
     let root = shared_krate.get_root();
 
-    debug!("loading from: {}, name: {}, cnum: {}",
+    warn!("loading from: {}, name: {}, cnum: {}",
            Path::new(src.file_name().unwrap()).display(),
            root.name(), cnum);
 
@@ -371,26 +371,23 @@ impl Metadata {
 
     use crate::rustc_data_structures::rayon::prelude::*;
 
-    let mut metadata_section = None;
-    for section_header in object.section_headers.iter() {
-      if section_header.sh_type == 0 { continue; }
+    let metadata_section = object.section_headers.iter()
+      .find(|section_header| {
+        if section_header.sh_type == 0 { return false; }
 
-      let name = match object.shdr_strtab.get(section_header.sh_name) {
-        Some(Ok(name)) => name,
-        _ => continue,
-      };
+        let name = match object.shdr_strtab.get(section_header.sh_name) {
+          Some(Ok(name)) => name,
+          _ => { return false; },
+        };
 
-      if name != METADATA_SECTION_NAME { continue; }
-
-      metadata_section = Some(section_header.clone());
-    }
+        name == METADATA_SECTION_NAME
+      });
     if metadata_section.is_none() {
       return Err(MetadataLoadingError::SectionMissing);
     }
     let metadata_section = metadata_section.unwrap();
     let metadata_section = &src_buffer[metadata_section.file_range()];
 
-    let mut owner_index = None;
     let syms: Vec<_> = object.syms.iter()
       .filter_map(|sym| {
         let name = match object.strtab.get(sym.st_name) {
@@ -404,12 +401,8 @@ impl Metadata {
       })
       .collect();
 
-    for (idx, &(ref sym, _)) in syms.iter().enumerate() {
-      if sym.st_value == 0 {
-        owner_index = Some(idx);
-        break;
-      }
-    }
+    let owner_index = syms.iter()
+      .position(|&(ref sym, _)| sym.st_value == 0 );
 
     let all: Vec<_> = syms.into_par_iter()
       .map(|(sym, name)| {
