@@ -6,7 +6,7 @@ use std::os::raw::{c_int, c_char};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{PathBuf};
 use std::slice::from_raw_parts;
-use std::str::{from_utf8_unchecked, from_utf8};
+use std::str::from_utf8_unchecked;
 
 use goblin::elf::dynamic::*;
 
@@ -134,6 +134,8 @@ fn runpaths() -> Vec<PathBuf> {
 fn expand_dynamic_tokens(input: impl Iterator<Item = PathBuf>)
   -> impl Iterator<Item = PathBuf>
 {
+  #![cfg_attr(test, allow(dead_code))]
+
   let mut self_exe_dir = None;
   fn get_origin<'a>(self_exe_dir: &'a mut Option<Box<[u8]>>) -> &'a [u8] {
     if let Some(dir) = self_exe_dir {
@@ -196,41 +198,42 @@ fn expand_dynamic_tokens(input: impl Iterator<Item = PathBuf>)
           break;
         }
 
+        let all = split;
         let expect_bracket = split[0] == '{' as u8;
         if expect_bracket {
           split = &split[1..];
         }
 
-        let var = if split.starts_with(ORIGIN_V) {
-          split = &split[ORIGIN_V.len()..];
+        const EMPTY: &'static [u8] = &[];
+
+        let (var, rest) = if expect_bracket {
+          split.iter().position(|&b| b == '}' as u8 )
+            .map(|i| {
+              if i + 1 >= split.len() {
+                (&split[..i], EMPTY)
+              } else {
+                (&split[..i], &split[i + 1..])
+              }
+            })
+            .unwrap_or((&split[..], EMPTY))
+        } else {
+          split.iter()
+            .position(|&b| !((b as char).is_alphanumeric() || b == '_' as u8) )
+            .map(|i| {
+              split.split_at(i)
+            })
+            .unwrap_or((&split[..], EMPTY))
+        };
+
+        let var = if var == ORIGIN_V {
           Var::Origin
-        } else if split.starts_with(LIB_V) {
-          split = &split[LIB_V.len()..];
+        } else if var == LIB_V {
           Var::Lib
-        } else if split.starts_with(PLATFORM_V) {
-          split = &split[PLATFORM_V.len()..];
+        } else if var == PLATFORM_V {
           Var::Platform
         } else {
-          let end = if expect_bracket {
-            split.iter().position(|&b| b == '}' as u8 )
-              .map(|i| i + 1 )
-              .unwrap_or(split.len())
-          } else {
-            split.iter()
-              .position(|&b| !((b as char).is_ascii_alphanumeric() || b == '_' as u8) )
-              .unwrap_or(split.len())
-          };
-
-          if let Ok(utf8) = from_utf8(&split[..end]) {
-            warn!("unknown dynamic string token: `{}`", utf8);
-          } else {
-            warn!("unknown, non-utf8, dynamic string token: `{:?}`",
-                  &split[..end]);
-          }
-          warn!("in path: {}", path.display());
-
-          split = &split[end..];
-          out.extend_from_slice(split);
+          out.push('$' as u8);
+          out.extend_from_slice(all);
           continue;
         };
 
@@ -240,10 +243,7 @@ fn expand_dynamic_tokens(input: impl Iterator<Item = PathBuf>)
           Var::Platform => get_platform(&mut platform),
         };
         out.extend_from_slice(expanded);
-        if expect_bracket {
-          split = &split[1..];
-        }
-        out.extend_from_slice(split);
+        out.extend_from_slice(rest);
       }
 
       PathBuf::from(OsString::from_vec(out))
@@ -255,4 +255,110 @@ pub fn dylib_search_paths() -> Vec<PathBuf> {
   let paths = split_paths(&paths).chain(runpaths().into_iter());
   expand_dynamic_tokens(paths)
     .collect()
+}
+
+#[cfg(test)]
+mod test {
+  use super::*;
+
+  #[test]
+  fn origin() {
+    let paths = vec![
+      PathBuf::from("$ORIGIN"),
+      PathBuf::from("${ORIGIN}"),
+    ];
+    let expanded = expand_dynamic_tokens(paths.into_iter())
+      .collect::<Vec<_>>();
+    for expanded in expanded.iter() {
+      assert!(expanded.exists() && expanded.is_dir());
+    }
+  }
+
+  #[test]
+  fn not_origin() {
+    let paths = vec![
+      PathBuf::from("$ORIGIN_NOT"),
+      PathBuf::from("${ORIGIN_NOT}"),
+    ];
+    let expanded = expand_dynamic_tokens(paths.clone().into_iter())
+      .collect::<Vec<_>>();
+    for (expanded, original) in expanded.iter().zip(paths.iter()) {
+      assert_eq!(expanded, original);
+    }
+  }
+
+  #[test]
+  fn unknown_var() {
+    let paths = vec![
+      PathBuf::from("$UNKNOWN_VAR0123456789/../lib"),
+      PathBuf::from("${UNKNOWN_VAR0123456789}/../lib"),
+    ];
+    let expanded = expand_dynamic_tokens(paths.clone().into_iter())
+      .collect::<Vec<_>>();
+    for (expanded, original) in expanded.iter().zip(paths.iter()) {
+      assert_eq!(expanded, original);
+    }
+  }
+
+  #[test]
+  fn lib() {
+    let paths = vec![
+      PathBuf::from("$LIB"),
+      PathBuf::from("${LIB}"),
+    ];
+    let expanded = expand_dynamic_tokens(paths.into_iter())
+      .collect::<Vec<_>>();
+    for expanded in expanded.iter() {
+      let expanded = expanded.to_str()
+        .expect("should always be utf8");
+      assert!(!expanded.contains("LIB"));
+    }
+  }
+
+  #[test]
+  fn platform() {
+    let paths = vec![
+      PathBuf::from("$PLATFORM"),
+      PathBuf::from("${PLATFORM}"),
+    ];
+    let expanded = expand_dynamic_tokens(paths.into_iter())
+      .collect::<Vec<_>>();
+    for expanded in expanded.iter() {
+      let expanded = expanded.to_str()
+        .expect("should always be utf8");
+      assert!(!expanded.contains("PLATFORM"));
+    }
+  }
+
+  #[test]
+  fn multiple() {
+    let paths = vec![
+      PathBuf::from("$ORIGIN/../${LIB}"),
+    ];
+    let expanded = expand_dynamic_tokens(paths.into_iter())
+      .collect::<Vec<_>>();
+    for expanded in expanded.iter() {
+      let expanded = expanded.to_str()
+        .expect("should always be utf8");
+      assert!(!expanded.contains("$"));
+      assert!(!expanded.contains("ORIGIN"));
+      assert!(!expanded.contains("LIB"));
+      assert!(expanded.contains("/../"));
+    }
+  }
+  #[test]
+  fn prefix() {
+    let paths = vec![
+      PathBuf::from("/usr/${LIB}"),
+    ];
+    let expanded = expand_dynamic_tokens(paths.into_iter())
+      .collect::<Vec<_>>();
+    for expanded in expanded.iter() {
+      let expanded = expanded.to_str()
+        .expect("should always be utf8");
+      assert!(!expanded.contains("$"));
+      assert!(!expanded.contains("LIB"));
+      assert!(expanded.starts_with("/usr/"));
+    }
+  }
 }
