@@ -211,7 +211,7 @@ impl CrateMetadataLoader {
 
     let root = shared_krate.get_root();
 
-    warn!("loading from: {}, name: {}, cnum: {}",
+    debug!("loading from: {}, name: {}, cnum: {}",
            Path::new(src.file_name().unwrap()).display(),
            root.name(), cnum);
 
