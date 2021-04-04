@@ -65,7 +65,7 @@ pub use geobacter_runtime_amd_macros::*;
 
 use std::any::Any;
 use std::cmp::max;
-use std::collections::{BTreeMap, };
+use std::collections::{BTreeMap, HashMap, hash_map::Entry as HashMapEntry};
 use std::convert::*;
 use std::error::{Error as StdError};
 use std::fmt;
@@ -803,21 +803,88 @@ impl HsaAmdGpuAccel {
     desc.kernel_abi = Abi::AmdGpuKernel;
 
     // we get the triple and gpu "cpu" from the name of the isa:
+    let full = {
+      &TargetDesc::downcast_ref(&*desc.platform)
+        .expect("accelerator target isn't HSA")
+        .isa
+        .name
+    };
+    let (triple, isa_target_features) = full.find(':')
+      .map(|idx| {
+        (&full[..idx], if idx < full.len() {
+          &full[idx + 1..]
+        } else {
+          Default::default()
+        })
+      })
+      .unwrap_or((&full[..], ""));
+
+    let mut isa_target_features = isa_target_features
+      .split(|c| c == ':' )
+      .filter_map(|feature| {
+        if feature.len() < 1 {
+          warn!("got weird GPU target triple: `{}`", full);
+          return None;
+        }
+        let (feature, pm) = feature.split_at(feature.len() - 1);
+        let pm = match pm {
+          "-" => false,
+          "+" => true,
+          _ => {
+            warn!("got weird GPU target triple: `{}`", full);
+            return None;
+          },
+        };
+
+        Some((feature, pm))
+      })
+      .collect::<HashMap<_, _>>();
+    isa_target_features["code-object-v3"] = true; // Must be enabled
+
+    let add_target_feature = |target_features: &mut HashMap<_, _>, feature| {
+      match target_features.entry(feature) {
+        HashMapEntry::Occupied(_) => {
+          // Don't override if present in the HSA ISA name
+        },
+        HashMapEntry::Vacant(v) => {
+          v.insert(true);
+        },
+      }
+    };
+
     let cpu = {
-      let triple = &desc.isa_name();
       let idx = triple.rfind('-')
         .expect("expected at least one hyphen in the AMDGPU ISA name");
       assert_ne!(idx, triple.len(),
                  "AMDGPU ISA target triple has no cpu model, or something else weird");
       triple[idx + 1..].into()
     };
+
     desc.target.llvm_target = "amdgcn-amd-amdhsa-amdgiz".into();
     desc.target.options.cpu = cpu;
 
-    desc.target.options.features = "+dpp,+s-memrealtime".into();
-    desc.target.options.features.push_str(",+code-object-v3");
+    add_target_feature(&mut isa_target_features, "dpp");
+    add_target_feature(&mut isa_target_features, "s-memrealtime");
     if desc.isa_info().fast_f16 {
-      desc.target.options.features.push_str(",+16-bit-insts");
+      add_target_feature(&mut isa_target_features, "16-bit-insts");
+    }
+
+
+    {
+      let len = isa_target_features.keys()
+        .fold(0, |acc, feature| {
+          acc + feature.len()
+        }) + 2 * isa_target_features.len() - 1;
+
+      desc.target.options.features = isa_target_features.into_iter()
+        .fold(String::with_capacity(len), |mut acc, (feature, enabled)| {
+          if !acc.is_empty() {
+            acc.push(',');
+          }
+          acc.push(if enabled { '+' } else { '-' });
+          acc.push_str(feature);
+          acc
+        });
     }
 
     desc.target.target_endian = desc.host_target
