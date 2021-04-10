@@ -839,7 +839,7 @@ impl HsaAmdGpuAccel {
         Some((feature, pm))
       })
       .collect::<HashMap<_, _>>();
-    isa_target_features["code-object-v3"] = true; // Must be enabled
+    isa_target_features.insert("code-object-v3", true); // Must be enabled
 
     let add_target_feature = |target_features: &mut HashMap<_, _>, feature| {
       match target_features.entry(feature) {
