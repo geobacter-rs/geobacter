@@ -13,6 +13,12 @@ pub struct Accessible {
 
 impl Accessible {
   #[inline(always)]
+  pub(crate) fn new_local(id: AcceleratorId) -> Self {
+    let mut this = Accessible::default();
+    this.set_mut(id);
+    this
+  }
+  #[inline(always)]
   pub(crate) fn get(&self, id: AcceleratorId) -> bool {
     let bitvec = self.bits.load(Ordering::Acquire);
     bitvec & (1u64 << id.index()) == 0

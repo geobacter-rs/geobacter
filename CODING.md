@@ -25,6 +25,11 @@ Before we begin, please note that the `geobacter_runtime_amd` crate is unstable,
 undergo breaking changes as more Things are brought into the fold of safety. Attempts will be made 
 to maintain compatibility as much as possible, but no promises.
 
+If your device has PCI-E large BAR, you'll be able to directly access your GPU memory from the CPU.
+More on this below. NOTE: Since PCI-E is such a huge nice-to-have feature, especially for Rust's
+safety desires, this feature will likely become somewhat required in the future (but probably not a
+hard requirement, just that the lack there of won't receive new features).
+
 Some general bad behaviour:
 * Calling trait objects (or virtual dispatch), this includes *all* formatting code. For two reasons:
   one, the LLVM AmdGpu target machine doesn't support it, second..
@@ -282,8 +287,40 @@ fn main() -> Result<(), Box<dyn Error>> {
 ## Device Local Memory
 
 Working with device local memory is unfortunately fairly unsafe, except if you have an
-APU (an integrated GPU), GPU memory is system RAM, and is thus always visible (accessible)
-the to CPU. But dGPUs are the powerhouses, thus we focus on them.
+APU (an integrated GPU), which uses system RAM, or your GPU and motherboard supports
+resizable PCI-E BAR.
+
+### Determining GPU Large BAR support
+
+You can query GPU memory visibility by calling `device.has_pcie_large_bar()`:
+
+```rust
+fn main() -> Result<(), Box<dyn Error>> {
+  let ctx = Context::new()?;
+  let dev = HsaAmdGpuAccel::first_device(&ctx)?;
+  let has_large_bar = dev.has_pcie_large_bar();
+  if has_large_bar {
+    // GPU memory is CPU visible! yay
+  } else {
+    // GPU memory is GPU invisible :(
+  }
+}
+```
+
+### With Large BAR
+
+In this case, `device.device_lap_alloc()` will return `Some(LapAlloc)`, which you can 
+provide to any of the `Lap*` box types. No explicit host->device copies are required;
+you also don't need to manage two pointers for the separate CPU/GPU memories.
+
+Based on my limited testing, access does not need to be granted to host CPU agents to
+access GPU memory in this case either (this is despite HSA saying access is default 
+disallowed).
+
+Note that CPU reads are especially high latency and slow. Avoid in performance critical
+code at all costs.
+
+### Without Large BAR
 
 The safest way to use GPU VRAM currently is via the `H2DMemcpyGroup` trait. Lets modify
 the previous section's code to use device local memory with this trait.
@@ -436,29 +473,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 }
 ```
 You can also group memcopies together and use a single signal for all of them, by 
-using a tree of 2-ary tuples, or via `MemcpyGroupTuple::chain`. 
-
-### Host visible VRAM
-
-Those of you coming from Vulkan/DXn know that allocating CPU visible VRAM has been 
-around since forever, making it's omission from the HSA specification odd.
-
-On Linux it is actually possible to use libdrm_amdgpu directly to allocate VRAM which
-host visible, though there is quite a bit of complexity to update the GPUs buffer
-resource lists (it seems one must manage a libdrm_amdgpu cs command ring) so the GPU
-can actually use the memory. (Perhaps supporting Vulkan instead wouldn't be so bad..)
-
-In the future, Geobacter's Amd runtime will likely go this route so that GPU VRAM
-`Box`es can be moved freely between device and host. Host access won't be fast, but
-it'll work.
-
-If you have a GPU and motherboard with PCIe Large Bar enabled, you can allocate GPU
-memory (ie using `RawPoolBox`) and it will be Host accessible. HSA doesn't tell us this
-fact however, so you'll have to know this fact a-priori.
+using a tree of 2-ary tuples, or via `MemcpyGroupTuple::chain`.
 
 ## Textures
 
-Textures are supported, and always live in device memory. The HSA spec has details on
+Textures are supported, and always live in device memory (attempts to put textures
+in host memory will be met with GPU segfaults). The HSA spec has details on
 what's supported. To use:
 
 ```rust
@@ -523,3 +543,7 @@ fn kernel(&self, vp: KVectorParams<Self>) {
 
 The hardware always reads pixels in RGBA order. The channel order in the Image type
 specifies the order used for importing and exporting on the host.
+
+You can directly read/write GPU texture memory if you have Large BAR support, but note
+that the texture data layout is technically implementation defined unless you use the
+`Linear` layout.

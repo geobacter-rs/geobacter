@@ -175,6 +175,8 @@ pub struct HsaAmdGpuAccel {
   // TODO need to create a `geobacter_runtime_host` crate
   //host_codegen: CodegenUnsafeSyncComms<Self>,
   self_codegen: Option<Arc<CodegenDriver<Codegenner>>>,
+
+  has_pcie_large_bar: bool,
 }
 
 impl HsaAmdGpuAccel {
@@ -264,6 +266,7 @@ impl HsaAmdGpuAccel {
       .info()?;
     let target_desc = TargetDesc {
       isa,
+      has_pcie_large_bar: false,
     };
 
     let mut out = HsaAmdGpuAccel {
@@ -286,7 +289,9 @@ impl HsaAmdGpuAccel {
       kernarg_region,
 
       self_codegen: None,
+      has_pcie_large_bar: false,
     };
+    out.determine_large_bar_support();
     out.init_target_desc()?;
 
     let gpu = &out.target_desc.target.options.cpu;
@@ -364,6 +369,8 @@ impl HsaAmdGpuAccel {
   pub fn isa_info(&self) -> &IsaInfo { self.target_desc.isa_info() }
   pub fn agent(&self) -> &Agent { &self.device.agent }
   pub fn kernargs_region(&self) -> &RegionAlloc { &self.kernarg_region }
+  #[inline(always)]
+  pub fn has_pcie_large_bar(&self) -> bool { self.has_pcie_large_bar }
 
   pub fn numa_node_len(&self) -> u32 { self.host_nodes().len() as _ }
 
@@ -387,6 +394,47 @@ impl HsaAmdGpuAccel {
         .unwrap()
         .pool(),
       accessible: Default::default(),
+    }
+  }
+
+  /// If this device's PCI-E BAR is large enough to map the entire device memory,
+  /// return an LAP allocator for use as a box allocator. Returns None if not supported.
+  /// PCI-E large BAR allows the entire GPU RAM to be read and written by the CPU, which,
+  /// it should be obvious, is a *very* convenient feature to have for Rust's safety.
+  ///
+  /// Perf note: This is not the memory you want to use if the CPU will read it often
+  /// or in performance critical paths; reads are *never* cached on the CPU (thus every
+  /// read must traverse the PCI-E bus). Furthermore, these reads won't be able to
+  /// saturate the PCI-E bus; to saturate the bus, have the GPU's DMA engine (AMDGPUs
+  /// typically have a few) do the transfer, by calling `Self::unchecked_async_copy_from`.
+  ///
+  /// Writing to this memory will saturate the PCI-E bus however, assuming you're not
+  /// just writing a single byte or something. Note that these writes will occupy GPU
+  /// memory throughput; so if the GPU is also running a bandwidth constrained task
+  /// (like dense GEMM), you'll see a perf drop during the write.
+  ///
+  /// One great use for this is types which have drops: you don't have to manually
+  /// implement a kernel to run Drop code nor hold handles to queues etc for such
+  /// purposes.
+  pub fn device_lap_alloc(&self) -> Option<alloc::LapAlloc> {
+    if self.has_pcie_large_bar {
+      Some(unsafe {
+        self.unchecked_device_lap_alloc()
+      })
+    } else {
+      None
+    }
+  }
+
+  /// Returns a device memory `LapAlloc` suitable for use in the host visible box types
+  /// (Box, Rc, Arc, Vec, etc). This is only safe if you know your motherboard+GPU combo
+  /// supports resizable BAR (and your OS has properly configured it).
+  /// Note: this function doesn't check for large bar support status; it is assumed you
+  /// have checked previously.
+  pub unsafe fn unchecked_device_lap_alloc(&self) -> alloc::LapAlloc {
+    alloc::LapAlloc {
+      pool: self.device.coarse.pool(),
+      accessible: alloc::accessible::Accessible::new_local(self.id),
     }
   }
 
@@ -800,18 +848,31 @@ impl fmt::Debug for HsaAmdGpuAccel {
       .field("host_nodes", &self.host_nodes)
       .field("device", &self.device)
       .field("kernargs_region", &self.kernarg_region)
+      .field("has_pcie_large_bar", &self.has_pcie_large_bar)
       .finish()
   }
 }
 
 // private methods
 impl HsaAmdGpuAccel {
+  /// PCI-E Large BAR is present if the AMD device local pool accessibility
+  /// against the CPU agent is not `AgentAccess::Never`.
+  /// Oddly, it doesn't seem like one needs to explicitly grant access to the CPU
+  /// agents.
+  fn determine_large_bar_support(&mut self) {
+    let accessible = self.device_pool()
+      .agent_access(self.first_host_agent())
+      .map(|access| !access.never_allowed() )
+      .unwrap_or_default();
+    self.has_pcie_large_bar = accessible;
+  }
   fn init_target_desc(&mut self) -> Result<(), Error> {
     use rustc_target::spec::{PanicStrategy, abi::Abi, AddrSpaceKind,
                              AddrSpaceIdx, AddrSpaceProps, CodeModel};
 
     let desc = Arc::get_mut(&mut self.target_desc).unwrap();
 
+    desc.has_pcie_large_bar = self.has_pcie_large_bar;
     desc.allow_indirect_function_calls = true;
     desc.kernel_abi = Abi::AmdGpuKernel;
 
@@ -991,6 +1052,7 @@ impl HsaAmdGpuAccel {
 #[derive(Clone, Debug, Serialize, Deserialize, Hash, Eq, PartialEq)]
 pub struct TargetDesc {
   isa: IsaInfo,
+  has_pcie_large_bar: bool,
 }
 impl PlatformTargetDesc for TargetDesc {
   fn as_any_hash(&self) -> &dyn any_key::AnyHash {
@@ -1003,6 +1065,8 @@ pub trait HsaAmdTargetDescHelper {
 
   fn isa_info(&self) -> &IsaInfo { &self.platform_data().isa }
   fn isa_name(&self) -> &str { &self.isa_info().name }
+  #[inline]
+  fn has_pcie_large_bar(&self) -> bool { self.platform_data().has_pcie_large_bar }
 }
 impl HsaAmdTargetDescHelper for AcceleratorTargetDesc {
   fn platform_data(&self) -> &TargetDesc {
