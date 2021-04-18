@@ -339,11 +339,10 @@ impl HsaAmdGpuAccel {
 
     let devices = agents.iter()
       .filter(|agent| agent.feature().ok() == Some(Feature::Kernel))
-      .filter_map(|agent| {
+      .map(|agent| {
         Self::new(ctx, &hosts, agent.clone())
-          .ok()
       })
-      .collect();
+      .collect::<Result<Vec<_>, _>>()?;
     Ok(devices)
   }
 
