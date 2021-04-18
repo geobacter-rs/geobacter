@@ -345,6 +345,20 @@ impl HsaAmdGpuAccel {
       .collect::<Result<Vec<_>, _>>()?;
     Ok(devices)
   }
+  /// Return the count of AMD GPUs. This is faster than `all_devices` above and
+  /// also doesn't need a Goebacter Context. You should probably initialize the HSA
+  /// context separately beforehand, otherwise this function will have to initialize the
+  /// runtime AND then deinitialize it right after, which is a relatively expensive thing
+  /// to do.
+  pub fn device_len() -> Result<usize, Error> {
+    let hsa_context = ApiContext::try_upref()?;
+    let agents = hsa_context.agents()?;
+
+    let devices = agents.iter()
+      .filter(|agent| agent.feature().ok() == Some(Feature::Kernel))
+      .count();
+    Ok(devices)
+  }
 
   pub fn ctx(&self) -> &Context { &self.ctx }
   pub fn isa_info(&self) -> &IsaInfo { self.target_desc.isa_info() }
