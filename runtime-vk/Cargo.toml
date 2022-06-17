@@ -10,7 +10,7 @@ repository = "https://github.com/geobacter-rs/geobacter/tree/master/runtime-vk"
 [dependencies]
 grt_core = { version = "1.0.0", package = "geobacter-runtime-core" }
 vk = { version = "0.19.0", package = "vulkano" }
-smallvec = { version = "1.4", features = ["union", "may_dangle"] }
+smallvec = { version = "1.6", features = ["union", "may_dangle"] }
 serde = { version = "1.0", features = ["derive"] }
 tracing = "0.1"
 any_key = "0.1.1"

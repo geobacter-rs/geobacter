@@ -492,7 +492,7 @@ dependencies = [
  "parking_lot",
  "rmp-serde",
  "serde",
- "smallvec 1.4.2",
+ "smallvec 1.6.1",
  "tracing",
 ]
 
@@ -541,7 +541,7 @@ dependencies = [
  "any_key",
  "geobacter-runtime-core",
  "serde",
- "smallvec 1.4.2",
+ "smallvec 1.6.1",
  "tracing",
  "vulkano 0.19.0",
 ]
@@ -967,7 +967,7 @@ dependencies = [
  "instant",
  "libc",
  "redox_syscall",
- "smallvec 1.4.2",
+ "smallvec 1.6.1",
  "winapi",
 ]
 
@@ -1326,9 +1326,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.4.2"
+version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fbee7696b84bbf3d89a1c2eccff0850e3047ed46bfcd2e92c29a2d074d57e252"
+checksum = "fe0f37c9e8f3c5a4a66ad655a93c74daac4ad00c441533bf5c6e7990bb42604e"
 
 [[package]]
 name = "snap"
@@ -1545,7 +1545,7 @@ dependencies = [
  "half",
  "lazy_static",
  "shared_library",
- "smallvec 1.4.2",
+ "smallvec 1.6.1",
  "vk-sys",
 ]
 
