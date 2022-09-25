@@ -12,8 +12,7 @@ all crates.
 The name Geobacter comes from the first discovered bacteria which can oxidize
 organic components using iron oxide as an electron acceptor.
 
-Currently, AMDGPU and HPC is the focus. In the future, support for generating eBPF
-functions will be added. Later, HLS will be supported.
+Currently, AMDGPU and HPC is the focus.
 
 ## How does this work?
 
