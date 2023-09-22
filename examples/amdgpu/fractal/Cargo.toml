@@ -14,4 +14,4 @@ rand = "0.7.3"
 lodepng = "2.0.0"
 grt-core = { version = "1.0.0", package = "geobacter-runtime-core" }
 grt-amd  = { version = "1.0.0", package = "geobacter-runtime-amd" }
-packed_simd = { package = "packed_simd_2", version = "0.3.4" }
+packed_simd = "0.3.9"
