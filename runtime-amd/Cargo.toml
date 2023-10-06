@@ -19,7 +19,7 @@ amd-comgr = "1.0.0"
 hsa-rt = { version = "0.1.0", features = ["serde", "alloc-wg"] }
 geobacter-runtime-core = "1.0.0"
 geobacter-runtime-amd-macros = "1.0.0"
-packed_simd = { package = "packed_simd_2", version = "0.3.4", optional = true }
+packed_simd = { version = "0.3.9", optional = true }
 num-traits = "0.2.11"
 alloc-wg = { version = "0.9.0" }
 smallvec = { version = "1.6", features = ["union", "may_dangle"] }

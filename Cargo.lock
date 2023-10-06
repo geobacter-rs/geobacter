@@ -403,7 +403,7 @@ dependencies = [
  "geobacter-runtime-core",
  "lodepng",
  "ndarray",
- "packed_simd_2",
+ "packed_simd",
  "rand 0.7.3",
 ]
 
@@ -472,7 +472,7 @@ dependencies = [
  "hsa-rt",
  "ndarray",
  "num-traits",
- "packed_simd_2",
+ "packed_simd",
  "rand 0.7.3",
 ]
 
@@ -491,7 +491,7 @@ dependencies = [
  "indexed_vec",
  "lazy_static",
  "num-traits",
- "packed_simd_2",
+ "packed_simd",
  "parking_lot",
  "rmp-serde",
  "serde",
@@ -729,9 +729,9 @@ dependencies = [
 
 [[package]]
 name = "libm"
-version = "0.1.4"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fc7aa29613bd6a620df431842069224d8bc9011086b1db4c0e0cd47fa03ec9a"
+checksum = "f7012b1bbb0719e1097c47611d3898568c546d597c2e74d66f6087edd5233ff4"
 
 [[package]]
 name = "libssh2-sys"
@@ -896,11 +896,12 @@ dependencies = [
 
 [[package]]
 name = "num-traits"
-version = "0.2.12"
+version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac267bcc07f48ee5f8935ab0d24f316fb722d7a1292e2913f0cc196b29ffd611"
+checksum = "f30b0abd723be7e2ffca1272140fac1a2f084c77ec3e123c192b66af1ee9e6c2"
 dependencies = [
  "autocfg",
+ "libm",
 ]
 
 [[package]]
@@ -954,13 +955,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "packed_simd_2"
-version = "0.3.4"
+name = "packed_simd"
+version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3278e0492f961fd4ae70909f56b2723a7e8d01a228427294e19cdfdebda89a17"
+checksum = "1f9f08af0c877571712e2e3e686ad79efad9657dbf0f7c3c8ba943ff6c38932d"
 dependencies = [
- "cfg-if 0.1.10",
- "libm",
+ "cfg-if 1.0.0",
+ "num-traits",
 ]
 
 [[package]]
